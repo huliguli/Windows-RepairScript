@@ -1,63 +1,54 @@
-# Windows Reparaturassistent
+# Windows-Wartung
 
-Ein kleines Batch-Tool, das die wichtigsten Windows-Reparaturbefehle (DISM und SFC) in der richtigen Reihenfolge ausführt – mit Menü, Protokoll und optionalem Neustart bzw. Herunterfahren.
+Eine native Windows-Wartungs- und Reparatur-Toolbox mit grafischer Oberfläche. Bündelt die Befehle, die man sonst einzeln in der Eingabeaufforderung eintippt – DISM, SFC, Netzwerk-Reset, Aufräumen, Diagnose – in einem aufgeräumten Tool mit Kategorien, Live-Ausgabe und optionalem Wiederherstellungspunkt.
 
-Entstanden, weil ich diese Befehle ständig einzeln eingetippt habe.
+Kompiliert als echte `.exe` mit dem in Windows enthaltenen C#-Compiler – **kein .NET SDK nötig**.
 
 ## Funktionen
 
-- **Automatische Adminrechte** – fragt per UAC nach, kein manuelles „Als Administrator ausführen" nötig
-- **Auswählbarer Umfang**
-  - Komplett (DISM + SFC)
-  - Nur DISM (Komponentenspeicher)
-  - Nur SFC (Systemdateien)
-  - Komplett + CHKDSK (Datenträgerprüfung beim nächsten Neustart)
-- **Richtige Reihenfolge**: DISM `ScanHealth` → `RestoreHealth` → `sfc /scannow`
-- **Aktion danach frei wählbar**: nichts / Herunterfahren / Neustart – mit eigener Verzögerung
-- **Protokoll** jeder Ausführung im Ordner `logs\`
+**Reparieren** — Komplett-Reparatur (DISM + SFC), DISM RestoreHealth, SFC scannow & nur prüfen, WinSxS aufräumen, Komponentenspeicher analysieren, Windows-Update reparieren, CHKDSK planen
 
-## Voraussetzungen
+**Netzwerk** — Netzwerk-Reset (DNS / Winsock / IP), DNS-Cache leeren, IP-Adresse erneuern
 
-- Windows 10 oder 11
-- Adminrechte (fordert das Skript selbst an)
-- Internetverbindung für `DISM /RestoreHealth` (lädt fehlende Dateien über Windows Update nach)
+**Aufräumen** — Temp-Dateien, Windows-Update-Cache, Papierkorb, Datenträgerbereinigung
 
-## Nutzung
+**Diagnose** — System-Übersicht, Festplatten-Gesundheit (SMART), Akkubericht, Defender-Schnellscan, RAM-Diagnose
 
-1. `sfcscript.bat` herunterladen
-2. Doppelklick – die Admin-Abfrage kommt automatisch
-3. Im Menü Umfang und Aktion danach wählen
+Dazu:
 
-> [!NOTE]
-> DISM und SFC können je nach System mehrere Minuten dauern. Das Fenster „hängt" nicht – es arbeitet.
+- Dunkle Oberfläche mit Kategorie-Sidebar und Live-Ausgabe (inkl. Log-Export)
+- Optionaler **Wiederherstellungspunkt** vor jeder Reparatur (ein Klick im Kopfbereich)
+- Startet automatisch mit Administratorrechten (UAC)
 
-## Menü
+## Bauen
 
-Im Terminal ist das Ganze farbig (Akzentfarben, Badges, Zahlen-Chips). Als Textvorschau:
+Voraussetzung: Windows 10 oder 11. Der nötige Compiler (`csc.exe`) ist Teil des .NET Framework und damit bereits installiert – es muss nichts nachgeladen werden.
 
-```
-   WINDOWS REPARATURASSISTENT
-   by Jonas | v2.0
-
-   Was soll gemacht werden?
-
-    1   Komplett           DISM + SFC          empfohlen
-    2   Nur DISM           Komponentenspeicher
-    3   Nur SFC            Systemdateien
-    4   Komplett + CHKDSK  Datenträger prüfen
-
-    0   Beenden
+```powershell
+.\build.ps1
 ```
 
-## Protokolle
+Ergebnis: `bin\WindowsWartung.exe`. Das App-Icon wird beim ersten Build automatisch erzeugt.
 
-- `logs\reparatur_<Zeitstempel>.log` – Kurzprotokoll des Durchlaufs (Auswahl + Exit-Codes)
-- `logs\dism_<Zeitstempel>.log` – ausführliches DISM-Log
-- Ausführliche SFC-Ergebnisse stehen wie immer in `C:\Windows\Logs\CBS\CBS.log`
+## Nutzen
 
-## Warum Neustart statt „einfach Herunterfahren"?
+`bin\WindowsWartung.exe` doppelklicken → UAC bestätigen → links eine Kategorie wählen → Kachel anklicken. Die Ausgabe läuft unten live mit; **Log speichern** schreibt sie in eine Textdatei.
 
-Wegen **Schnellstart** (Fast Startup) ist ein normales Herunterfahren unter Windows 10/11 kein vollständiger Neustart – der Kernel wird nicht komplett neu geladen. Reparaturen, die einen echten Reboot brauchen, werden dabei nicht sauber abgeschlossen. Wer neu starten lässt, bekommt deshalb `shutdown -r` (echter Neustart), nicht `-s`.
+## Projektstruktur
+
+```
+src/            C#-Quellcode + App-Manifest
+assets/         App-Icon
+tools/          Icon-Generator, Smoke-Test
+build.ps1       Build über das eingebaute csc.exe (ohne SDK)
+sfcscript.bat   schlanke Batch-Version (Vorgänger)
+```
+
+## Hinweise
+
+- DISM und SFC brauchen je nach System ein paar Minuten – das Fenster arbeitet, auch wenn die Ausgabe kurz still steht.
+- Netzwerk-Reset und RAM-Diagnose erfordern anschließend einen Neustart.
+- Ausführliche SFC-Ergebnisse stehen wie immer in `C:\Windows\Logs\CBS\CBS.log`.
 
 ## Lizenz
 

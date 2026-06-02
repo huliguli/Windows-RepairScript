@@ -1,3 +1,7 @@
-# Protokolle der einzelnen Durchlaeufe
+# Build-Ausgabe
+bin/
+obj/
+
+# Protokolle der Batch-Version
 logs/
 *.log

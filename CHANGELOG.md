@@ -1,5 +1,18 @@
 # Changelog
 
+## [3.0] - 2026-06-03
+
+### Neu
+- Komplett neu als **native Windows-App** (`.exe`, C#/WinForms) statt reiner Batch
+- Grafische Oberfläche mit dunklem Theme und Kategorie-Sidebar: Reparieren, Netzwerk, Aufräumen, Diagnose
+- Rund 20 Wartungsaktionen mit Live-Ausgabe und Log-Export
+- Optionaler Wiederherstellungspunkt vor jeder Reparatur
+- Startet automatisch mit Adminrechten (UAC), eigenes App-Icon, dunkle Titelleiste
+- Build komplett ohne SDK über den eingebauten `csc.exe`
+
+### Bleibt
+- `sfcscript.bat` als schlanke Vorgängerversion weiterhin enthalten
+
 ## [2.0] - 2026-06-02
 
 ### Neu

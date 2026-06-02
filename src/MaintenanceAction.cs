@@ -1,0 +1,26 @@
+using System.Collections.Generic;
+using System.Text;
+
+namespace WartungsToolbox
+{
+    enum LogKind { Normal, Header, Good, Bad, Dim, Warn }
+
+    class Step
+    {
+        public string File;
+        public string Args = "";
+        public Encoding Enc;      // null => OEM-Codepage
+        public bool Detached;     // im eigenen Fenster starten, nicht abwarten/mitschneiden
+    }
+
+    class MaintenanceAction
+    {
+        public string Title;
+        public string Desc;
+        public string Glyph;      // Segoe MDL2 Assets
+        public string Category;
+        public bool Danger;       // Sicherheitsabfrage vor Ausfuehrung
+        public bool IsRepair;     // optionaler Wiederherstellungspunkt davor
+        public List<Step> Steps = new List<Step>();
+    }
+}
