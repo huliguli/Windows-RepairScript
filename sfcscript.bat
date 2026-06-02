@@ -1,14 +1,31 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 title Windows Reparaturassistent
-color 0A
+color 0F
+
+rem =========================
+rem  ANSI-Farben aktivieren
+rem =========================
+for /f %%a in ('echo prompt $E^| cmd') do set "ESC=%%a"
+set  "R=%ESC%[0m"
+set  "DIM=%ESC%[2m"
+set  "WHT=%ESC%[97m"
+set  "GRAY=%ESC%[38;2;140;145;165m"
+set  "TEAL=%ESC%[38;2;78;205;196m"
+set  "GREEN=%ESC%[38;2;152;195;121m"
+set  "YELLOW=%ESC%[38;2;229;192;123m"
+set  "RED=%ESC%[38;2;224;108;117m"
+set  "BADGE=%ESC%[1;38;2;18;20;28;48;2;78;205;196m"
+set  "OKBDG=%ESC%[1;38;2;18;20;28;48;2;152;195;121m"
+set  "CHIP=%ESC%[1;38;2;18;20;28;48;2;78;205;196m"
+set  "GCHIP=%ESC%[1;38;2;18;20;28;48;2;110;115;135m"
 
 rem =========================
 rem  Adminrechte sicherstellen (UAC-Abfrage)
 rem =========================
 net session >nul 2>&1
 if %errorlevel% neq 0 (
-    echo Administratorrechte werden angefordert...
+    echo   %YELLOW%Administratorrechte werden angefordert...%R%
     powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs" >nul 2>&1
     exit /b
 )
@@ -34,21 +51,21 @@ set "DELAY=120"
 
 :MENU_MAIN
 cls
-echo ==========================================
-echo         Windows Reparaturassistent
-echo         by Jonas   ^|   v2.0
-echo ==========================================
 echo.
-echo   Was soll gemacht werden?
+echo   %BADGE%  WINDOWS REPARATURASSISTENT  %R%
+echo   %GRAY%by Jonas   ^|   v2.0%R%
 echo.
-echo    [1] Komplett  (DISM + SFC)          - empfohlen
-echo    [2] Nur DISM  (Komponentenspeicher)
-echo    [3] Nur SFC   (Systemdateien)
-echo    [4] Komplett + CHKDSK (Datentraeger pruefen)
+echo   %WHT%Was soll gemacht werden?%R%
 echo.
-echo    [0] Beenden
+echo   %CHIP% 1 %R%  Komplett          %GRAY%DISM + SFC%R%   %OKBDG% empfohlen %R%
+echo   %CHIP% 2 %R%  Nur DISM          %GRAY%Komponentenspeicher%R%
+echo   %CHIP% 3 %R%  Nur SFC           %GRAY%Systemdateien%R%
+echo   %CHIP% 4 %R%  Komplett + CHKDSK %GRAY%Datentraeger pruefen%R%
 echo.
-choice /c 12340 /n /m "Deine Auswahl: "
+echo   %GCHIP% 0 %R%  %GRAY%Beenden%R%
+echo.
+<nul set /p "=  %TEAL%Auswahl%R%  %DIM%(0-4)%R%  "
+choice /c 12340 /n >nul
 set "SEL=%errorlevel%"
 if "%SEL%"=="5" exit /b 0
 if "%SEL%"=="1" ( set "RUN_DISM=1" & set "RUN_SFC=1" & set "RUN_CHKDSK=0" )
@@ -58,15 +75,17 @@ if "%SEL%"=="4" ( set "RUN_DISM=1" & set "RUN_SFC=1" & set "RUN_CHKDSK=1" )
 
 :MENU_POST
 cls
-echo ==========================================
-echo         Aktion nach der Reparatur
-echo ==========================================
 echo.
-echo    [1] Nichts tun (Ergebnis anzeigen)   - empfohlen
-echo    [2] Herunterfahren
-echo    [3] Neustart
+echo   %BADGE%  AKTION DANACH  %R%
 echo.
-choice /c 123 /n /m "Deine Auswahl: "
+echo   %WHT%Was soll nach der Reparatur passieren?%R%
+echo.
+echo   %CHIP% 1 %R%  Nichts tun        %GRAY%nur Ergebnis anzeigen%R%   %OKBDG% empfohlen %R%
+echo   %CHIP% 2 %R%  Herunterfahren
+echo   %CHIP% 3 %R%  Neustart
+echo.
+<nul set /p "=  %TEAL%Auswahl%R%  %DIM%(1-3)%R%  "
+choice /c 123 /n >nul
 set "P=%errorlevel%"
 if "%P%"=="1" set "POST_ACTION=none"
 if "%P%"=="2" set "POST_ACTION=shutdown"
@@ -75,7 +94,7 @@ if "%P%"=="3" set "POST_ACTION=restart"
 if not "%POST_ACTION%"=="none" (
     echo.
     set "DELAY="
-    set /p "DELAY=Verzoegerung in Sekunden [120]: "
+    set /p "DELAY=  %TEAL%Verzoegerung in Sekunden%R% %DIM%[120]%R%  "
     if "!DELAY!"=="" set "DELAY=120"
 )
 
@@ -83,41 +102,39 @@ rem =========================
 rem  Reparatur ausfuehren
 rem =========================
 cls
-echo ==========================================
-echo   Reparatur laeuft - bitte warten
-echo ==========================================
-echo   Protokoll: %LOG%
+echo.
+echo   %BADGE%  REPARATUR LAEUFT  %R%   %GRAY%bitte warten%R%
+echo   %GRAY%Protokoll: %LOG%%R%
 echo.
 >"%LOG%" echo [%DATE% %TIME%] Start - DISM=%RUN_DISM% SFC=%RUN_SFC% CHKDSK=%RUN_CHKDSK%
 
 if "%RUN_DISM%"=="1" (
-    echo --- DISM: ScanHealth ---
+    echo   %TEAL%DISM%R% %DIM%ScanHealth%R%
     DISM /Online /Cleanup-Image /ScanHealth /LogPath:"%DISM_LOG%"
-    echo --- DISM: RestoreHealth ---
+    echo   %TEAL%DISM%R% %DIM%RestoreHealth%R%
     DISM /Online /Cleanup-Image /RestoreHealth /LogPath:"%DISM_LOG%"
     >>"%LOG%" echo [%DATE% %TIME%] DISM RestoreHealth ExitCode=!errorlevel!
 )
 
 if "%RUN_SFC%"=="1" (
-    echo --- SFC: scannow ---
+    echo   %TEAL%SFC%R% %DIM%scannow%R%
     sfc /scannow
     >>"%LOG%" echo [%DATE% %TIME%] SFC scannow ExitCode=!errorlevel!
 )
 
 if "%RUN_CHKDSK%"=="1" (
-    echo --- CHKDSK: Pruefung fuer naechsten Neustart einplanen ---
+    echo   %TEAL%CHKDSK%R% %DIM%Pruefung fuer naechsten Neustart einplanen%R%
     echo J| chkdsk %SystemDrive% /f /r
     >>"%LOG%" echo [%DATE% %TIME%] CHKDSK eingeplant fuer %SystemDrive%
 )
 
 >>"%LOG%" echo [%DATE% %TIME%] Fertig
 echo.
-echo ==========================================
-echo   Fertig.
-echo   Protokoll:    %LOG%
-echo   DISM-Details: %DISM_LOG%
-echo   SFC-Details:  %windir%\Logs\CBS\CBS.log
-echo ==========================================
+echo   %OKBDG%  FERTIG  %R%
+echo.
+echo   %GRAY%Protokoll:    %LOG%%R%
+echo   %GRAY%DISM-Details: %DISM_LOG%%R%
+echo   %GRAY%SFC-Details:  %windir%\Logs\CBS\CBS.log%R%
 echo.
 
 if "%POST_ACTION%"=="none" (
@@ -126,14 +143,14 @@ if "%POST_ACTION%"=="none" (
 )
 
 if "%POST_ACTION%"=="shutdown" (
-    echo Der PC wird in %DELAY% Sekunden heruntergefahren.
-    echo Abbrechen mit:   shutdown -a
+    echo   %YELLOW%Der PC wird in %DELAY% Sekunden heruntergefahren.%R%
+    echo   %GRAY%Abbrechen mit:  shutdown -a%R%
     shutdown -s -t %DELAY%
 )
 
 if "%POST_ACTION%"=="restart" (
-    echo Der PC wird in %DELAY% Sekunden neu gestartet.
-    echo Abbrechen mit:   shutdown -a
+    echo   %YELLOW%Der PC wird in %DELAY% Sekunden neu gestartet.%R%
+    echo   %GRAY%Abbrechen mit:  shutdown -a%R%
     shutdown -r -t %DELAY%
 )
 

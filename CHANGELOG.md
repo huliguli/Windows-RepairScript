@@ -7,6 +7,7 @@
 - Wählbare Aktion nach der Reparatur: nichts, Herunterfahren oder Neustart – mit eigener Verzögerung
 - Automatische Adminrechte per UAC (kein Rechtsklick mehr nötig)
 - Protokollierung jedes Durchlaufs im Ordner `logs\`
+- Neue, farbige Oberfläche (ANSI-Truecolor, Badges, Zahlen-Chips) statt grünem Terminal-Look
 
 ### Geändert
 - `DISM /CheckHealth` durch das gründlichere `ScanHealth` ersetzt

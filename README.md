@@ -33,20 +33,20 @@ Entstanden, weil ich diese Befehle ständig einzeln eingetippt habe.
 
 ## Menü
 
+Im Terminal ist das Ganze farbig (Akzentfarben, Badges, Zahlen-Chips). Als Textvorschau:
+
 ```
-==========================================
-        Windows Reparaturassistent
-        by Jonas   |   v2.0
-==========================================
+   WINDOWS REPARATURASSISTENT
+   by Jonas | v2.0
 
-  Was soll gemacht werden?
+   Was soll gemacht werden?
 
-   [1] Komplett  (DISM + SFC)          - empfohlen
-   [2] Nur DISM  (Komponentenspeicher)
-   [3] Nur SFC   (Systemdateien)
-   [4] Komplett + CHKDSK (Datentraeger pruefen)
+    1   Komplett           DISM + SFC          empfohlen
+    2   Nur DISM           Komponentenspeicher
+    3   Nur SFC            Systemdateien
+    4   Komplett + CHKDSK  Datenträger prüfen
 
-   [0] Beenden
+    0   Beenden
 ```
 
 ## Protokolle
