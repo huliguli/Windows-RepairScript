@@ -1,0 +1,27 @@
+name: Build and Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      - name: Build
+        shell: powershell
+        run: |
+          ./build.ps1
+
+      - name: Release Asset hochladen
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            bin/WindowsWartung.exe
