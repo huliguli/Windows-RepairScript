@@ -5,5 +5,5 @@ using System.Reflection;
 [assembly: AssemblyDescription("Wartungs- und Reparatur-Toolbox für Windows")]
 [assembly: AssemblyCompany("Jonas")]
 [assembly: AssemblyCopyright("© 2026 Jonas")]
-[assembly: AssemblyVersion("3.0.0.0")]
-[assembly: AssemblyFileVersion("3.0.0.0")]
+[assembly: AssemblyVersion("4.0.0.0")]
+[assembly: AssemblyFileVersion("4.0.0.0")]

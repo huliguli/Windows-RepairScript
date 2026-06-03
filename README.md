@@ -1,8 +1,8 @@
 # Windows-Wartung
 
-Eine native Windows-Wartungs- und Reparatur-Toolbox mit grafischer Oberfläche. Bündelt die Befehle, die man sonst einzeln in der Eingabeaufforderung eintippt – DISM, SFC, Netzwerk-Reset, Aufräumen, Diagnose – in einem aufgeräumten Tool mit Kategorien, Live-Ausgabe und optionalem Wiederherstellungspunkt.
+Eine native Windows-Wartungs- und Reparatur-Toolbox mit moderner Oberfläche. Bündelt die Befehle, die man sonst einzeln in der Eingabeaufforderung eintippt – DISM, SFC, Netzwerk-Reset, Aufräumen, Diagnose – in einem aufgeräumten Tool mit Kategorien, Live-Ausgabe und optionalem Wiederherstellungspunkt.
 
-Kompiliert als echte `.exe` mit dem in Windows enthaltenen C#-Compiler – **kein .NET SDK nötig**.
+Die Oberfläche ist in HTML/CSS gebaut und läuft in einem schlanken **WebView2**-Host; die eigentliche Logik steckt in C#. Kompiliert wird mit dem in Windows enthaltenen Compiler – **kein .NET SDK nötig**.
 
 ## Funktionen
 
@@ -16,40 +16,46 @@ Kompiliert als echte `.exe` mit dem in Windows enthaltenen C#-Compiler – **kei
 
 Dazu:
 
-- Dunkle Oberfläche mit Kategorie-Sidebar und Live-Ausgabe (inkl. Log-Export)
-- Ein-/ausklappbare, dezente Ausgabe-Konsole – eingeklappt erscheinen kurze Hinweis-Toasts oben rechts
-- Optionaler **Wiederherstellungspunkt** vor jeder Reparatur (ein Klick im Kopfbereich)
+- Modernes, dunkles UI mit eigener Titelleiste, Glas-Effekten, weichen Animationen und Kategorie-Sidebar
+- Live-Ausgabe mit Log-Export, **ein-/ausklappbar** – eingeklappt erscheinen kurze Hinweis-Toasts oben rechts
+- Optionaler **Wiederherstellungspunkt** vor jeder Reparatur
 - Startet automatisch mit Administratorrechten (UAC)
+
+## Aufbau
+
+```
+host/        C#-Host (rahmenloses Fenster + WebView2 + Nachrichtenbrücke)
+ui/          Oberfläche in HTML/CSS/JS
+src/         gemeinsame Logik (Aktionskatalog, Befehls-Runner) + App-Manifest
+libs/        WebView2-DLLs (aus dem NuGet-Paket, eingecheckt – kein SDK nötig)
+assets/      App-Icon
+tools/       Icon-Generator
+build.ps1    Build über das eingebaute csc.exe
+sfcscript.bat  schlanke Batch-Version (Vorgänger)
+```
 
 ## Bauen
 
-Voraussetzung: Windows 10 oder 11. Der nötige Compiler (`csc.exe`) ist Teil des .NET Framework und damit bereits installiert – es muss nichts nachgeladen werden.
+Voraussetzung: Windows 10/11. Der nötige Compiler (`csc.exe`) ist Teil des .NET Framework, die WebView2-Runtime ist auf aktuellen Windows-Systemen vorinstalliert.
 
 ```powershell
-.\build.ps1
+.\build.ps1 -Release
 ```
 
-Ergebnis: `bin\WindowsWartung.exe`. Das App-Icon wird beim ersten Build automatisch erzeugt.
+oder einfach **`build.cmd` doppelklicken**. Ergebnis in `bin\`: `WindowsWartung.exe` plus die drei WebView2-DLLs und der `ui`-Ordner. Diese vier gehören beim Verteilen **zusammen** (das GitHub-Release packt sie als ZIP).
+
+> Ohne `-Release` entsteht ein Dev-Build ohne Admin-Manifest – praktisch zum Ansehen der Oberfläche, echte Reparaturen brauchen aber den Release-Build (UAC).
 
 ## Nutzen
 
-`bin\WindowsWartung.exe` doppelklicken → UAC bestätigen → links eine Kategorie wählen → Kachel anklicken. Die Ausgabe läuft unten live mit; **Log speichern** schreibt sie in eine Textdatei.
-
-## Projektstruktur
-
-```
-src/            C#-Quellcode + App-Manifest
-assets/         App-Icon
-tools/          Icon-Generator, Smoke-Test
-build.ps1       Build über das eingebaute csc.exe (ohne SDK)
-sfcscript.bat   schlanke Batch-Version (Vorgänger)
-```
+`WindowsWartung.exe` starten → UAC bestätigen → links eine Kategorie wählen → Kachel anklicken. Die Ausgabe läuft unten live mit; **Log speichern** schreibt sie in eine Textdatei.
 
 ## Hinweise
 
 - DISM und SFC brauchen je nach System ein paar Minuten – das Fenster arbeitet, auch wenn die Ausgabe kurz still steht.
 - Netzwerk-Reset und RAM-Diagnose erfordern anschließend einen Neustart.
 - Ausführliche SFC-Ergebnisse stehen wie immer in `C:\Windows\Logs\CBS\CBS.log`.
+- Die `.exe` ist nicht signiert – beim ersten Start zeigt Windows SmartScreen ggf. „Der Computer wurde geschützt"; über *Weitere Informationen → Trotzdem ausführen* startet sie.
 
 ## Lizenz
 

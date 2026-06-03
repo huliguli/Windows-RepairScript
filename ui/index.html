@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Windows-Wartung</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Eigene Titelleiste -->
+  <div id="titlebar">
+    <div class="tb-left" data-drag>
+      <div class="appmark" id="appmark"></div>
+      <span class="tb-title">Windows-Wartung</span>
+      <span class="tb-sep"></span>
+      <span class="tb-sub">Wartungs-Toolbox</span>
+    </div>
+    <div class="tb-controls">
+      <button class="wc" data-win="min" title="Minimieren"></button>
+      <button class="wc" data-win="max" title="Maximieren"></button>
+      <button class="wc close" data-win="close" title="Schließen"></button>
+    </div>
+  </div>
+
+  <div id="app">
+    <!-- Sidebar -->
+    <aside id="sidebar">
+      <div class="side-label">Kategorien</div>
+      <nav id="nav"></nav>
+      <div class="side-foot">
+        <label class="toggle-row">
+          <span class="toggle-text">
+            <span class="toggle-title">Wiederherstellungspunkt</span>
+            <span class="toggle-desc">vor jeder Reparatur</span>
+          </span>
+          <span class="switch"><input type="checkbox" id="restore" /><i></i></span>
+        </label>
+        <div class="admin-badge"><i class="dot"></i> Als Administrator</div>
+      </div>
+    </aside>
+
+    <!-- Hauptbereich -->
+    <main id="main">
+      <header id="cat-header">
+        <div>
+          <h1 id="cat-title">Reparieren</h1>
+          <p id="cat-hint">8 Aktionen</p>
+        </div>
+      </header>
+
+      <section id="cards"></section>
+
+      <!-- Konsole -->
+      <div id="console" class="open">
+        <div id="console-head">
+          <div class="ch-left">
+            <span class="ch-title">Ausgabe</span>
+            <span id="status" class="status"><i class="status-dot"></i><span id="status-text">bereit</span></span>
+          </div>
+          <div class="ch-actions">
+            <button id="btn-stop" class="link danger" disabled>Stoppen</button>
+            <button id="btn-clear" class="link">Leeren</button>
+            <button id="btn-save" class="link">Log speichern</button>
+            <button id="btn-collapse" class="link icon-only" title="Ausblenden"></button>
+          </div>
+        </div>
+        <div id="console-body"></div>
+      </div>
+      <button id="console-reopen" title="Ausgabe einblenden"><span></span>Ausgabe</button>
+    </main>
+  </div>
+
+  <div id="toasts"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

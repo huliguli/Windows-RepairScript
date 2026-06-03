@@ -1,5 +1,21 @@
 # Changelog
 
+## [4.0] - 2026-06-03
+
+### Neu
+- Komplett neue Oberfläche auf **WebView2**-Basis: UI in HTML/CSS/JS, Logik in C#
+- Eigene Titelleiste, runde Fensterecken, Glas-Effekte, weiche Animationen, SVG-Icons, Toggle-Switch, schlanke Scrollbalken
+- Eigener Bestätigungsdialog statt Windows-MessageBox
+- Baut weiterhin **ohne SDK** (csc.exe + eingecheckte WebView2-DLLs)
+
+### Geändert
+- Backend (Aktionskatalog, Befehls-Runner) wiederverwendet; Ausgabe geht jetzt als Nachrichten ans UI
+- Auslieferung als ZIP (Exe + WebView2-DLLs + `ui`-Ordner) statt Einzel-Exe
+- GitHub-Release-Workflow baut Release und lädt das ZIP hoch
+
+### Entfernt
+- Alte WinForms-Oberfläche (durch das WebView2-UI ersetzt)
+
 ## [3.0] - 2026-06-03
 
 ### Neu

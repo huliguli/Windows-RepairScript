@@ -1,5 +1,5 @@
 @echo off
-rem Doppelklick-Starter fuer build.ps1 (umgeht .ps1-Dateiverknuepfung + Execution-Policy)
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build.ps1"
+rem Doppelklick-Starter: baut die Release-Version (mit Admin-Manifest) nach bin\
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build.ps1" -Release
 echo.
 pause

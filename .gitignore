@@ -2,6 +2,9 @@
 bin/
 obj/
 
+# Dev-Screenshots
+ui/shot_*.png
+
 # Protokolle der Batch-Version
 logs/
 *.log

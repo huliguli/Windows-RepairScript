@@ -15,13 +15,21 @@ jobs:
       - name: Repository auschecken
         uses: actions/checkout@v4
 
-      - name: Build
+      - name: Build (Release)
+        shell: powershell
+        run: ./build.ps1 -Release
+
+      - name: Paket schnüren
         shell: powershell
         run: |
-          ./build.ps1
+          $dist = "WindowsWartung"
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          Copy-Item bin\WindowsWartung.exe $dist
+          Copy-Item bin\*.dll $dist
+          Copy-Item bin\ui $dist -Recurse
+          Compress-Archive -Path "$dist\*" -DestinationPath WindowsWartung.zip -Force
 
-      - name: Release Asset hochladen
+      - name: Release-Asset hochladen
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            bin/WindowsWartung.exe
+          files: WindowsWartung.zip
