@@ -9,6 +9,7 @@ namespace WartungsToolbox
     {
         readonly List<MaintenanceAction> _actions = Catalog.All();
         readonly List<NavButton> _navs = new List<NavButton>();
+        readonly List<ToastForm> _toasts = new List<ToastForm>();
         string _activeCat;
 
         FlowLayoutPanel _cards;
@@ -16,6 +17,10 @@ namespace WartungsToolbox
         Label _catTitle, _catHint, _status;
         CheckBox _restoreChk;
         Button _stopBtn;
+
+        Panel _consolePanel, _collapsedBar;
+        Splitter _split;
+        bool _consoleVisible = true;
 
         Font _monoReg, _monoBold;
         CommandRunner _runner;
@@ -42,13 +47,13 @@ namespace WartungsToolbox
             body.Dock = DockStyle.Fill;
             body.BackColor = Theme.Bg0;
 
-            BuildRight(body);     // fügt console + splitter + content in body ein
-            BuildSidebar(body);   // sidebar links
+            BuildRight(body);
+            BuildSidebar(body);
 
-            Controls.Add(body);          // Fill zuletzt
-            Controls.Add(BuildHeader()); // Top zuerst hinzufügen -> oben
+            Controls.Add(body);
+            Controls.Add(BuildHeader());
 
-            _runner = new CommandRunner(this, Append, SetRunning);
+            _runner = new CommandRunner(this, Append, SetRunning, OnComplete);
 
             _spin = new System.Windows.Forms.Timer();
             _spin.Interval = 90;
@@ -141,7 +146,6 @@ namespace WartungsToolbox
                     e.Graphics.DrawLine(pen, side.Width - 1, 0, side.Width - 1, side.Height);
             };
 
-            // Nav-Buttons in umgekehrter Reihenfolge (Dock=Top stapelt rückwärts)
             for (int i = Catalog.Categories.Length - 1; i >= 0; i--)
             {
                 NavButton nb = new NavButton(Catalog.Categories[i], Catalog.CategoryGlyphs[i]);
@@ -158,7 +162,7 @@ namespace WartungsToolbox
             head.Height = 34;
             head.TextAlign = ContentAlignment.MiddleLeft;
             head.BackColor = Theme.Bg1;
-            side.Controls.Add(head);   // zuletzt -> ganz oben
+            side.Controls.Add(head);
 
             parent.Controls.Add(side);
         }
@@ -170,15 +174,20 @@ namespace WartungsToolbox
             right.Dock = DockStyle.Fill;
             right.BackColor = Theme.Bg0;
 
-            // Konsole unten
-            Panel console = new Panel();
-            console.Dock = DockStyle.Bottom;
-            console.Height = 264;
-            console.BackColor = Theme.Console;
+            // --- Konsole unten (dezent) ---
+            _consolePanel = new Panel();
+            _consolePanel.Dock = DockStyle.Bottom;
+            _consolePanel.Height = 200;
+            _consolePanel.BackColor = Theme.Console;
+            _consolePanel.Paint += delegate (object s, PaintEventArgs e)
+            {
+                using (var pen = new Pen(Theme.Border))
+                    e.Graphics.DrawLine(pen, 0, 0, _consolePanel.Width, 0);
+            };
 
             Panel cHead = new Panel();
             cHead.Dock = DockStyle.Top;
-            cHead.Height = 40;
+            cHead.Height = 30;
             cHead.BackColor = Theme.Console;
 
             Label cTitle = new Label();
@@ -187,7 +196,7 @@ namespace WartungsToolbox
             cTitle.ForeColor = Theme.TextDim;
             cTitle.AutoSize = false;
             cTitle.Dock = DockStyle.Left;
-            cTitle.Width = 120;
+            cTitle.Width = 96;
             cTitle.TextAlign = ContentAlignment.MiddleLeft;
             cTitle.BackColor = Theme.Console;
 
@@ -197,30 +206,34 @@ namespace WartungsToolbox
             _status.ForeColor = Theme.TextDim;
             _status.AutoSize = false;
             _status.Dock = DockStyle.Left;
-            _status.Width = 160;
+            _status.Width = 150;
             _status.TextAlign = ContentAlignment.MiddleLeft;
             _status.BackColor = Theme.Console;
 
             FlowLayoutPanel btns = new FlowLayoutPanel();
             btns.Dock = DockStyle.Right;
             btns.FlowDirection = FlowDirection.RightToLeft;
-            btns.Width = 360;
-            btns.Padding = new Padding(0, 6, 8, 6);
+            btns.Width = 440;
+            btns.Padding = new Padding(0, 3, 8, 3);
             btns.BackColor = Theme.Console;
 
-            _stopBtn = FlatButton("Stoppen", Theme.Red);
+            Button collapseBtn = LinkButton("Ausblenden  ▾", Theme.TextDim, Theme.Console);
+            collapseBtn.Click += delegate { SetConsoleVisible(false); };
+
+            _stopBtn = LinkButton("Stoppen", Theme.Red, Theme.Console);
             _stopBtn.Enabled = false;
             _stopBtn.Click += delegate { _runner.Cancel(); };
 
-            Button clearBtn = FlatButton("Leeren", Theme.Text);
+            Button clearBtn = LinkButton("Leeren", Theme.TextDim, Theme.Console);
             clearBtn.Click += delegate { _out.Clear(); Welcome(); };
 
-            Button saveBtn = FlatButton("Log speichern", Theme.Text);
+            Button saveBtn = LinkButton("Log speichern", Theme.TextDim, Theme.Console);
             saveBtn.Click += delegate { SaveLog(); };
 
-            btns.Controls.Add(_stopBtn);
-            btns.Controls.Add(clearBtn);
+            btns.Controls.Add(collapseBtn);
             btns.Controls.Add(saveBtn);
+            btns.Controls.Add(clearBtn);
+            btns.Controls.Add(_stopBtn);
 
             cHead.Controls.Add(_status);
             cHead.Controls.Add(cTitle);
@@ -231,23 +244,42 @@ namespace WartungsToolbox
             _out.ReadOnly = true;
             _out.BorderStyle = BorderStyle.None;
             _out.BackColor = Theme.Console;
-            _out.ForeColor = Theme.Text;
+            _out.ForeColor = Theme.TextDim;
             _out.Font = _monoReg;
             _out.WordWrap = false;
             _out.DetectUrls = false;
             _out.ScrollBars = RichTextBoxScrollBars.Both;
 
-            console.Controls.Add(_out);    // Fill zuletzt
-            console.Controls.Add(cHead);
+            _consolePanel.Controls.Add(_out);
+            _consolePanel.Controls.Add(cHead);
 
-            Splitter split = new Splitter();
-            split.Dock = DockStyle.Bottom;
-            split.Height = 6;
-            split.BackColor = Theme.Bg0;
-            split.MinExtra = 180;
-            split.MinSize = 140;
+            // --- Schmale Leiste, wenn Konsole eingeklappt ---
+            _collapsedBar = new Panel();
+            _collapsedBar.Dock = DockStyle.Bottom;
+            _collapsedBar.Height = 30;
+            _collapsedBar.BackColor = Theme.Bg0;
+            _collapsedBar.Visible = false;
+            _collapsedBar.Paint += delegate (object s, PaintEventArgs e)
+            {
+                using (var pen = new Pen(Theme.Border))
+                    e.Graphics.DrawLine(pen, 0, 0, _collapsedBar.Width, 0);
+            };
+            Button expandBtn = LinkButton("▴  Ausgabe einblenden", Theme.TextDim, Theme.Bg0);
+            expandBtn.Dock = DockStyle.Left;
+            expandBtn.Width = 220;
+            expandBtn.TextAlign = ContentAlignment.MiddleLeft;
+            expandBtn.Padding = new Padding(8, 0, 0, 0);
+            expandBtn.Click += delegate { SetConsoleVisible(true); };
+            _collapsedBar.Controls.Add(expandBtn);
 
-            // Inhalt (Karten)
+            _split = new Splitter();
+            _split.Dock = DockStyle.Bottom;
+            _split.Height = 6;
+            _split.BackColor = Theme.Bg0;
+            _split.MinExtra = 180;
+            _split.MinSize = 120;
+
+            // --- Inhalt (Karten) ---
             Panel content = new Panel();
             content.Dock = DockStyle.Fill;
             content.BackColor = Theme.Bg0;
@@ -282,32 +314,37 @@ namespace WartungsToolbox
             _cards.FlowDirection = FlowDirection.LeftToRight;
             _cards.Padding = new Padding(12, 6, 12, 12);
 
-            content.Controls.Add(_cards);   // Fill zuletzt
+            content.Controls.Add(_cards);
             content.Controls.Add(ctHead);
 
-            right.Controls.Add(content);    // Fill zuerst (muss hinten in der Z-Order liegen)
-            right.Controls.Add(console);    // Bottom
-            right.Controls.Add(split);      // Splitter zuletzt
+            // Fill zuerst, Kanten danach
+            right.Controls.Add(content);
+            right.Controls.Add(_collapsedBar);
+            right.Controls.Add(_consolePanel);
+            right.Controls.Add(_split);
 
             parent.Controls.Add(right);
         }
 
-        Button FlatButton(string text, Color fg)
+        Button LinkButton(string text, Color fg, Color bg)
         {
             Button b = new Button();
             b.Text = text;
             b.FlatStyle = FlatStyle.Flat;
-            b.FlatAppearance.BorderColor = Theme.Border;
-            b.FlatAppearance.BorderSize = 1;
-            b.FlatAppearance.MouseOverBackColor = Theme.CardHover;
-            b.BackColor = Theme.Card;
+            b.FlatAppearance.BorderSize = 0;
+            b.FlatAppearance.MouseOverBackColor = bg;
+            b.FlatAppearance.MouseDownBackColor = bg;
+            b.BackColor = bg;
             b.ForeColor = fg;
-            b.Font = Theme.UI;
+            b.Font = Theme.UISmall;
             b.AutoSize = false;
-            b.Height = 28;
-            b.Width = 104;
-            b.Margin = new Padding(6, 0, 0, 0);
+            b.Height = 24;
+            b.Width = 100;
+            b.Margin = new Padding(2, 1, 2, 1);
             b.Cursor = Cursors.Hand;
+            Color baseFg = fg;
+            b.MouseEnter += delegate { b.ForeColor = Theme.Accent; };
+            b.MouseLeave += delegate { b.ForeColor = baseFg; };
             return b;
         }
 
@@ -345,7 +382,8 @@ namespace WartungsToolbox
         {
             if (_runner.Running)
             {
-                Append("Es läuft bereits eine Aktion – bitte warten oder stoppen.", LogKind.Warn);
+                if (_consoleVisible)
+                    Append("Es läuft bereits eine Aktion – bitte warten oder stoppen.", LogKind.Warn);
                 return;
             }
 
@@ -389,9 +427,61 @@ namespace WartungsToolbox
             }
         }
 
+        // Konsole ein-/ausklappen
+        void SetConsoleVisible(bool v)
+        {
+            _consoleVisible = v;
+            _consolePanel.Visible = v;
+            _split.Visible = v;
+            _collapsedBar.Visible = !v;
+        }
+
+        // Abschluss einer Aktion -> bei eingeklappter Konsole ein Toast
+        void OnComplete(string title, LogKind kind, string message)
+        {
+            if (_consoleVisible) return;
+
+            Color accent;
+            string glyph;
+            if (kind == LogKind.Good) { accent = Theme.Green; glyph = "E73E"; }
+            else if (kind == LogKind.Warn) { accent = Theme.Yellow; glyph = "E7BA"; }
+            else { accent = Theme.Red; glyph = "E711"; }
+
+            ShowToast(title, message, accent, glyph);
+        }
+
+        void ShowToast(string title, string msg, Color accent, string glyph)
+        {
+            ToastForm t = new ToastForm(title, msg, accent, glyph, delegate
+            {
+                SetConsoleVisible(true);
+                try { _out.SelectionStart = _out.TextLength; _out.ScrollToCaret(); }
+                catch { }
+            });
+            t.Owner = this;
+            t.Done += delegate (ToastForm tt) { _toasts.Remove(tt); ReflowToasts(); };
+            _toasts.Add(t);
+
+            Point bse = ToastBase();
+            int slot = _toasts.Count - 1;
+            t.Pop(bse.X, bse.Y + slot * (t.Height + 10));
+        }
+
+        void ReflowToasts()
+        {
+            Point bse = ToastBase();
+            for (int i = 0; i < _toasts.Count; i++)
+                _toasts[i].MoveSlot(bse.Y + i * (_toasts[i].Height + 10));
+        }
+
+        Point ToastBase()
+        {
+            return new Point(Bounds.Right - 330 - 18, Bounds.Top + 96);
+        }
+
         void Append(string text, LogKind k)
         {
-            Color c = Theme.Text;
+            Color c = Theme.TextDim;
             bool bold = false;
             switch (k)
             {
@@ -400,6 +490,7 @@ namespace WartungsToolbox
                 case LogKind.Bad:    c = Theme.Red;    bold = true; break;
                 case LogKind.Warn:   c = Theme.Yellow; bold = true; break;
                 case LogKind.Dim:    c = Theme.TextDim; break;
+                case LogKind.Normal: c = Theme.Text; break;
             }
             _out.SelectionStart = _out.TextLength;
             _out.SelectionLength = 0;

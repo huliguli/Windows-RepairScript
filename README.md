@@ -17,6 +17,7 @@ Kompiliert als echte `.exe` mit dem in Windows enthaltenen C#-Compiler – **kei
 Dazu:
 
 - Dunkle Oberfläche mit Kategorie-Sidebar und Live-Ausgabe (inkl. Log-Export)
+- Ein-/ausklappbare, dezente Ausgabe-Konsole – eingeklappt erscheinen kurze Hinweis-Toasts oben rechts
 - Optionaler **Wiederherstellungspunkt** vor jeder Reparatur (ein Klick im Kopfbereich)
 - Startet automatisch mit Administratorrechten (UAC)
 

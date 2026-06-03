@@ -6,6 +6,7 @@
 - Komplett neu als **native Windows-App** (`.exe`, C#/WinForms) statt reiner Batch
 - Grafische Oberfläche mit dunklem Theme und Kategorie-Sidebar: Reparieren, Netzwerk, Aufräumen, Diagnose
 - Rund 20 Wartungsaktionen mit Live-Ausgabe und Log-Export
+- Dezente, ein-/ausklappbare Ausgabe-Konsole; bei eingeklappter Konsole sanft eingeblendete Hinweis-Widgets (Toasts) oben rechts
 - Optionaler Wiederherstellungspunkt vor jeder Reparatur
 - Startet automatisch mit Adminrechten (UAC), eigenes App-Icon, dunkle Titelleiste
 - Build komplett ohne SDK über den eingebauten `csc.exe`

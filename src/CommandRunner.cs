@@ -12,16 +12,19 @@ namespace WartungsToolbox
         readonly Control _ui;
         readonly Action<string, LogKind> _log;
         readonly Action<bool> _onState;
+        readonly Action<string, LogKind, string> _onComplete;
         Process _current;
         volatile bool _cancel;
 
         public bool Running { get; private set; }
 
-        public CommandRunner(Control ui, Action<string, LogKind> log, Action<bool> onState)
+        public CommandRunner(Control ui, Action<string, LogKind> log, Action<bool> onState,
+                             Action<string, LogKind, string> onComplete)
         {
             _ui = ui;
             _log = log;
             _onState = onState;
+            _onComplete = onComplete;
         }
 
         void Log(string s, LogKind k)
@@ -64,19 +67,38 @@ namespace WartungsToolbox
                     if (code != 0) problem = true;
                 }
                 sw.Stop();
+                LogKind fk;
+                string fmsg;
                 if (_cancel)
+                {
                     Log("✖  Abgebrochen.", LogKind.Bad);
+                    fk = LogKind.Bad; fmsg = "Abgebrochen";
+                }
                 else if (problem)
+                {
                     Log(string.Format("●  Fertig mit Hinweisen ({0:0.0}s) – siehe ExitCodes oben.", sw.Elapsed.TotalSeconds), LogKind.Warn);
+                    fk = LogKind.Warn; fmsg = "Mit Hinweisen abgeschlossen";
+                }
                 else
+                {
                     Log(string.Format("✔  Fertig in {0:0.0}s", sw.Elapsed.TotalSeconds), LogKind.Good);
+                    fk = LogKind.Good; fmsg = string.Format("Erfolgreich in {0:0.0}s", sw.Elapsed.TotalSeconds);
+                }
                 Log("", LogKind.Normal);
 
                 Running = false;
                 _current = null;
+                string ftitle = title;
                 if (_ui != null && _ui.IsHandleCreated)
                 {
-                    try { _ui.BeginInvoke((Action)delegate { _onState(false); }); }
+                    try
+                    {
+                        _ui.BeginInvoke((Action)delegate
+                        {
+                            _onState(false);
+                            if (_onComplete != null) _onComplete(ftitle, fk, fmsg);
+                        });
+                    }
                     catch { }
                 }
             });
