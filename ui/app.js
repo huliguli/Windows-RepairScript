@@ -207,7 +207,7 @@ function renderDashboard(){
           '<div class="info-row"><span>Windows</span><b id="i-os">–</b></div>'+
           '<div class="info-row"><span>Gerät</span><b id="i-model">–</b></div>'+
           '<div class="info-row"><span>Arbeitsspeicher</span><b id="i-ram">–</b></div>'+
-          '<div class="info-row"><span>Freier Speicher</span><b id="i-disk">–</b></div>'+
+          '<div id="i-drives"></div>'+
           '<div class="info-row"><span>Eingeschaltet seit</span><b id="i-uptime">–</b></div>'+
         '</div>'+
       '</div>'+
@@ -239,7 +239,16 @@ function updateStats(s){
   }
   dTxt('#i-os', s.os); dTxt('#i-model', s.model);
   dTxt('#i-ram', s.ramUsedGB+' / '+s.ramTotalGB+' GB ('+s.ram+'%)');
-  dTxt('#i-disk', s.diskFreeGB+' GB frei von '+s.diskTotalGB+' GB');
+  const dv=$('#i-drives');
+  if(dv){
+    dv.innerHTML='';
+    (s.drives||[]).forEach(d=>{
+      const row=document.createElement('div'); row.className='info-row';
+      const span=document.createElement('span'); span.textContent='Laufwerk '+d.name+(d.label?' · '+d.label:'');
+      const b=document.createElement('b'); b.textContent=d.freeGB+' GB frei / '+d.totalGB+' GB';
+      row.appendChild(span); row.appendChild(b); dv.appendChild(row);
+    });
+  }
   dTxt('#i-uptime', s.uptime);
 }
 

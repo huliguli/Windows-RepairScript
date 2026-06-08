@@ -1,5 +1,10 @@
 # Changelog
 
+## [4.7] - 2026-06-09
+
+### Geändert
+- **Übersicht** zeigt jetzt den freien Speicher **aller fest verbauten Laufwerke** (z. B. C: und D:) statt nur des System-Laufwerks
+
 ## [4.6] - 2026-06-09
 
 ### Neu

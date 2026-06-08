@@ -152,6 +152,31 @@ namespace WartungsToolbox
                 }
                 catch { }
 
+                // Alle fest verbauten Laufwerke
+                List<object> drives = new List<object>();
+                try
+                {
+                    foreach (DriveInfo dr in DriveInfo.GetDrives())
+                    {
+                        try
+                        {
+                            if (dr.DriveType != DriveType.Fixed || !dr.IsReady || dr.TotalSize <= 0) continue;
+                            string lbl = "";
+                            try { lbl = dr.VolumeLabel ?? ""; } catch { }
+                            drives.Add(new
+                            {
+                                name = dr.Name.TrimEnd('\\'),
+                                label = lbl,
+                                freeGB = Math.Round(dr.TotalFreeSpace / 1073741824.0, 1),
+                                totalGB = Math.Round(dr.TotalSize / 1073741824.0, 1),
+                                used = (int)Math.Round(100.0 * (dr.TotalSize - dr.TotalFreeSpace) / dr.TotalSize)
+                            });
+                        }
+                        catch { }
+                    }
+                }
+                catch { }
+
                 ulong upMs = GetTickCount64();
                 double upDays = upMs / 86400000.0;
 
@@ -179,6 +204,7 @@ namespace WartungsToolbox
                     uptime = FormatUptime(upMs),
                     os = _osInfo,
                     model = _modelInfo,
+                    drives = drives,
                     score = score,
                     recs = recs
                 });
