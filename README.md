@@ -21,6 +21,7 @@ Dazu:
 - **Warteschlange** – mehrere Aktionen nacheinander abarbeiten (z. B. Reparatur → Aufräumen → Herunterfahren)
 - **Nach Fertigstellung** – wahlweise Herunterfahren oder Neustart mit Countdown (jederzeit abbrechbar)
 - Optionaler **Wiederherstellungspunkt** vor jeder Reparatur
+- **Auto-Update** – prüft beim Start auf neue GitHub-Releases und bietet den Download an
 - Startet automatisch mit Administratorrechten (UAC)
 
 ## Aufbau

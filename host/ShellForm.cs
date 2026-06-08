@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Net;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Text;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
@@ -26,6 +28,10 @@ namespace WartungsToolbox
 
         string _pendingPost = "none";
         int _pendingDelay = 60;
+
+        const string Repo = "huliguli/Windows-RepairScript";
+        string _updateUrl;
+        string _updateTag;
 
         [DllImport("user32.dll")] static extern bool ReleaseCapture();
         [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
@@ -99,8 +105,110 @@ namespace WartungsToolbox
             else if (_view == "toast") suffix = "#toast";
             else if (_view == "queue") suffix = "#queue";
             else if (_view == "shutdown") suffix = "#shutdown";
+            else if (_view == "update") suffix = "#update";
 
             _web.Source = new Uri("https://app/index.html" + suffix);
+
+            if (_shotPath == null) StartUpdateCheck();
+        }
+
+        // ---------- Update-Prüfung (GitHub-Releases) ----------
+        void StartUpdateCheck()
+        {
+            Thread t = new Thread(delegate ()
+            {
+                try
+                {
+                    Thread.Sleep(1500); // dem UI Zeit zum Laden geben
+                    try { ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12; } catch { }
+
+                    HttpWebRequest req = (HttpWebRequest)WebRequest.Create(
+                        "https://api.github.com/repos/" + Repo + "/releases/latest");
+                    req.UserAgent = "WindowsWartung-Updater";
+                    req.Accept = "application/vnd.github+json";
+                    req.Timeout = 8000;
+
+                    string json;
+                    using (WebResponse resp = req.GetResponse())
+                    using (Stream s = resp.GetResponseStream())
+                    using (StreamReader sr = new StreamReader(s))
+                        json = sr.ReadToEnd();
+
+                    Dictionary<string, object> data = _js.DeserializeObject(json) as Dictionary<string, object>;
+                    if (data == null) return;
+
+                    string tag = data.ContainsKey("tag_name") ? Convert.ToString(data["tag_name"]) : null;
+                    string url = data.ContainsKey("html_url") ? Convert.ToString(data["html_url"]) : null;
+                    string name = data.ContainsKey("name") ? Convert.ToString(data["name"]) : "";
+                    if (string.IsNullOrEmpty(tag)) return;
+
+                    Version latest = ParseVer(tag);
+                    Version cur = typeof(ShellForm).Assembly.GetName().Version;
+                    if (latest == null || latest <= cur) return;
+                    if (ReadSkip() == tag) return;
+
+                    _updateTag = tag;
+                    _updateUrl = string.IsNullOrEmpty(url) ? "https://github.com/" + Repo + "/releases/latest" : url;
+
+                    if (_web != null && _web.IsHandleCreated)
+                    {
+                        string ftag = tag, fname = name;
+                        try
+                        {
+                            _web.BeginInvoke((Action)delegate
+                            {
+                                Post(new { type = "update", version = ftag, notes = fname });
+                            });
+                        }
+                        catch { }
+                    }
+                }
+                catch { } // kein Release / offline / Fehler -> einfach still
+            });
+            t.IsBackground = true;
+            t.Start();
+        }
+
+        void OpenUpdate()
+        {
+            if (string.IsNullOrEmpty(_updateUrl) || !_updateUrl.StartsWith("http")) return;
+            try { Process.Start(new ProcessStartInfo(_updateUrl) { UseShellExecute = true }); }
+            catch { }
+        }
+
+        static Version ParseVer(string tag)
+        {
+            if (tag == null) return null;
+            string s = tag.TrimStart('v', 'V', ' ');
+            StringBuilder sb = new StringBuilder();
+            foreach (char c in s) { if (char.IsDigit(c) || c == '.') sb.Append(c); else break; }
+            string v = sb.ToString().Trim('.');
+            if (v.Length == 0) return null;
+            if (v.IndexOf('.') < 0) v += ".0";
+            Version res;
+            return Version.TryParse(v, out res) ? res : null;
+        }
+
+        static string SkipPath()
+        {
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "WindowsWartung", "skip_version.txt");
+        }
+        static string ReadSkip()
+        {
+            try { return File.Exists(SkipPath()) ? File.ReadAllText(SkipPath()).Trim() : ""; }
+            catch { return ""; }
+        }
+        static void WriteSkip(string v)
+        {
+            if (string.IsNullOrEmpty(v)) return;
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(SkipPath()));
+                File.WriteAllText(SkipPath(), v);
+            }
+            catch { }
         }
 
         async void OnNavForShot(object sender, CoreWebView2NavigationCompletedEventArgs e)
@@ -162,6 +270,8 @@ namespace WartungsToolbox
             }
             else if (type == "cancel") { if (_runner != null) _runner.Cancel(); }
             else if (type == "cancelShutdown") CancelShutdown();
+            else if (type == "openUpdate") OpenUpdate();
+            else if (type == "skipUpdate") WriteSkip(_updateTag);
             else if (type == "save") SaveLog();
             else if (type == "win") Win(Str(m, "action"));
         }

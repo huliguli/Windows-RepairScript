@@ -78,6 +78,7 @@ function onHost(m){
   else if(m.type==='done')  onDone(m.title, m.kind, m.message);
   else if(m.type==='shutdownScheduled') showShutdownBar(m.mode, m.delay);
   else if(m.type==='shutdownCancelled') hideShutdownBar();
+  else if(m.type==='update') showUpdate(m.version, m.notes);
 }
 
 /* ---------- DOM ---------- */
@@ -93,6 +94,8 @@ $('#btn-collapse').innerHTML = svg('chevron');
 $('#queue-btn .qb-ico').innerHTML = svg('layers');
 $('#q-close').innerHTML = svg('close');
 $('#shutdown-bar .sb-ico').innerHTML = svg('power');
+$('#update-bar .ub-ico').innerHTML = svg('download');
+$('#ub-skip').innerHTML = svg('close');
 document.querySelector('.wc[data-win="min"]').innerHTML = svg('min');
 document.querySelector('.wc[data-win="max"]').innerHTML = svg('max');
 document.querySelector('.wc[data-win="close"]').innerHTML = svg('close');
@@ -275,6 +278,14 @@ function showShutdownBar(mode, secs){
 function hideShutdownBar(){ if(sbTimer){clearInterval(sbTimer);sbTimer=null;} $('#shutdown-bar').classList.remove('show'); }
 $('#sb-cancel').onclick=()=>{ send({type:'cancelShutdown'}); hideShutdownBar(); };
 
+/* ---------- Update-Banner ---------- */
+function showUpdate(version, notes){
+  $('#ub-text').innerHTML = 'Neue Version <b>'+version+'</b> verfügbar';
+  $('#update-bar').classList.add('show');
+}
+$('#ub-get').onclick=()=>send({type:'openUpdate'});
+$('#ub-skip').onclick=()=>{ send({type:'skipUpdate'}); $('#update-bar').classList.remove('show'); };
+
 /* ---------- Toasts ---------- */
 function toast(title, msg, kind){
   const ico = kind==='good'?'check':(kind==='warn'?'warn':'xcirc');
@@ -365,6 +376,7 @@ if(location.hash.indexOf('queue')>=0){
   renderQueue(); openQueue(true);
 }
 if(location.hash.indexOf('shutdown')>=0){ showShutdownBar('shutdown', 58); }
+if(location.hash.indexOf('update')>=0){ showUpdate('v4.2'); }
 if(location.hash.indexOf('toast')>=0){
   setConsole(false);
   toast('SFC scannow','Erfolgreich – keine Fehler','good');

@@ -1,5 +1,10 @@
 # Changelog
 
+## [4.2] - 2026-06-03
+
+### Neu
+- **Auto-Update** – beim Start prüft die App per GitHub-API auf ein neueres Release und blendet bei Bedarf oben einen Hinweis mit „Herunterladen" ein (inkl. „diese Version überspringen"). Ohne veröffentlichtes Release oder ohne Internet passiert nichts.
+
 ## [4.1] - 2026-06-03
 
 ### Neu

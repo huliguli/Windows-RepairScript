@@ -282,6 +282,21 @@ body::before{
 .primary:hover{filter:brightness(1.08)}
 .primary:disabled{opacity:.45;cursor:default;filter:none}
 
+/* ---------- Update-Banner ---------- */
+#update-bar{position:fixed;left:50%;top:-80px;transform:translateX(-50%);z-index:72;display:flex;align-items:center;gap:13px;
+  padding:11px 12px 11px 16px;border-radius:13px;background:rgba(18,28,30,.92);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  border:1px solid rgba(45,212,191,.4);box-shadow:var(--shadow-lg);transition:top .42s var(--ease)}
+#update-bar.show{top:calc(var(--tb-h) + 12px)}
+#update-bar .ub-ico{width:20px;height:20px;color:var(--accent);display:grid;place-items:center}
+#update-bar .ub-ico svg{width:20px;height:20px}
+#ub-text{font-size:13.5px;color:var(--text)}
+#ub-text b{color:var(--accent)}
+#ub-get{border:0;background:linear-gradient(120deg,var(--accent),var(--accent-2));color:#04221e;font:inherit;font-size:12.5px;font-weight:600;padding:7px 14px;border-radius:9px;cursor:pointer;transition:filter .15s}
+#ub-get:hover{filter:brightness(1.08)}
+#ub-skip{width:30px;height:30px;border:0;background:transparent;color:var(--mute);border-radius:8px;cursor:pointer;display:grid;place-items:center;transition:background .15s,color .15s}
+#ub-skip:hover{background:var(--surface-hi);color:var(--text)}
+#ub-skip svg{width:14px;height:14px}
+
 /* ---------- Shutdown-Banner ---------- */
 #shutdown-bar{position:fixed;left:50%;bottom:-80px;transform:translateX(-50%);z-index:70;display:flex;align-items:center;gap:14px;
   padding:13px 16px 13px 18px;border-radius:14px;background:rgba(34,24,18,.92);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
