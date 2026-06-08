@@ -115,16 +115,18 @@ body::before{
 .admin-badge .dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)}
 
 /* ---------- Hauptbereich ---------- */
-#main{flex:1;display:flex;flex-direction:column;min-width:0;position:relative}
+#main{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;position:relative}
 #cat-header{padding:22px 26px 12px;display:flex;align-items:flex-end;justify-content:space-between}
 #cat-title{font-size:22px;font-weight:600;letter-spacing:.2px}
 #cat-hint{color:var(--mute);font-size:12.5px;margin-top:3px}
 
 #cards{
-  flex:1;overflow-y:auto;padding:8px 26px 26px;
+  flex:1;min-height:0;overflow-y:auto;padding:8px 26px 244px;
   display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));
   gap:14px;align-content:start;
 }
+/* Unten Platz lassen, damit Inhalt nicht hinter der Konsole verschwindet */
+#main.collapsed #cards{padding-bottom:46px}
 .card{
   position:relative;display:flex;gap:14px;padding:17px;cursor:pointer;
   background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
@@ -378,6 +380,17 @@ body::before{
 .mb.ok:hover{filter:brightness(1.08)}
 @keyframes ovIn{from{opacity:0}to{opacity:1}}
 @keyframes modalIn{from{opacity:0;transform:translateY(10px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+
+/* ---------- Resize-Greifzonen (rahmenloses Fenster) ---------- */
+.rz{position:fixed;z-index:95}
+.rz-t{top:0;left:10px;right:10px;height:5px;cursor:ns-resize}
+.rz-b{bottom:0;left:10px;right:10px;height:5px;cursor:ns-resize}
+.rz-l{left:0;top:10px;bottom:10px;width:5px;cursor:ew-resize}
+.rz-r{right:0;top:10px;bottom:10px;width:5px;cursor:ew-resize}
+.rz-tl{top:0;left:0;width:10px;height:10px;cursor:nwse-resize}
+.rz-tr{top:0;right:0;width:10px;height:10px;cursor:nesw-resize}
+.rz-bl{bottom:0;left:0;width:10px;height:10px;cursor:nesw-resize}
+.rz-br{bottom:0;right:0;width:10px;height:10px;cursor:nwse-resize}
 
 /* ---------- Scrollbalken ---------- */
 ::-webkit-scrollbar{width:10px;height:10px}

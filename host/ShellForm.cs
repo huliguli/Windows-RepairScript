@@ -76,7 +76,8 @@ namespace WartungsToolbox
             FormBorderStyle = FormBorderStyle.None;
             BackColor = Color.FromArgb(13, 15, 20);
             ClientSize = new Size(1180, 760);
-            MinimumSize = new Size(940, 600);
+            MinimumSize = new Size(700, 500);
+            if (_view == "small") ClientSize = new Size(780, 540); // Test: kleines Fenster -> Scrollen
             StartPosition = FormStartPosition.CenterScreen;
             Text = "Windows-Wartung";
             DoubleBuffered = true;
@@ -633,6 +634,7 @@ namespace WartungsToolbox
             else if (type == "skipUpdate") WriteSkip(_updateTag);
             else if (type == "save") SaveLog();
             else if (type == "win") Win(Str(m, "action"));
+            else if (type == "resize") BeginResize(Str(m, "dir"));
         }
 
         void Win(string a)
@@ -649,6 +651,27 @@ namespace WartungsToolbox
                 ReleaseCapture();
                 SendMessage(Handle, 0xA1, (IntPtr)0x2, IntPtr.Zero); // WM_NCLBUTTONDOWN / HTCAPTION
             }
+        }
+
+        // Fenstergröße über die Greifzonen am Rand ändern
+        void BeginResize(string dir)
+        {
+            if (WindowState != FormWindowState.Normal) return;
+            int ht;
+            switch (dir)
+            {
+                case "t": ht = 12; break;   // HTTOP
+                case "b": ht = 15; break;   // HTBOTTOM
+                case "l": ht = 10; break;   // HTLEFT
+                case "r": ht = 11; break;   // HTRIGHT
+                case "tl": ht = 13; break;  // HTTOPLEFT
+                case "tr": ht = 14; break;  // HTTOPRIGHT
+                case "bl": ht = 16; break;  // HTBOTTOMLEFT
+                case "br": ht = 17; break;  // HTBOTTOMRIGHT
+                default: return;
+            }
+            ReleaseCapture();
+            SendMessage(Handle, 0xA1, (IntPtr)ht, IntPtr.Zero); // WM_NCLBUTTONDOWN
         }
 
         // ---------- Runner-Callbacks -> ans UI ----------

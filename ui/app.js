@@ -497,6 +497,10 @@ const tbDrag=document.querySelector('.tb-left');
 tbDrag.addEventListener('mousedown', e=>{ if(e.button===0) send({type:'win', action:'drag'}); });
 tbDrag.addEventListener('dblclick', ()=>send({type:'win', action:'max'}));
 
+document.querySelectorAll('.rz').forEach(g=>{
+  g.addEventListener('mousedown', e=>{ if(e.button===0){ e.preventDefault(); send({type:'resize', dir:g.dataset.rz}); } });
+});
+
 /* ---------- Mock (Browser-Vorschau ohne C#) ---------- */
 function mockRun(jobs, mPost, mDelay){
   setRunning(true);

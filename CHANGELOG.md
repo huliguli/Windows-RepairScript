@@ -1,5 +1,11 @@
 # Changelog
 
+## [4.9] - 2026-06-09
+
+### Behoben
+- **Scrollen** – zu lange Inhalte lassen sich jetzt scrollen (vorher abgeschnitten) und verschwinden nicht mehr hinter der Ausgabe-Konsole
+- **Fenstergröße** – das rahmenlose Fenster lässt sich an allen Kanten und Ecken größer/kleiner ziehen; kleinere Mindestgröße
+
 ## [4.8] - 2026-06-09
 
 ### Behoben (Installer)
