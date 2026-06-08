@@ -1,5 +1,10 @@
 # Changelog
 
+## [4.5] - 2026-06-03
+
+### Behoben
+- **Fenster im Vordergrund** – die App holt sich beim Start zuverlässig den Fokus (auch als elevierte/UAC-Anwendung), statt im Hintergrund zu öffnen
+
 ## [4.4] - 2026-06-03
 
 ### Behoben

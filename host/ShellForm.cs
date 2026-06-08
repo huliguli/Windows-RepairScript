@@ -38,6 +38,12 @@ namespace WartungsToolbox
         [DllImport("user32.dll")] static extern bool ReleaseCapture();
         [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
         [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int val, int size);
+        [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hWnd);
+        [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr hWnd);
+        [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+        [DllImport("user32.dll")] static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+        [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
 
         public ShellForm(string shotPath, string view)
         {
@@ -61,6 +67,36 @@ namespace WartungsToolbox
             catch { }
 
             Load += OnLoad;
+            Shown += delegate { ForceForeground(); };
+        }
+
+        // Bringt das Fenster beim Start zuverlässig in den Vordergrund (auch elevated/UAC)
+        void ForceForeground()
+        {
+            if (_shotPath != null) return;
+            try
+            {
+                if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+
+                IntPtr fore = GetForegroundWindow();
+                uint forePid;
+                uint foreThread = GetWindowThreadProcessId(fore, out forePid);
+                uint thisThread = GetCurrentThreadId();
+
+                bool attached = false;
+                if (foreThread != 0 && foreThread != thisThread)
+                    attached = AttachThreadInput(thisThread, foreThread, true);
+
+                TopMost = true;
+                TopMost = false;
+                BringWindowToTop(Handle);
+                SetForegroundWindow(Handle);
+                Activate();
+
+                if (attached)
+                    AttachThreadInput(thisThread, foreThread, false);
+            }
+            catch { }
         }
 
         async void OnLoad(object sender, EventArgs e)
