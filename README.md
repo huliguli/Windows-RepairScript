@@ -14,6 +14,8 @@ Die Oberfläche ist in HTML/CSS gebaut und läuft in einem schlanken **WebView2*
 
 **Diagnose** — System-Übersicht, Festplatten-Gesundheit (SMART), Akkubericht, Defender-Schnellscan, RAM-Diagnose
 
+**Autostart** — alle Startprogramme anzeigen und per Schalter an-/abschalten (umkehrbar)
+
 Dazu:
 
 - **Dashboard** – Startseite mit Live-Systemzustand (Prozessor/RAM/Festplatte), Gesundheits-Score und konkreten Empfehlungen
@@ -24,6 +26,8 @@ Dazu:
 - **Nach Fertigstellung** – wahlweise Herunterfahren oder Neustart mit Countdown (jederzeit abbrechbar)
 - Optionaler **Wiederherstellungspunkt** vor jeder Reparatur
 - **Auto-Update** – prüft beim Start auf neue Releases; auf Wunsch lädt die App das Update herunter, installiert es und startet sich neu
+- **Windows-Benachrichtigungen** bei Abschluss/Fehler (wenn das Fenster im Hintergrund ist), Tray-Icon
+- **Einstellungen** – Akzentfarbe, Konsole-Verhalten, Benachrichtigungen
 - Startet automatisch mit Administratorrechten (UAC)
 
 ## Aufbau

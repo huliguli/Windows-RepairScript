@@ -68,6 +68,9 @@ namespace WartungsToolbox
         ulong _lastIdle, _lastKernel, _lastUser;
         string _osInfo, _modelInfo;
 
+        NotifyIcon _tray;
+        bool _notifyEnabled = true;
+
         public ShellForm(string shotPath, string view)
         {
             _shotPath = shotPath;
@@ -92,6 +95,22 @@ namespace WartungsToolbox
 
             Load += OnLoad;
             Shown += delegate { ForceForeground(); };
+            FormClosed += delegate { try { if (_tray != null) { _tray.Visible = false; _tray.Dispose(); } } catch { } };
+        }
+
+        // Windows-Benachrichtigung (nur wenn das Fenster im Hintergrund/minimiert ist)
+        void Notify(string title, string message, LogKind kind)
+        {
+            if (!_notifyEnabled || _tray == null) return;
+            try
+            {
+                bool fg = (WindowState != FormWindowState.Minimized) && (GetForegroundWindow() == Handle);
+                if (fg) return;
+                ToolTipIcon ic = kind == LogKind.Good ? ToolTipIcon.Info
+                               : (kind == LogKind.Bad ? ToolTipIcon.Error : ToolTipIcon.Warning);
+                _tray.ShowBalloonTip(5000, "Windows-Wartung", title + " – " + message, ic);
+            }
+            catch { }
         }
 
         // ---------- Dashboard: Live-Systemzustand ----------
@@ -286,6 +305,16 @@ namespace WartungsToolbox
 
             try
             {
+                _tray = new NotifyIcon();
+                _tray.Icon = Icon ?? System.Drawing.SystemIcons.Application;
+                _tray.Text = "Windows-Wartung";
+                _tray.Visible = true;
+                _tray.DoubleClick += delegate { WindowState = FormWindowState.Normal; ForceForeground(); };
+            }
+            catch { }
+
+            try
+            {
                 string udf = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                     "WindowsWartung", "WebView2");
@@ -329,6 +358,8 @@ namespace WartungsToolbox
             else if (_view == "updating") suffix = "#updating";
             else if (_view == "updated") suffix = "#updated";
             else if (_view == "info") suffix = "#info";
+            else if (_view == "autostart") suffix = "#autostart";
+            else if (_view == "settings") suffix = "#settings";
 
             _web.Source = new Uri("https://app/index.html" + suffix);
             // Update-Prüfung startet erst, wenn das UI 'ready' meldet (siehe OnReady)
@@ -635,6 +666,9 @@ namespace WartungsToolbox
             else if (type == "save") SaveLog();
             else if (type == "win") Win(Str(m, "action"));
             else if (type == "resize") BeginResize(Str(m, "dir"));
+            else if (type == "setNotify") _notifyEnabled = ToBool(m, "on");
+            else if (type == "autostartList") Post(new { type = "autostart", items = Autostart.List() });
+            else if (type == "autostartSet") Autostart.SetEnabled(Str(m, "loc"), Str(m, "key"), ToBool(m, "enable"));
         }
 
         void Win(string a)
@@ -686,6 +720,7 @@ namespace WartungsToolbox
             Post(new { type = "done", title = title, kind = KindStr(k), message = message });
             if (k != LogKind.Bad && _pendingPost != "none") ScheduleShutdown();
             _pendingPost = "none";
+            Notify(title, message, k);
         }
 
         List<Step> BuildSteps(MaintenanceAction a, bool restore)

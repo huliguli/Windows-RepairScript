@@ -24,7 +24,7 @@ try {
     ) -join ','
 
     $sources = @(
-        'host\Program.cs','host\ShellForm.cs',
+        'host\Program.cs','host\ShellForm.cs','host\Autostart.cs',
         'src\ActionCatalog.cs','src\MaintenanceAction.cs','src\CommandRunner.cs',
         'src\NativeMethods.cs','src\AssemblyInfo.cs'
     )

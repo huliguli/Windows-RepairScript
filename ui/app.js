@@ -26,6 +26,8 @@ const ICONS = {
   power:'<path d="M12 3v9"/><path d="M6.4 6.4a8 8 0 1 0 11.2 0"/>',
   dashboard:'<rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="5" rx="1"/><rect x="13" y="11" width="8" height="10" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/>',
   help:'<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
+  rocket:'<path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.79-.78.8-2.07.09-2.91a2.18 2.18 0 0 0-3.09-.09Z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-3 2Z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M15 9v5s-3.03-.55-4-2c-1.08-1.62 0-5 0-5"/>',
+  gear:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>',
   min:'<path d="M5 12h14"/>',
   max:'<rect x="5" y="5" width="14" height="14" rx="2"/>',
   close:'<path d="M6 6l12 12"/><path d="M18 6 6 18"/>',
@@ -37,11 +39,13 @@ function svg(name){return '<svg viewBox="0 0 24 24" fill="none" stroke="currentC
 
 /* ---------- Kategorien + Aktionen (Spiegel zum C#-Katalog) ---------- */
 const CATS = [
-  {name:'Übersicht',  icon:'dashboard'},
-  {name:'Reparieren', icon:'wrench'},
-  {name:'Netzwerk',   icon:'globe'},
-  {name:'Aufräumen',  icon:'trash'},
-  {name:'Diagnose',   icon:'activity'},
+  {name:'Übersicht',    icon:'dashboard'},
+  {name:'Reparieren',   icon:'wrench'},
+  {name:'Netzwerk',     icon:'globe'},
+  {name:'Aufräumen',    icon:'trash'},
+  {name:'Diagnose',     icon:'activity'},
+  {name:'Autostart',    icon:'rocket'},
+  {name:'Einstellungen',icon:'gear'},
 ];
 const ACTIONS = [
   {id:0,  cat:'Reparieren', icon:'wrench',      title:'Komplett-Reparatur', rec:true,  desc:'DISM ScanHealth + RestoreHealth, danach SFC. Der Rundum-Sorglos-Lauf.'},
@@ -111,6 +115,7 @@ function onHost(m){
   else if(m.type==='updateError') setUpdateError(m.message);
   else if(m.type==='updated') toast('Aktualisiert','Erfolgreich auf '+m.version+' aktualisiert','good');
   else if(m.type==='stats') updateStats(m);
+  else if(m.type==='autostart') renderAutostartList(m.items);
 }
 
 /* ---------- DOM ---------- */
@@ -120,6 +125,28 @@ const consoleEl = $('#console'), main = $('#main'), statusEl = $('#status'), sta
 let active = 'Reparieren', running = false;
 let post = 'none', delay = 60;
 let queue = [];
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+const ACCENTS = {
+  teal:    ['#2dd4bf','#38bdf8'],
+  blau:    ['#3b82f6','#22d3ee'],
+  violett: ['#8b5cf6','#a78bfa'],
+  gruen:   ['#22c55e','#4ade80'],
+  orange:  ['#fb923c','#fbbf24'],
+};
+function applyAccent(name){
+  const c = ACCENTS[name] || ACCENTS.teal;
+  document.documentElement.style.setProperty('--accent', c[0]);
+  document.documentElement.style.setProperty('--accent-2', c[1]);
+}
+const SET = {
+  accent:      localStorage.getItem('accent') || 'teal',
+  consoleOpen: localStorage.getItem('consoleOpen') !== 'false',
+  confirmAll:  localStorage.getItem('confirmAll') === 'true',
+  notify:      localStorage.getItem('notify') !== 'false',
+};
+applyAccent(SET.accent);
 
 $('#appmark').innerHTML = svg('wrench');
 $('#btn-collapse').innerHTML = svg('chevron');
@@ -145,6 +172,7 @@ function buildNav(){
 }
 function selectCat(name){
   active=name; buildNav();
+  cards.classList.remove('dashboard','settings','autostart');
   const isDash = (name==='Übersicht');
   send({type:'dashboard', active:isDash});
   if(isDash){
@@ -153,7 +181,21 @@ function selectCat(name){
     renderDashboard();
     return;
   }
-  cards.classList.remove('dashboard');
+  if(name==='Autostart'){
+    $('#cat-title').textContent='Autostart';
+    $('#cat-hint').textContent='Programme, die beim Start mitlaufen';
+    cards.classList.add('autostart');
+    renderAutostart();
+    send({type:'autostartList'});
+    return;
+  }
+  if(name==='Einstellungen'){
+    $('#cat-title').textContent='Einstellungen';
+    $('#cat-hint').textContent='Aussehen & Verhalten';
+    cards.classList.add('settings');
+    renderSettings();
+    return;
+  }
   const list=ACTIONS.filter(a=>a.cat===name);
   $('#cat-title').textContent=name;
   $('#cat-hint').textContent=list.length+' Aktionen · klicken zum Ausführen';
@@ -252,6 +294,63 @@ function updateStats(s){
   dTxt('#i-uptime', s.uptime);
 }
 
+/* ---------- Autostart ---------- */
+function renderAutostart(){
+  cards.innerHTML='<div class="as-loading">Autostart wird geladen …</div>';
+}
+function renderAutostartList(items){
+  if(!cards.classList.contains('autostart')) return;
+  if(!items || !items.length){ cards.innerHTML='<div class="as-loading">Keine Autostart-Einträge gefunden.</div>'; return; }
+  const groups={}; items.forEach(it=>{ (groups[it.locName]=groups[it.locName]||[]).push(it); });
+  let html='<div class="as-wrap">';
+  Object.keys(groups).forEach(g=>{
+    html+='<div class="as-group">'+esc(g)+'</div>';
+    groups[g].forEach(it=>{
+      html+='<div class="as-item'+(it.enabled?'':' off')+'">'+
+        '<div class="as-info"><div class="as-name">'+esc(it.name)+'</div><div class="as-cmd">'+esc(it.cmd||'')+'</div></div>'+
+        '<span class="switch"><input type="checkbox" data-loc="'+esc(it.loc)+'" data-key="'+esc(it.key)+'"'+(it.enabled?' checked':'')+'/><i></i></span>'+
+      '</div>';
+    });
+  });
+  html+='</div>';
+  cards.innerHTML=html;
+  cards.querySelectorAll('.as-item input').forEach(inp=>{
+    inp.onchange=()=>{
+      inp.closest('.as-item').classList.toggle('off', !inp.checked);
+      send({type:'autostartSet', loc:inp.dataset.loc, key:inp.dataset.key, enable:inp.checked});
+    };
+  });
+}
+
+/* ---------- Einstellungen ---------- */
+function toggleHTML(id, on){ return '<span class="switch"><input type="checkbox" id="'+id+'"'+(on?' checked':'')+'/><i></i></span>'; }
+function renderSettings(){
+  let sw='';
+  Object.keys(ACCENTS).forEach(k=>{
+    const c=ACCENTS[k];
+    sw+='<button class="swatch'+(SET.accent===k?' active':'')+'" data-acc="'+k+'" style="background:linear-gradient(135deg,'+c[0]+','+c[1]+')" title="'+k+'"></button>';
+  });
+  cards.innerHTML=
+    '<div class="settings-wrap">'+
+      '<div class="set-card">'+
+        '<div class="set-row"><div class="set-text"><div class="set-title">Windows-Benachrichtigungen</div><div class="set-desc">Mitteilung anzeigen, wenn eine Aktion fertig ist (während das Fenster im Hintergrund ist)</div></div>'+toggleHTML('s-notify', SET.notify)+'</div>'+
+        '<div class="set-row"><div class="set-text"><div class="set-title">Konsole beim Start öffnen</div><div class="set-desc">Den Ausgabe-Bereich direkt sichtbar anzeigen</div></div>'+toggleHTML('s-console', SET.consoleOpen)+'</div>'+
+        '<div class="set-row"><div class="set-text"><div class="set-title">Immer vor dem Ausführen fragen</div><div class="set-desc">Sicherheitsabfrage auch für harmlose Aktionen</div></div>'+toggleHTML('s-confirm', SET.confirmAll)+'</div>'+
+      '</div>'+
+      '<div class="set-card">'+
+        '<div class="set-title">Akzentfarbe</div>'+
+        '<div class="set-desc" style="margin-bottom:14px">Farbe der Oberfläche</div>'+
+        '<div class="swatches">'+sw+'</div>'+
+      '</div>'+
+    '</div>';
+  $('#s-notify').onchange=e=>{ SET.notify=e.target.checked; localStorage.setItem('notify', SET.notify); send({type:'setNotify', on:SET.notify}); };
+  $('#s-console').onchange=e=>{ SET.consoleOpen=e.target.checked; localStorage.setItem('consoleOpen', SET.consoleOpen); };
+  $('#s-confirm').onchange=e=>{ SET.confirmAll=e.target.checked; localStorage.setItem('confirmAll', SET.confirmAll); };
+  cards.querySelectorAll('.swatch').forEach(b=>{
+    b.onclick=()=>{ SET.accent=b.dataset.acc; localStorage.setItem('accent', SET.accent); applyAccent(SET.accent); cards.querySelectorAll('.swatch').forEach(x=>x.classList.toggle('active', x===b)); };
+  });
+}
+
 /* ---------- Konsole ---------- */
 function append(text, kind){
   const ln=document.createElement('div');
@@ -301,6 +400,7 @@ function run(a){
   const restore = $('#restore').checked;
   const payload = ()=>send({type:'run', id:a.id, restore:restore, post:post, delay:delay});
   if(a.danger) confirmModal(a.title, a.desc, payload);
+  else if(SET.confirmAll) confirmModal(a.title, 'Diese Aktion jetzt ausführen?', payload);
   else payload();
 }
 function onDone(title, kind, message){
@@ -549,6 +649,8 @@ buildNav();
 selectCat('Übersicht');
 renderQueue();
 welcome();
+setConsole(SET.consoleOpen);
+send({type:'setNotify', on:SET.notify});
 
 /* Vorschau-Hilfen für Screenshots */
 if(location.search.indexOf('seed')>=0){
@@ -571,6 +673,8 @@ else if(location.hash==='#updating'){ updateVersion='v4.3'; umSet('Wird herunter
 else if(location.hash==='#updated'){ toast('Aktualisiert','Erfolgreich auf v4.3 aktualisiert','good'); }
 else if(location.hash==='#updatebar'){ showUpdate('v4.2'); }
 else if(location.hash==='#info'){ selectCat('Reparieren'); infoModal(byId(7)); }
+else if(location.hash==='#autostart'){ selectCat('Autostart'); }
+else if(location.hash==='#settings'){ selectCat('Einstellungen'); }
 
 /* UI ist vollständig geladen -> Host darf jetzt Marker prüfen + auf Updates checken */
 send({type:'ready'});
