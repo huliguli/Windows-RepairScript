@@ -1,6 +1,6 @@
 # Baut die WebView2-Variante (HTML/CSS-UI in nativem Host) mit dem eingebauten csc.exe.
 # Schalter -Release bindet das Admin-Manifest ein (UAC). Ohne -Release: Dev-Build ohne Manifest.
-param([switch]$Release)
+param([switch]$Release, [switch]$Sign, [string]$CertPassword = "wartung")
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -50,5 +50,14 @@ Copy-Item (Join-Path $root 'libs\*.dll') $bin -Force
 $uiDst = Join-Path $bin 'ui'
 New-Item -ItemType Directory -Force -Path $uiDst | Out-Null
 Copy-Item (Join-Path $root 'ui\*') $uiDst -Recurse -Force -Exclude 'shot_*.png'
+
+if ($Sign) {
+    $pfx = Join-Path $root 'cert\WindowsWartung.pfx'
+    if (Test-Path $pfx) {
+        & (Join-Path $root 'sign.ps1') -File (Join-Path $bin 'WindowsWartung.exe') -Pfx $pfx -Password $CertPassword
+    } else {
+        "Hinweis: -Sign gesetzt, aber cert\WindowsWartung.pfx fehlt -> Signatur uebersprungen (tools\make-cert.ps1)."
+    }
+}
 
 "`nBUILD OK  ->  bin\WindowsWartung.exe" + $(if ($Release) { '  (Release/Admin)' } else { '  (Dev)' })

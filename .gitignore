@@ -5,6 +5,11 @@ obj/
 # Dev-Screenshots
 ui/shot_*.png
 
+# Code-Signing – Zertifikate/Schlüssel niemals einchecken!
+cert/
+*.pfx
+*.cer
+
 # Protokolle der Batch-Version
 logs/
 *.log

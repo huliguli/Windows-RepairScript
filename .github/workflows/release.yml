@@ -19,6 +19,17 @@ jobs:
         shell: powershell
         run: ./build.ps1 -Release
 
+      - name: Signieren (optional, wenn Zertifikat hinterlegt)
+        shell: powershell
+        env:
+          PFX_B64: ${{ secrets.CODESIGN_PFX_BASE64 }}
+          PFX_PW:  ${{ secrets.CODESIGN_PASSWORD }}
+        run: |
+          if (-not $env:PFX_B64) { "Kein Signatur-Zertifikat (Secret CODESIGN_PFX_BASE64) hinterlegt – überspringe."; exit 0 }
+          [IO.File]::WriteAllBytes("cert.pfx", [Convert]::FromBase64String($env:PFX_B64))
+          ./sign.ps1 -File bin\WindowsWartung.exe -Pfx cert.pfx -Password $env:PFX_PW
+          Remove-Item cert.pfx -Force
+
       - name: Paket schnüren
         shell: powershell
         run: |

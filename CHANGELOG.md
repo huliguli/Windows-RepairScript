@@ -4,6 +4,7 @@
 
 ### Neu
 - **Auto-Update** – beim Start prüft die App per GitHub-API auf ein neueres Release und blendet bei Bedarf oben einen Hinweis mit „Herunterladen" ein (inkl. „diese Version überspringen"). Ohne veröffentlichtes Release oder ohne Internet passiert nichts.
+- **Code-Signing** – Signatur-Pipeline (ohne SDK): `tools\make-cert.ps1`, `sign.ps1`, `build.ps1 -Sign` und optionales Signieren im Release-Workflow (Secrets). Details in `SIGNING.md`.
 
 ## [4.1] - 2026-06-03
 
