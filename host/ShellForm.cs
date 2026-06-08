@@ -360,6 +360,7 @@ namespace WartungsToolbox
             else if (_view == "info") suffix = "#info";
             else if (_view == "autostart") suffix = "#autostart";
             else if (_view == "settings") suffix = "#settings";
+            else if (_view == "rep") suffix = "#rep";
 
             _web.Source = new Uri("https://app/index.html" + suffix);
             // Update-Prüfung startet erst, wenn das UI 'ready' meldet (siehe OnReady)

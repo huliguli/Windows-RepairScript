@@ -1,5 +1,10 @@
 # Changelog
 
+## [5.1] - 2026-06-09
+
+### Geändert
+- **Optik aufpoliert** – mehr Tiefe und Material (feine Lichtkanten auf allen Flächen), ruhigerer Hintergrund mit feinem Korn, dezente Akzent-Glows auf Logo, aktiver Navigation und Primärbuttons, strafferer Typo-Satz und edlere Glas-Konsole. Keine Funktionsänderung.
+
 ## [5.0] - 2026-06-09
 
 ### Neu

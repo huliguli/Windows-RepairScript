@@ -675,6 +675,7 @@ else if(location.hash==='#updatebar'){ showUpdate('v4.2'); }
 else if(location.hash==='#info'){ selectCat('Reparieren'); infoModal(byId(7)); }
 else if(location.hash==='#autostart'){ selectCat('Autostart'); }
 else if(location.hash==='#settings'){ selectCat('Einstellungen'); }
+else if(location.hash==='#rep'){ selectCat('Reparieren'); }
 
 /* UI ist vollständig geladen -> Host darf jetzt Marker prüfen + auf Updates checken */
 send({type:'ready'});
