@@ -1,5 +1,11 @@
 # Changelog
 
+## [4.8] - 2026-06-09
+
+### Behoben (Installer)
+- **Fehler 740** beim „Windows-Wartung ausführen" am Setup-Ende behoben (Start jetzt per `shellexec`, löst die UAC-Abfrage korrekt aus)
+- **„Neuen Ordner anlegen"**-Button im Zielordner-Auswahldialog ergänzt
+
 ## [4.7] - 2026-06-09
 
 ### Geändert

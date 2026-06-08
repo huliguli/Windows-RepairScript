@@ -1,4 +1,4 @@
-; Inno-Setup-Skript fuer Windows-Wartung
+﻿; Inno-Setup-Skript fuer Windows-Wartung
 ; Build:  ISCC.exe /DMyAppVersion=4.6 installer\WindowsWartung.iss
 
 #define MyAppName "Windows-Wartung"
@@ -44,4 +44,21 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExe}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
+; shellexec statt CreateProcess -> loest die UAC-Abfrage korrekt aus (sonst Fehler 740 bei requireAdministrator)
+Filename: "{app}\{#MyAppExe}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent shellexec
+
+[Code]
+// Durchsuchen-Dialog mit "Neuen Ordner anlegen"-Button
+procedure DirBrowseClick(Sender: TObject);
+var
+  Dir: String;
+begin
+  Dir := WizardForm.DirEdit.Text;
+  if BrowseForFolder('Wählen Sie den Zielordner (mit „Neuen Ordner erstellen"):', Dir, True) then
+    WizardForm.DirEdit.Text := Dir;
+end;
+
+procedure InitializeWizard;
+begin
+  WizardForm.DirBrowseButton.OnClick := @DirBrowseClick;
+end;
