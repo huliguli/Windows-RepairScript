@@ -345,6 +345,9 @@ namespace WartungsToolbox
             core.WebMessageReceived += OnWebMessage;
             _runner = new CommandRunner(_web, Log, SetState, Done);
 
+            // Gespeicherte UI-Groesse schon vor dem Anzeigen anwenden (kein Flackern)
+            try { _web.ZoomFactor = _view == "zoombig" ? 1.5 : ((_shotPath != null) ? 1.0 : ReadZoom()); } catch { }
+
             if (_shotPath != null)
                 core.NavigationCompleted += OnNavForShot;
 
@@ -369,6 +372,7 @@ namespace WartungsToolbox
         void OnReady()
         {
             if (_shotPath != null) return;
+            try { Post(new { type = "zoom", factor = _web.ZoomFactor }); } catch { }
             CheckUpdatedMarker();   // nach einem Update: Erfolgsmeldung zeigen
             StartUpdateCheck();     // auf neue Version prüfen
         }
@@ -534,6 +538,41 @@ namespace WartungsToolbox
             catch (Exception ex) { Post(new { type = "updateError", message = ex.Message }); }
         }
 
+        string ZoomPath()
+        {
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "WindowsWartung", "zoom.txt");
+        }
+        double ReadZoom()
+        {
+            try
+            {
+                string p = ZoomPath();
+                if (File.Exists(p))
+                {
+                    double z;
+                    if (double.TryParse(File.ReadAllText(p).Trim(), System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out z))
+                    {
+                        if (z < 0.7) z = 0.7; if (z > 2.5) z = 2.5;
+                        return z;
+                    }
+                }
+            }
+            catch { }
+            return 1.0;
+        }
+        void WriteZoom(double z)
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(ZoomPath()));
+                File.WriteAllText(ZoomPath(), z.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+            catch { }
+        }
+
         string MarkerPath()
         {
             return Path.Combine(
@@ -668,6 +707,14 @@ namespace WartungsToolbox
             else if (type == "win") Win(Str(m, "action"));
             else if (type == "resize") BeginResize(Str(m, "dir"));
             else if (type == "setNotify") _notifyEnabled = ToBool(m, "on");
+            else if (type == "setZoom")
+            {
+                object v; double z = 1.0;
+                if (m.TryGetValue("factor", out v) && v != null) { try { z = Convert.ToDouble(v); } catch { } }
+                if (z < 0.7) z = 0.7; if (z > 2.5) z = 2.5;
+                try { _web.ZoomFactor = z; } catch { }
+                WriteZoom(z);
+            }
             else if (type == "autostartList") Post(new { type = "autostart", items = Autostart.List() });
             else if (type == "autostartSet") Autostart.SetEnabled(Str(m, "loc"), Str(m, "key"), ToBool(m, "enable"));
         }

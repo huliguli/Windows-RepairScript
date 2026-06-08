@@ -1,5 +1,10 @@
 # Changelog
 
+## [5.2] - 2026-06-09
+
+### Neu
+- **Oberfläche skalierbar** – in den Einstellungen lässt sich die UI-Größe von 90 % bis 175 % wählen; skaliert die komplette Oberfläche inklusive Schrift, wird gespeichert und schon vor dem Anzeigen angewandt. Hilft bei Brille oder kleiner Schrift.
+
 ## [5.1] - 2026-06-09
 
 ### Geändert

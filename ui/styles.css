@@ -216,6 +216,10 @@ body::after{
 .swatch{width:34px;height:34px;border-radius:50%;border:0;cursor:pointer;transition:transform .15s var(--ease);outline:none;padding:0}
 .swatch:hover{transform:scale(1.1)}
 .swatch.active{box-shadow:0 0 0 2px var(--bg),0 0 0 4px var(--text)}
+.zoom-opts{display:flex;flex-wrap:wrap;gap:8px}
+.zoom-opt{padding:9px 16px;border-radius:10px;border:1px solid var(--border);background:var(--surface-2);color:var(--dim);font:inherit;font-size:13px;cursor:pointer;transition:color .15s var(--ease),background .15s var(--ease),border-color .15s var(--ease)}
+.zoom-opt:hover{color:var(--text);border-color:var(--border-strong)}
+.zoom-opt.active{background:linear-gradient(120deg,var(--accent),var(--accent-2));color:#04221e;font-weight:600;border-color:transparent}
 
 /* ---------- Konsole ---------- */
 #console{

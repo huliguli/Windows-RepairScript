@@ -116,6 +116,7 @@ function onHost(m){
   else if(m.type==='updated') toast('Aktualisiert','Erfolgreich auf '+m.version+' aktualisiert','good');
   else if(m.type==='stats') updateStats(m);
   else if(m.type==='autostart') renderAutostartList(m.items);
+  else if(m.type==='zoom'){ SET.zoom=m.factor||1; markZoomActive(); }
 }
 
 /* ---------- DOM ---------- */
@@ -145,8 +146,14 @@ const SET = {
   consoleOpen: localStorage.getItem('consoleOpen') !== 'false',
   confirmAll:  localStorage.getItem('confirmAll') === 'true',
   notify:      localStorage.getItem('notify') !== 'false',
+  zoom:        1,
 };
 applyAccent(SET.accent);
+
+const ZOOMS = [['0.9','90 %'],['1','100 %'],['1.15','115 %'],['1.3','130 %'],['1.5','150 %'],['1.75','175 %']];
+function markZoomActive(){
+  document.querySelectorAll('.zoom-opt').forEach(x=>x.classList.toggle('active', Math.abs(parseFloat(x.dataset.z)-SET.zoom)<0.001));
+}
 
 $('#appmark').innerHTML = svg('wrench');
 $('#btn-collapse').innerHTML = svg('chevron');
@@ -330,8 +337,15 @@ function renderSettings(){
     const c=ACCENTS[k];
     sw+='<button class="swatch'+(SET.accent===k?' active':'')+'" data-acc="'+k+'" style="background:linear-gradient(135deg,'+c[0]+','+c[1]+')" title="'+k+'"></button>';
   });
+  let zb='';
+  ZOOMS.forEach(z=>{ zb+='<button class="zoom-opt'+(Math.abs(parseFloat(z[0])-SET.zoom)<0.001?' active':'')+'" data-z="'+z[0]+'">'+z[1]+'</button>'; });
   cards.innerHTML=
     '<div class="settings-wrap">'+
+      '<div class="set-card">'+
+        '<div class="set-title">Größe der Oberfläche</div>'+
+        '<div class="set-desc" style="margin-bottom:14px">Alles größer anzeigen – angenehm bei Brille oder kleiner Schrift</div>'+
+        '<div class="zoom-opts">'+zb+'</div>'+
+      '</div>'+
       '<div class="set-card">'+
         '<div class="set-row"><div class="set-text"><div class="set-title">Windows-Benachrichtigungen</div><div class="set-desc">Mitteilung anzeigen, wenn eine Aktion fertig ist (während das Fenster im Hintergrund ist)</div></div>'+toggleHTML('s-notify', SET.notify)+'</div>'+
         '<div class="set-row"><div class="set-text"><div class="set-title">Konsole beim Start öffnen</div><div class="set-desc">Den Ausgabe-Bereich direkt sichtbar anzeigen</div></div>'+toggleHTML('s-console', SET.consoleOpen)+'</div>'+
@@ -343,6 +357,9 @@ function renderSettings(){
         '<div class="swatches">'+sw+'</div>'+
       '</div>'+
     '</div>';
+  cards.querySelectorAll('.zoom-opt').forEach(b=>{
+    b.onclick=()=>{ SET.zoom=parseFloat(b.dataset.z); send({type:'setZoom', factor:SET.zoom}); markZoomActive(); };
+  });
   $('#s-notify').onchange=e=>{ SET.notify=e.target.checked; localStorage.setItem('notify', SET.notify); send({type:'setNotify', on:SET.notify}); };
   $('#s-console').onchange=e=>{ SET.consoleOpen=e.target.checked; localStorage.setItem('consoleOpen', SET.consoleOpen); };
   $('#s-confirm').onchange=e=>{ SET.confirmAll=e.target.checked; localStorage.setItem('confirmAll', SET.confirmAll); };

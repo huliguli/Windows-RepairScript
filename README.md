@@ -27,7 +27,7 @@ Dazu:
 - Optionaler **Wiederherstellungspunkt** vor jeder Reparatur
 - **Auto-Update** – prüft beim Start auf neue Releases; auf Wunsch lädt die App das Update herunter, installiert es und startet sich neu
 - **Windows-Benachrichtigungen** bei Abschluss/Fehler (wenn das Fenster im Hintergrund ist), Tray-Icon
-- **Einstellungen** – Akzentfarbe, Konsole-Verhalten, Benachrichtigungen
+- **Einstellungen** – UI-Größe/Skalierung (Barrierefreiheit), Akzentfarbe, Konsole-Verhalten, Benachrichtigungen
 - Startet automatisch mit Administratorrechten (UAC)
 
 ## Aufbau
