@@ -113,8 +113,14 @@ namespace WartungsToolbox
             else if (_view == "updated") suffix = "#updated";
 
             _web.Source = new Uri("https://app/index.html" + suffix);
+            // Update-Prüfung startet erst, wenn das UI 'ready' meldet (siehe OnReady)
+        }
 
-            if (_shotPath == null) StartUpdateCheck();
+        void OnReady()
+        {
+            if (_shotPath != null) return;
+            CheckUpdatedMarker();   // nach einem Update: Erfolgsmeldung zeigen
+            StartUpdateCheck();     // auf neue Version prüfen
         }
 
         // ---------- Update-Prüfung (GitHub-Releases) ----------
@@ -124,8 +130,6 @@ namespace WartungsToolbox
             {
                 try
                 {
-                    Thread.Sleep(1500); // dem UI Zeit zum Laden geben
-                    CheckUpdatedMarker(); // nach einem Update: Erfolgsmeldung zeigen
                     try { ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12; } catch { }
 
                     HttpWebRequest req = (HttpWebRequest)WebRequest.Create(
@@ -405,6 +409,7 @@ namespace WartungsToolbox
             }
             else if (type == "cancel") { if (_runner != null) _runner.Cancel(); }
             else if (type == "cancelShutdown") CancelShutdown();
+            else if (type == "ready") OnReady();
             else if (type == "openUpdate") OpenUpdate();
             else if (type == "startUpdate") BeginUpdate();
             else if (type == "skipUpdate") WriteSkip(_updateTag);

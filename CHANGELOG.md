@@ -1,5 +1,10 @@
 # Changelog
 
+## [4.4] - 2026-06-03
+
+### Behoben
+- **Update-Erkennung** – die Prüfung auf neue Versionen startet jetzt erst, wenn die Oberfläche bereit ist („ready"-Handshake). Vorher konnte die „Update verfügbar"-Meldung bei kaltem Start verloren gehen, weil sie zu früh an das noch nicht geladene UI geschickt wurde.
+
 ## [4.3] - 2026-06-03
 
 ### Neu

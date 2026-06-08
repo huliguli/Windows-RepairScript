@@ -435,6 +435,9 @@ if(location.hash==='#updateprompt'){ showUpdatePrompt('v4.3'); }
 else if(location.hash==='#updating'){ updateVersion='v4.3'; umSet('Wird heruntergeladen …','Lade v4.3 …',{progress:true}); setUpdateProgress(62); $('#update-modal').classList.remove('hidden'); }
 else if(location.hash==='#updated'){ toast('Aktualisiert','Erfolgreich auf v4.3 aktualisiert','good'); }
 else if(location.hash==='#updatebar'){ showUpdate('v4.2'); }
+
+/* UI ist vollständig geladen -> Host darf jetzt Marker prüfen + auf Updates checken */
+send({type:'ready'});
 if(location.hash.indexOf('toast')>=0){
   setConsole(false);
   toast('SFC scannow','Erfolgreich – keine Fehler','good');
