@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -22,6 +23,9 @@ namespace WartungsToolbox
 
         readonly string _shotPath;
         readonly string _view;
+
+        string _pendingPost = "none";
+        int _pendingDelay = 60;
 
         [DllImport("user32.dll")] static extern bool ReleaseCapture();
         [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
@@ -93,6 +97,8 @@ namespace WartungsToolbox
             string suffix = "";
             if (_view == "seed") suffix = "?seed=1";
             else if (_view == "toast") suffix = "#toast";
+            else if (_view == "queue") suffix = "#queue";
+            else if (_view == "shutdown") suffix = "#shutdown";
 
             _web.Source = new Uri("https://app/index.html" + suffix);
         }
@@ -127,13 +133,35 @@ namespace WartungsToolbox
             {
                 int id = ToInt(m, "id");
                 if (id < 0 || id >= _actions.Count) return;
+                bool restore = ToBool(m, "restore");
+                ReadPost(m);
                 MaintenanceAction a = _actions[id];
-                List<Step> steps = new List<Step>();
-                if (ToBool(m, "restore") && a.IsRepair) steps.Add(RestoreStep());
-                steps.AddRange(a.Steps);
-                _runner.Run(a.Title, steps);
+                List<Job> jobs = new List<Job>();
+                jobs.Add(new Job { Title = a.Title, Steps = BuildSteps(a, restore) });
+                _runner.RunJobs(a.Title, jobs);
+            }
+            else if (type == "runQueue")
+            {
+                bool restore = ToBool(m, "restore");
+                ReadPost(m);
+                List<Job> jobs = new List<Job>();
+                object idsObj;
+                if (m.TryGetValue("ids", out idsObj) && idsObj is object[])
+                {
+                    foreach (object o in (object[])idsObj)
+                    {
+                        int id;
+                        try { id = Convert.ToInt32(o); } catch { continue; }
+                        if (id < 0 || id >= _actions.Count) continue;
+                        MaintenanceAction a = _actions[id];
+                        jobs.Add(new Job { Title = a.Title, Steps = BuildSteps(a, restore) });
+                    }
+                }
+                if (jobs.Count == 0) return;
+                _runner.RunJobs("Warteschlange (" + jobs.Count + ")", jobs);
             }
             else if (type == "cancel") { if (_runner != null) _runner.Cancel(); }
+            else if (type == "cancelShutdown") CancelShutdown();
             else if (type == "save") SaveLog();
             else if (type == "win") Win(Str(m, "action"));
         }
@@ -161,7 +189,56 @@ namespace WartungsToolbox
             Post(new { type = "log", text = text, kind = KindStr(k) });
         }
         void SetState(bool running) { Post(new { type = "state", running = running }); }
-        void Done(string title, LogKind k, string message) { Post(new { type = "done", title = title, kind = KindStr(k), message = message }); }
+        void Done(string title, LogKind k, string message)
+        {
+            Post(new { type = "done", title = title, kind = KindStr(k), message = message });
+            if (k != LogKind.Bad && _pendingPost != "none") ScheduleShutdown();
+            _pendingPost = "none";
+        }
+
+        List<Step> BuildSteps(MaintenanceAction a, bool restore)
+        {
+            List<Step> steps = new List<Step>();
+            if (restore && a.IsRepair) steps.Add(RestoreStep());
+            steps.AddRange(a.Steps);
+            return steps;
+        }
+
+        void ReadPost(Dictionary<string, object> m)
+        {
+            _pendingPost = Str(m, "post");
+            if (_pendingPost != "shutdown" && _pendingPost != "restart") _pendingPost = "none";
+            int d = ToInt(m, "delay");
+            _pendingDelay = (d >= 5 && d <= 86400) ? d : 60;
+        }
+
+        void ScheduleShutdown()
+        {
+            string args = (_pendingPost == "restart" ? "-r" : "-s") + " -t " + _pendingDelay;
+            try
+            {
+                ProcessStartInfo psi = new ProcessStartInfo("shutdown.exe", args);
+                psi.UseShellExecute = false; psi.CreateNoWindow = true;
+                Process.Start(psi);
+            }
+            catch { }
+            string word = _pendingPost == "restart" ? "neu gestartet" : "heruntergefahren";
+            Log("●  Der PC wird in " + _pendingDelay + "s " + word + " – Abbrechen über das Banner.", LogKind.Warn);
+            Post(new { type = "shutdownScheduled", mode = _pendingPost, delay = _pendingDelay });
+        }
+
+        void CancelShutdown()
+        {
+            try
+            {
+                ProcessStartInfo psi = new ProcessStartInfo("shutdown.exe", "-a");
+                psi.UseShellExecute = false; psi.CreateNoWindow = true;
+                Process.Start(psi);
+            }
+            catch { }
+            Log("●  Herunterfahren abgebrochen.", LogKind.Good);
+            Post(new { type = "shutdownCancelled" });
+        }
 
         void Post(object o)
         {

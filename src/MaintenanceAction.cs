@@ -13,6 +13,12 @@ namespace WartungsToolbox
         public bool Detached;     // im eigenen Fenster starten, nicht abwarten/mitschneiden
     }
 
+    class Job
+    {
+        public string Title;
+        public System.Collections.Generic.List<Step> Steps;
+    }
+
     class MaintenanceAction
     {
         public string Title;

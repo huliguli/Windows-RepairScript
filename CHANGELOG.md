@@ -1,5 +1,11 @@
 # Changelog
 
+## [4.1] - 2026-06-03
+
+### Neu
+- **Warteschlange** – mehrere Aktionen aneinanderreihen, umsortieren und der Reihe nach abarbeiten (z. B. Komplett-Reparatur → Temp löschen → Herunterfahren)
+- **Nach Fertigstellung** – Nichts / Herunterfahren / Neustart mit eigener Verzögerung, gilt für jeden Lauf; abbrechbares Countdown-Banner
+
 ## [4.0] - 2026-06-03
 
 ### Neu

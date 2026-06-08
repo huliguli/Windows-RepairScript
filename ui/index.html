@@ -27,7 +27,22 @@
     <aside id="sidebar">
       <div class="side-label">Kategorien</div>
       <nav id="nav"></nav>
+
       <div class="side-foot">
+        <div class="post-block">
+          <span class="post-label">Nach Fertigstellung</span>
+          <div class="seg" id="post-seg">
+            <button data-post="none" class="active">Nichts</button>
+            <button data-post="shutdown">Herunterfahren</button>
+            <button data-post="restart">Neustart</button>
+          </div>
+          <div class="post-delay" id="post-delay-row">
+            <span>Verzögerung</span>
+            <input id="post-delay" type="number" min="5" max="86400" value="60" />
+            <span>Sek.</span>
+          </div>
+        </div>
+
         <label class="toggle-row">
           <span class="toggle-text">
             <span class="toggle-title">Wiederherstellungspunkt</span>
@@ -46,6 +61,10 @@
           <h1 id="cat-title">Reparieren</h1>
           <p id="cat-hint">8 Aktionen</p>
         </div>
+        <button id="queue-btn" title="Warteschlange">
+          <span class="qb-ico"></span>Warteschlange
+          <span id="queue-count" class="qbadge">0</span>
+        </button>
       </header>
 
       <section id="cards"></section>
@@ -68,6 +87,31 @@
       </div>
       <button id="console-reopen" title="Ausgabe einblenden"><span></span>Ausgabe</button>
     </main>
+  </div>
+
+  <!-- Warteschlangen-Schublade -->
+  <div id="q-overlay"></div>
+  <aside id="queue" class="drawer">
+    <div class="q-head">
+      <h2>Warteschlange</h2>
+      <button id="q-close" class="link icon-only" title="Schließen"></button>
+    </div>
+    <div id="q-list"></div>
+    <div class="q-empty" id="q-empty">Noch keine Aktionen.<br><span>Auf einer Kachel das <b>+</b> klicken.</span></div>
+    <div class="q-foot">
+      <div class="q-after" id="q-after"></div>
+      <div class="q-foot-btns">
+        <button id="q-clear" class="link">Leeren</button>
+        <button id="q-run" class="primary">Starten</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Shutdown-Banner -->
+  <div id="shutdown-bar">
+    <span class="sb-ico"></span>
+    <span id="sb-text">Der PC wird heruntergefahren …</span>
+    <button id="sb-cancel">Abbrechen</button>
   </div>
 
   <div id="toasts"></div>

@@ -18,6 +18,8 @@ Dazu:
 
 - Modernes, dunkles UI mit eigener Titelleiste, Glas-Effekten, weichen Animationen und Kategorie-Sidebar
 - Live-Ausgabe mit Log-Export, **ein-/ausklappbar** – eingeklappt erscheinen kurze Hinweis-Toasts oben rechts
+- **Warteschlange** – mehrere Aktionen nacheinander abarbeiten (z. B. Reparatur → Aufräumen → Herunterfahren)
+- **Nach Fertigstellung** – wahlweise Herunterfahren oder Neustart mit Countdown (jederzeit abbrechbar)
 - Optionaler **Wiederherstellungspunkt** vor jeder Reparatur
 - Startet automatisch mit Administratorrechten (UAC)
 

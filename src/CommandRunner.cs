@@ -50,6 +50,13 @@ namespace WartungsToolbox
 
         public void Run(string title, List<Step> steps)
         {
+            List<Job> jobs = new List<Job>();
+            jobs.Add(new Job { Title = title, Steps = steps });
+            RunJobs(title, jobs);
+        }
+
+        public void RunJobs(string overallTitle, List<Job> jobs)
+        {
             if (Running) return;
             Running = true;
             _cancel = false;
@@ -59,12 +66,16 @@ namespace WartungsToolbox
             {
                 var sw = Stopwatch.StartNew();
                 bool problem = false;
-                Log("▶  " + title, LogKind.Header);
-                foreach (Step s in steps)
+                foreach (Job job in jobs)
                 {
                     if (_cancel) break;
-                    int code = RunStep(s);
-                    if (code != 0) problem = true;
+                    Log("▶  " + job.Title, LogKind.Header);
+                    foreach (Step s in job.Steps)
+                    {
+                        if (_cancel) break;
+                        int code = RunStep(s);
+                        if (code != 0) problem = true;
+                    }
                 }
                 sw.Stop();
                 LogKind fk;
@@ -88,7 +99,7 @@ namespace WartungsToolbox
 
                 Running = false;
                 _current = null;
-                string ftitle = title;
+                string ftitle = overallTitle;
                 if (_ui != null && _ui.IsHandleCreated)
                 {
                     try
