@@ -7,6 +7,7 @@ using System.IO.Compression;
 using System.Net;
 using System.Runtime.InteropServices;
 using System.Threading;
+using Microsoft.Win32;
 using System.Text;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
@@ -45,6 +46,28 @@ namespace WartungsToolbox
         [DllImport("user32.dll")] static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
         [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
 
+        [DllImport("kernel32.dll")] static extern bool GetSystemTimes(out FILETIME64 idle, out FILETIME64 kernel, out FILETIME64 user);
+        [DllImport("kernel32.dll")] static extern ulong GetTickCount64();
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool GlobalMemoryStatusEx([In, Out] MemStatusEx buffer);
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct FILETIME64 { public uint Low; public uint High; }
+        static ulong FT(FILETIME64 f) { return ((ulong)f.High << 32) | f.Low; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        class MemStatusEx
+        {
+            public uint dwLength;
+            public uint dwMemoryLoad;
+            public ulong ullTotalPhys, ullAvailPhys, ullTotalPageFile, ullAvailPageFile, ullTotalVirtual, ullAvailVirtual, ullAvailExtendedVirtual;
+        }
+
+        System.Windows.Forms.Timer _stats;
+        ulong _lastIdle, _lastKernel, _lastUser;
+        string _osInfo, _modelInfo;
+
         public ShellForm(string shotPath, string view)
         {
             _shotPath = shotPath;
@@ -68,6 +91,137 @@ namespace WartungsToolbox
 
             Load += OnLoad;
             Shown += delegate { ForceForeground(); };
+        }
+
+        // ---------- Dashboard: Live-Systemzustand ----------
+        void SetDashboard(bool active)
+        {
+            if (active)
+            {
+                if (_stats == null)
+                {
+                    _stats = new System.Windows.Forms.Timer();
+                    _stats.Interval = 1500;
+                    _stats.Tick += StatsTick;
+                }
+                if (_osInfo == null) GetStaticInfo();
+                FILETIME64 i, k, u;
+                if (GetSystemTimes(out i, out k, out u)) { _lastIdle = FT(i); _lastKernel = FT(k); _lastUser = FT(u); }
+                StatsTick(null, null);
+                _stats.Start();
+            }
+            else if (_stats != null) _stats.Stop();
+        }
+
+        void StatsTick(object sender, EventArgs e)
+        {
+            try
+            {
+                int cpu = 0;
+                FILETIME64 fi, fk, fu;
+                if (GetSystemTimes(out fi, out fk, out fu))
+                {
+                    ulong i = FT(fi), k = FT(fk), u = FT(fu);
+                    ulong di = i - _lastIdle, dk = k - _lastKernel, du = u - _lastUser;
+                    _lastIdle = i; _lastKernel = k; _lastUser = u;
+                    ulong total = dk + du; // Kernel-Zeit enthaelt Idle
+                    if (total > 0) cpu = (int)((100UL * (total - di)) / total);
+                    if (cpu < 0) cpu = 0; if (cpu > 100) cpu = 100;
+                }
+
+                int ram = 0; double ramUsedGB = 0, ramTotalGB = 0;
+                MemStatusEx ms = new MemStatusEx();
+                ms.dwLength = (uint)Marshal.SizeOf(typeof(MemStatusEx));
+                if (GlobalMemoryStatusEx(ms))
+                {
+                    ram = (int)ms.dwMemoryLoad;
+                    ramTotalGB = ms.ullTotalPhys / 1073741824.0;
+                    ramUsedGB = (ms.ullTotalPhys - ms.ullAvailPhys) / 1073741824.0;
+                }
+
+                int disk = 0; double diskFreeGB = 0, diskTotalGB = 0;
+                try
+                {
+                    DriveInfo d = new DriveInfo(Path.GetPathRoot(Environment.GetFolderPath(Environment.SpecialFolder.System)));
+                    if (d.IsReady && d.TotalSize > 0)
+                    {
+                        diskTotalGB = d.TotalSize / 1073741824.0;
+                        diskFreeGB = d.TotalFreeSpace / 1073741824.0;
+                        disk = (int)Math.Round(100.0 * (d.TotalSize - d.TotalFreeSpace) / d.TotalSize);
+                    }
+                }
+                catch { }
+
+                ulong upMs = GetTickCount64();
+                double upDays = upMs / 86400000.0;
+
+                int score = 100;
+                List<object> recs = new List<object>();
+                double diskFreePct = diskTotalGB > 0 ? 100.0 * diskFreeGB / diskTotalGB : 100;
+                if (diskFreePct < 10) { score -= 30; recs.Add(new { text = "Festplatte fast voll (" + disk + "% belegt) - Aufraeumen schafft Platz.", action = 11 }); }
+                else if (diskFreePct < 20) { score -= 12; recs.Add(new { text = "Festplatte recht voll - Aufraeumen kann helfen.", action = 11 }); }
+                if (ram > 90) { score -= 12; recs.Add(new { text = "Arbeitsspeicher stark ausgelastet - evtl. Programme schliessen.", action = -1 }); }
+                if (upDays >= 7) { score -= 10; recs.Add(new { text = "Seit " + (int)upDays + " Tagen kein Neustart - ein Neustart tut dem PC gut.", action = -1 }); }
+                else if (upDays >= 3) { score -= 4; }
+                if (score < 0) score = 0;
+                if (recs.Count == 0) recs.Add(new { text = "Alles im gruenen Bereich - aktuell ist nichts noetig.", action = -1 });
+
+                Post(new
+                {
+                    type = "stats",
+                    cpu = cpu,
+                    ram = ram,
+                    disk = disk,
+                    ramUsedGB = Math.Round(ramUsedGB, 1),
+                    ramTotalGB = Math.Round(ramTotalGB, 1),
+                    diskFreeGB = Math.Round(diskFreeGB, 1),
+                    diskTotalGB = Math.Round(diskTotalGB, 1),
+                    uptime = FormatUptime(upMs),
+                    os = _osInfo,
+                    model = _modelInfo,
+                    score = score,
+                    recs = recs
+                });
+            }
+            catch { }
+        }
+
+        static string FormatUptime(ulong ms)
+        {
+            long sec = (long)(ms / 1000);
+            long d = sec / 86400, h = (sec % 86400) / 3600, mi = (sec % 3600) / 60;
+            if (d > 0) return d + " Tage " + h + " Std";
+            if (h > 0) return h + " Std " + mi + " Min";
+            return mi + " Min";
+        }
+
+        void GetStaticInfo()
+        {
+            try
+            {
+                using (RegistryKey k = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion"))
+                {
+                    string prod = k.GetValue("ProductName", "Windows") as string;
+                    string disp = (k.GetValue("DisplayVersion", null) as string) ?? (k.GetValue("ReleaseId", "") as string);
+                    int build; int.TryParse(k.GetValue("CurrentBuildNumber", "") as string, out build);
+                    string winName = build >= 22000 ? "Windows 11" : "Windows 10";
+                    string edition = (prod ?? "").Replace("Windows 10", "").Replace("Windows 11", "").Trim();
+                    _osInfo = winName + (edition.Length > 0 ? " " + edition : "")
+                              + " (" + (string.IsNullOrEmpty(disp) ? ("Build " + build) : disp) + ")";
+                }
+            }
+            catch { _osInfo = "Windows"; }
+            try
+            {
+                using (RegistryKey k = Registry.LocalMachine.OpenSubKey(@"HARDWARE\DESCRIPTION\System\BIOS"))
+                {
+                    string man = k.GetValue("SystemManufacturer", "") as string;
+                    string mod = k.GetValue("SystemProductName", "") as string;
+                    _modelInfo = ((man ?? "") + " " + (mod ?? "")).Trim();
+                    if (string.IsNullOrEmpty(_modelInfo)) _modelInfo = "-";
+                }
+            }
+            catch { _modelInfo = "-"; }
         }
 
         // Bringt das Fenster beim Start zuverlässig in den Vordergrund (auch elevated/UAC)
@@ -147,6 +301,7 @@ namespace WartungsToolbox
             else if (_view == "updateprompt") suffix = "#updateprompt";
             else if (_view == "updating") suffix = "#updating";
             else if (_view == "updated") suffix = "#updated";
+            else if (_view == "info") suffix = "#info";
 
             _web.Source = new Uri("https://app/index.html" + suffix);
             // Update-Prüfung startet erst, wenn das UI 'ready' meldet (siehe OnReady)
@@ -446,6 +601,7 @@ namespace WartungsToolbox
             else if (type == "cancel") { if (_runner != null) _runner.Cancel(); }
             else if (type == "cancelShutdown") CancelShutdown();
             else if (type == "ready") OnReady();
+            else if (type == "dashboard") SetDashboard(ToBool(m, "active"));
             else if (type == "openUpdate") OpenUpdate();
             else if (type == "startUpdate") BeginUpdate();
             else if (type == "skipUpdate") WriteSkip(_updateTag);

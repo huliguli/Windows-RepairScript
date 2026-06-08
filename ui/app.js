@@ -24,6 +24,8 @@ const ICONS = {
   plus:'<path d="M12 5v14"/><path d="M5 12h14"/>',
   layers:'<path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/>',
   power:'<path d="M12 3v9"/><path d="M6.4 6.4a8 8 0 1 0 11.2 0"/>',
+  dashboard:'<rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="5" rx="1"/><rect x="13" y="11" width="8" height="10" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/>',
+  help:'<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
   min:'<path d="M5 12h14"/>',
   max:'<rect x="5" y="5" width="14" height="14" rx="2"/>',
   close:'<path d="M6 6l12 12"/><path d="M18 6 6 18"/>',
@@ -35,6 +37,7 @@ function svg(name){return '<svg viewBox="0 0 24 24" fill="none" stroke="currentC
 
 /* ---------- Kategorien + Aktionen (Spiegel zum C#-Katalog) ---------- */
 const CATS = [
+  {name:'Übersicht',  icon:'dashboard'},
   {name:'Reparieren', icon:'wrench'},
   {name:'Netzwerk',   icon:'globe'},
   {name:'Aufräumen',  icon:'trash'},
@@ -67,6 +70,30 @@ const ACTIONS = [
 ];
 const byId = id => ACTIONS.find(a => a.id === id);
 
+// Erklärungen in einfacher Sprache (für Personen ohne Vorwissen)
+const INFO = {
+  0:'Lässt Windows seine eigenen Dateien überprüfen und beschädigte automatisch ersetzen. Das gute Erste-Hilfe-Programm, wenn der PC spinnt, abstürzt oder sich komisch verhält. Dauert ein paar Minuten.',
+  1:'Repariert den „Bauplan" von Windows über das Internet. Hilft besonders, wenn Updates nicht installieren oder Windows beschädigt ist.',
+  2:'Prüft die wichtigen Windows-Systemdateien und repariert beschädigte. Ein Klassiker bei Fehlern und Abstürzen.',
+  3:'Schaut nur nach, ob Systemdateien beschädigt sind – ändert nichts. Gut, um erst mal zu sehen, ob alles in Ordnung ist.',
+  4:'Löscht alte, nicht mehr benötigte Reste von Windows-Updates. Schafft oft mehrere Gigabyte Platz, ohne dass etwas kaputtgeht.',
+  5:'Zeigt nur an, ob sich ein Aufräumen lohnt – verändert nichts.',
+  6:'Setzt die Update-Funktion von Windows zurück. Hilft, wenn Updates hängen bleiben oder mit Fehlern abbrechen.',
+  7:'Prüft die Festplatte auf Fehler – beim nächsten Neustart. Sinnvoll bei merkwürdigen Datei- oder Festplattenproblemen. Achtung: der nächste Start dauert dann deutlich länger.',
+  8:'Setzt die komplette Internet- und Netzwerkeinstellung zurück. Der Notnagel, wenn gar nichts mehr ins Internet kommt. Danach ist ein Neustart nötig.',
+  9:'Leert den Zwischenspeicher für Webadressen. Hilft, wenn einzelne Webseiten nicht laden, obwohl das Internet sonst geht.',
+  10:'Holt sich eine frische Netzwerk-Adresse vom Router. Hilft bei Verbindungsproblemen im Heimnetz.',
+  11:'Löscht temporäre Müll-Dateien, die Programme hinterlassen. Schafft Platz und schadet nichts.',
+  12:'Löscht bereits heruntergeladene Update-Dateien. Hilft, wenn Updates klemmen, und schafft Platz.',
+  13:'Leert den Papierkorb endgültig. Schafft Platz – die Dateien darin sind danach weg.',
+  14:'Öffnet das Windows-Aufräum-Tool, in dem du selbst auswählen kannst, was gelöscht wird.',
+  15:'Zeigt Infos zu deinem PC: Windows-Version, Arbeitsspeicher und wie lange er schon läuft.',
+  16:'Zeigt, ob deine Festplatten/SSDs gesund sind. Gut für einen schnellen Sicherheits-Check.',
+  17:'Erstellt einen Bericht über den Akku (bei Laptops) und öffnet ihn – zeigt z. B. den Verschleiß.',
+  18:'Lässt den Windows-Virenschutz schnell die wichtigsten Stellen auf Schädlinge prüfen.',
+  19:'Prüft den Arbeitsspeicher auf Fehler – beim nächsten Neustart. Sinnvoll bei häufigen Abstürzen oder Bluescreens.'
+};
+
 /* ---------- Brücke zu C# (oder Mock im Browser) ---------- */
 const HOST = (window.chrome && window.chrome.webview) ? window.chrome.webview : null;
 function send(msg){ if(HOST){ HOST.postMessage(JSON.stringify(msg)); } else { mockHandle(msg); } }
@@ -83,6 +110,7 @@ function onHost(m){
   else if(m.type==='updateStatus') setUpdatePhase(m.phase);
   else if(m.type==='updateError') setUpdateError(m.message);
   else if(m.type==='updated') toast('Aktualisiert','Erfolgreich auf '+m.version+' aktualisiert','good');
+  else if(m.type==='stats') updateStats(m);
 }
 
 /* ---------- DOM ---------- */
@@ -117,6 +145,15 @@ function buildNav(){
 }
 function selectCat(name){
   active=name; buildNav();
+  const isDash = (name==='Übersicht');
+  send({type:'dashboard', active:isDash});
+  if(isDash){
+    $('#cat-title').textContent='Übersicht';
+    $('#cat-hint').textContent='Systemzustand auf einen Blick';
+    renderDashboard();
+    return;
+  }
+  cards.classList.remove('dashboard');
   const list=ACTIONS.filter(a=>a.cat===name);
   $('#cat-title').textContent=name;
   $('#cat-hint').textContent=list.length+' Aktionen · klicken zum Ausführen';
@@ -127,6 +164,7 @@ function selectCat(name){
     el.dataset.id=a.id;
     el.style.animationDelay=(i*30)+'ms';
     el.innerHTML=
+      '<button class="card-help" title="Was macht das?">'+svg('help')+'</button>'+
       '<button class="card-add" title="Zur Warteschlange">'+svg('plus')+'</button>'+
       '<div class="card-ico">'+svg(a.icon)+'</div>'+
       '<div class="card-body">'+
@@ -135,9 +173,74 @@ function selectCat(name){
       '</div>';
     el.onclick=()=>run(a);
     el.querySelector('.card-add').onclick=(e)=>{ e.stopPropagation(); addToQueue(a.id); };
+    el.querySelector('.card-help').onclick=(e)=>{ e.stopPropagation(); infoModal(a); };
     cards.appendChild(el);
   });
   refreshAdded();
+}
+
+/* ---------- Dashboard ---------- */
+const GC = 2 * Math.PI * 52;
+function gaugeBlock(id, label){
+  return '<div class="gauge"><svg viewBox="0 0 120 120">'+
+    '<circle class="g-track" cx="60" cy="60" r="52"/>'+
+    '<circle class="g-arc" id="g-'+id+'-arc" cx="60" cy="60" r="52"/></svg>'+
+    '<div class="gauge-center"><span class="gauge-val" id="g-'+id+'-val">0%</span></div>'+
+    '<div class="gauge-label">'+label+'</div></div>';
+}
+function renderDashboard(){
+  cards.classList.add('dashboard');
+  cards.innerHTML =
+    '<div class="dash">'+
+      '<div class="dash-gauges">'+ gaugeBlock('cpu','Prozessor') + gaugeBlock('ram','Arbeitsspeicher') + gaugeBlock('disk','Festplatte') +'</div>'+
+      '<div class="dash-row">'+
+        '<div class="dash-card">'+
+          '<div class="health-top">'+
+            '<div class="health-ring"><svg viewBox="0 0 120 120"><circle class="g-track" cx="60" cy="60" r="52"/><circle class="g-arc" id="g-hp-arc" cx="60" cy="60" r="52"/></svg>'+
+            '<div class="health-num"><span id="health-score">--</span><small>/100</small></div></div>'+
+            '<div><div class="health-title" id="health-title">Systemzustand</div><div class="health-sub" id="health-sub">wird ermittelt …</div></div>'+
+          '</div>'+
+          '<div class="recs" id="recs"></div>'+
+        '</div>'+
+        '<div class="dash-card">'+
+          '<div class="info-title">System</div>'+
+          '<div class="info-row"><span>Windows</span><b id="i-os">–</b></div>'+
+          '<div class="info-row"><span>Gerät</span><b id="i-model">–</b></div>'+
+          '<div class="info-row"><span>Arbeitsspeicher</span><b id="i-ram">–</b></div>'+
+          '<div class="info-row"><span>Freier Speicher</span><b id="i-disk">–</b></div>'+
+          '<div class="info-row"><span>Eingeschaltet seit</span><b id="i-uptime">–</b></div>'+
+        '</div>'+
+      '</div>'+
+    '</div>';
+}
+function gaugeColor(p){ return p<60 ? 'var(--green)' : (p<85 ? 'var(--yellow)' : 'var(--red)'); }
+function healthColor(s){ return s>=80 ? 'var(--green)' : (s>=50 ? 'var(--yellow)' : 'var(--red)'); }
+function setArc(arc, p, color){ p=Math.max(0,Math.min(100,p)); arc.style.strokeDasharray=GC; arc.style.strokeDashoffset=GC*(1-p/100); arc.style.stroke=color; }
+function setGauge(id, p){ const a=$('#g-'+id+'-arc'); if(a) setArc(a,p,gaugeColor(p)); const v=$('#g-'+id+'-val'); if(v) v.textContent=p+'%'; }
+function dTxt(sel,v){ const e=$(sel); if(e) e.textContent=v; }
+function updateStats(s){
+  if(!cards.classList.contains('dashboard')) return;
+  setGauge('cpu', s.cpu); setGauge('ram', s.ram); setGauge('disk', s.disk);
+  const hr=$('#g-hp-arc'); if(hr) setArc(hr, s.score, healthColor(s.score));
+  dTxt('#health-score', s.score);
+  dTxt('#health-title', s.score>=80?'Alles in Ordnung':(s.score>=50?'Kleinere Hinweise':'Aufmerksamkeit nötig'));
+  dTxt('#health-sub', s.score>=80?'Dein PC ist gut in Schuss.':'Siehe Empfehlungen unten.');
+  const rc=$('#recs');
+  if(rc){
+    rc.innerHTML='';
+    (s.recs||[]).forEach(r=>{
+      const click = r.action>=0;
+      const el=document.createElement(click?'button':'div');
+      el.className='rec'+(click?' clickable':'');
+      el.innerHTML='<span class="rec-dot"></span><span>'+r.text+'</span>'+(click?'<span class="rec-go">'+svg('arrow')+'</span>':'');
+      if(click){ const a=byId(r.action); if(a) el.onclick=()=>run(a); }
+      rc.appendChild(el);
+    });
+  }
+  dTxt('#i-os', s.os); dTxt('#i-model', s.model);
+  dTxt('#i-ram', s.ramUsedGB+' / '+s.ramTotalGB+' GB ('+s.ram+'%)');
+  dTxt('#i-disk', s.diskFreeGB+' GB frei von '+s.diskTotalGB+' GB');
+  dTxt('#i-uptime', s.uptime);
 }
 
 /* ---------- Konsole ---------- */
@@ -360,6 +463,25 @@ function confirmModal(title, desc, onYes){
   ov.onclick=e=>{ if(e.target===ov) ov.remove(); };
 }
 
+/* ---------- Erklär-Dialog (einfache Sprache) ---------- */
+function infoModal(a){
+  const ov=document.createElement('div'); ov.className='modal-ov';
+  const warn = a.danger ? '<div class="info-warn">Achtung: Diese Aktion bewusst einsetzen – sie greift tiefer ins System ein.</div>' : '';
+  ov.innerHTML=
+    '<div class="modal info-modal">'+
+      '<div class="modal-ico '+(a.danger?'warn':'accent')+'">'+svg(a.icon)+'</div>'+
+      '<h3>'+a.title+'</h3>'+
+      '<div class="info-lead">In einfachen Worten</div>'+
+      '<p class="info-body">'+(INFO[a.id]||a.desc)+'</p>'+
+      warn+
+      '<div class="modal-btns"><button class="mb cancel">Schließen</button><button class="mb ok">Ausführen</button></div>'+
+    '</div>';
+  document.body.appendChild(ov);
+  ov.querySelector('.cancel').onclick=()=>ov.remove();
+  ov.querySelector('.ok').onclick=()=>{ ov.remove(); run(a); };
+  ov.onclick=e=>{ if(e.target===ov) ov.remove(); };
+}
+
 /* ---------- Fenstersteuerung / Titelleiste ---------- */
 document.querySelectorAll('.wc').forEach(b=>b.onclick=()=>send({type:'win', action:b.dataset.win}));
 const tbDrag=document.querySelector('.tb-left');
@@ -411,7 +533,7 @@ function welcome(){
 
 /* ---------- Start ---------- */
 buildNav();
-selectCat('Reparieren');
+selectCat('Übersicht');
 renderQueue();
 welcome();
 
@@ -435,6 +557,7 @@ if(location.hash==='#updateprompt'){ showUpdatePrompt('v4.3'); }
 else if(location.hash==='#updating'){ updateVersion='v4.3'; umSet('Wird heruntergeladen …','Lade v4.3 …',{progress:true}); setUpdateProgress(62); $('#update-modal').classList.remove('hidden'); }
 else if(location.hash==='#updated'){ toast('Aktualisiert','Erfolgreich auf v4.3 aktualisiert','good'); }
 else if(location.hash==='#updatebar'){ showUpdate('v4.2'); }
+else if(location.hash==='#info'){ selectCat('Reparieren'); infoModal(byId(7)); }
 
 /* UI ist vollständig geladen -> Host darf jetzt Marker prüfen + auf Updates checken */
 send({type:'ready'});

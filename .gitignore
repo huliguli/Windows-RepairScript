@@ -1,6 +1,7 @@
 # Build-Ausgabe
 bin/
 obj/
+dist/
 
 # Dev-Screenshots
 ui/shot_*.png

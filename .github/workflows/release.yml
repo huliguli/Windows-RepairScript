@@ -30,7 +30,7 @@ jobs:
           ./sign.ps1 -File bin\WindowsWartung.exe -Pfx cert.pfx -Password $env:PFX_PW
           Remove-Item cert.pfx -Force
 
-      - name: Paket schnüren
+      - name: Paket schnüren (ZIP)
         shell: powershell
         run: |
           $dist = "WindowsWartung"
@@ -40,7 +40,16 @@ jobs:
           Copy-Item bin\ui $dist -Recurse
           Compress-Archive -Path "$dist\*" -DestinationPath WindowsWartung.zip -Force
 
-      - name: Release-Asset hochladen
+      - name: Installer bauen (Inno Setup)
+        shell: powershell
+        run: |
+          choco install innosetup -y --no-progress | Out-Null
+          $ver = (Get-Item bin\WindowsWartung.exe).VersionInfo.FileVersion
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$ver" installer\WindowsWartung.iss
+
+      - name: Release-Assets hochladen
         uses: softprops/action-gh-release@v2
         with:
-          files: WindowsWartung.zip
+          files: |
+            WindowsWartung.zip
+            dist/WindowsWartung-Setup.exe

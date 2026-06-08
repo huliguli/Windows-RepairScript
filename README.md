@@ -16,6 +16,8 @@ Die Oberfläche ist in HTML/CSS gebaut und läuft in einem schlanken **WebView2*
 
 Dazu:
 
+- **Dashboard** – Startseite mit Live-Systemzustand (Prozessor/RAM/Festplatte), Gesundheits-Score und konkreten Empfehlungen
+- **Erklärungen in einfacher Sprache** – das „?" auf jeder Kachel erklärt laienverständlich, was die Aktion macht
 - Modernes, dunkles UI mit eigener Titelleiste, Glas-Effekten, weichen Animationen und Kategorie-Sidebar
 - Live-Ausgabe mit Log-Export, **ein-/ausklappbar** – eingeklappt erscheinen kurze Hinweis-Toasts oben rechts
 - **Warteschlange** – mehrere Aktionen nacheinander abarbeiten (z. B. Reparatur → Aufräumen → Herunterfahren)
@@ -33,9 +35,14 @@ src/         gemeinsame Logik (Aktionskatalog, Befehls-Runner) + App-Manifest
 libs/        WebView2-DLLs (aus dem NuGet-Paket, eingecheckt – kein SDK nötig)
 assets/      App-Icon
 tools/       Icon-Generator
+installer/   Setup-Skript (Inno Setup)
 build.ps1    Build über das eingebaute csc.exe
 sfcscript.bat  schlanke Batch-Version (Vorgänger)
 ```
+
+## Installation
+
+Für Endnutzer am einfachsten: unter **Releases** den **`WindowsWartung-Setup.exe`**-Installer laden und ausführen – legt einen Startmenü-Eintrag an und lässt sich sauber wieder deinstallieren. Alternativ das `WindowsWartung.zip` entpacken und `WindowsWartung.exe` starten (die Dateien daneben müssen mitkopiert bleiben).
 
 ## Bauen
 
