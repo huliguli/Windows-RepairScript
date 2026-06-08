@@ -309,6 +309,14 @@ body::before{
 #sb-cancel{border:1px solid var(--border-strong);background:var(--surface-2);color:var(--text);font:inherit;font-size:12.5px;padding:7px 14px;border-radius:9px;cursor:pointer;transition:background .15s}
 #sb-cancel:hover{background:var(--surface-hi);border-color:var(--yellow);color:var(--yellow)}
 
+/* ---------- Update-Dialog ---------- */
+.modal-ov.hidden{display:none}
+.modal.upd .modal-ico.accent{background:var(--accent-soft);color:var(--accent)}
+.um-progress{height:8px;border-radius:999px;background:rgba(0,0,0,.3);overflow:hidden;margin:4px 0 20px}
+.um-progress.hidden{display:none}
+#um-bar{height:100%;width:0%;border-radius:999px;background:linear-gradient(90deg,var(--accent),var(--accent-2));transition:width .2s var(--ease)}
+.modal-btns.hidden{display:none}
+
 /* ---------- Bestätigungs-Dialog ---------- */
 .modal-ov{position:fixed;inset:0;z-index:80;display:grid;place-items:center;background:rgba(5,6,9,.55);backdrop-filter:blur(4px);animation:ovIn .2s var(--ease)}
 .modal{width:380px;max-width:88vw;padding:24px;text-align:center;background:rgba(20,23,30,.96);border:1px solid var(--border-strong);border-radius:18px;box-shadow:var(--shadow-lg);animation:modalIn .28s var(--ease)}

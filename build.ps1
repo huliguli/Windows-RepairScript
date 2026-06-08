@@ -19,6 +19,7 @@ try {
     $refs = @(
         'System.dll','System.Core.dll','System.Drawing.dll','System.Windows.Forms.dll',
         'System.Web.Extensions.dll',
+        'System.IO.Compression.dll','System.IO.Compression.FileSystem.dll',
         'libs\Microsoft.Web.WebView2.Core.dll','libs\Microsoft.Web.WebView2.WinForms.dll'
     ) -join ','
 

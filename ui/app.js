@@ -78,7 +78,11 @@ function onHost(m){
   else if(m.type==='done')  onDone(m.title, m.kind, m.message);
   else if(m.type==='shutdownScheduled') showShutdownBar(m.mode, m.delay);
   else if(m.type==='shutdownCancelled') hideShutdownBar();
-  else if(m.type==='update') showUpdate(m.version, m.notes);
+  else if(m.type==='update') showUpdatePrompt(m.version);
+  else if(m.type==='updateProgress') setUpdateProgress(m.percent);
+  else if(m.type==='updateStatus') setUpdatePhase(m.phase);
+  else if(m.type==='updateError') setUpdateError(m.message);
+  else if(m.type==='updated') toast('Aktualisiert','Erfolgreich auf '+m.version+' aktualisiert','good');
 }
 
 /* ---------- DOM ---------- */
@@ -278,12 +282,52 @@ function showShutdownBar(mode, secs){
 function hideShutdownBar(){ if(sbTimer){clearInterval(sbTimer);sbTimer=null;} $('#shutdown-bar').classList.remove('show'); }
 $('#sb-cancel').onclick=()=>{ send({type:'cancelShutdown'}); hideShutdownBar(); };
 
-/* ---------- Update-Banner ---------- */
-function showUpdate(version, notes){
+/* ---------- Update (Banner + Dialog) ---------- */
+$('#um-ico').innerHTML = svg('download');
+let updateVersion='';
+
+function showUpdate(version){ // kleines Banner oben (Fallback nach "Später")
   $('#ub-text').innerHTML = 'Neue Version <b>'+version+'</b> verfügbar';
   $('#update-bar').classList.add('show');
 }
-$('#ub-get').onclick=()=>send({type:'openUpdate'});
+function umSet(title, html, opts){
+  opts=opts||{};
+  $('#um-title').textContent=title;
+  $('#um-text').innerHTML=html;
+  $('#um-progress').classList.toggle('hidden', !opts.progress);
+  $('#um-btns').classList.toggle('hidden', !opts.buttons);
+}
+function showUpdatePrompt(version){
+  updateVersion=version||'';
+  $('#update-bar').classList.remove('show');
+  umSet('Update verfügbar', 'Version <b>'+updateVersion+'</b> ist verfügbar.<br>Jetzt herunterladen?', {buttons:true});
+  $('#um-later').textContent='Später';
+  $('#um-go').textContent='Jetzt herunterladen';
+  $('#um-later').onclick=()=>{ hideUpdateModal(); showUpdate(updateVersion); };
+  $('#um-go').onclick=()=>startUpdateFlow();
+  $('#update-modal').classList.remove('hidden');
+}
+function startUpdateFlow(){
+  setUpdateProgress(0);
+  umSet('Wird heruntergeladen …', 'Lade '+updateVersion+' …', {progress:true});
+  $('#update-modal').classList.remove('hidden');
+  send({type:'startUpdate'});
+}
+function setUpdateProgress(p){ $('#um-bar').style.width=(p||0)+'%'; }
+function setUpdatePhase(phase){
+  if(phase==='download') umSet('Wird heruntergeladen …','Lade '+updateVersion+' …',{progress:true});
+  else if(phase==='extract'){ setUpdateProgress(100); umSet('Wird entpackt …','Fast fertig …',{progress:true}); }
+  else if(phase==='restart') umSet('Neustart …','Das Programm startet sich neu …',{progress:true});
+}
+function setUpdateError(msg){
+  umSet('Update fehlgeschlagen', (msg||'Unbekannter Fehler'), {buttons:true});
+  $('#um-later').textContent='Schließen';
+  $('#um-go').textContent='Im Browser öffnen';
+  $('#um-later').onclick=()=>hideUpdateModal();
+  $('#um-go').onclick=()=>{ send({type:'openUpdate'}); hideUpdateModal(); };
+}
+function hideUpdateModal(){ $('#update-modal').classList.add('hidden'); }
+$('#ub-get').onclick=()=>startUpdateFlow();
 $('#ub-skip').onclick=()=>{ send({type:'skipUpdate'}); $('#update-bar').classList.remove('show'); };
 
 /* ---------- Toasts ---------- */
@@ -346,6 +390,17 @@ function mockHandle(msg){
   if(msg.type==='run') mockRun([msg.id], msg.post, msg.delay);
   else if(msg.type==='runQueue') mockRun(msg.ids, msg.post, msg.delay);
   else if(msg.type==='cancelShutdown') hideShutdownBar();
+  else if(msg.type==='startUpdate'){
+    let p=0; setUpdatePhase('download');
+    const t=setInterval(()=>{
+      p+=12;
+      if(p>=100){ clearInterval(t); setUpdateProgress(100);
+        setTimeout(()=>setUpdatePhase('extract'), 350);
+        setTimeout(()=>setUpdatePhase('restart'), 950);
+        setTimeout(()=>{ hideUpdateModal(); toast('Aktualisiert','Erfolgreich auf '+(updateVersion||'v4.3')+' aktualisiert','good'); }, 1800);
+      } else setUpdateProgress(p);
+    }, 170);
+  }
 }
 
 function welcome(){
@@ -376,7 +431,10 @@ if(location.hash.indexOf('queue')>=0){
   renderQueue(); openQueue(true);
 }
 if(location.hash.indexOf('shutdown')>=0){ showShutdownBar('shutdown', 58); }
-if(location.hash.indexOf('update')>=0){ showUpdate('v4.2'); }
+if(location.hash==='#updateprompt'){ showUpdatePrompt('v4.3'); }
+else if(location.hash==='#updating'){ updateVersion='v4.3'; umSet('Wird heruntergeladen …','Lade v4.3 …',{progress:true}); setUpdateProgress(62); $('#update-modal').classList.remove('hidden'); }
+else if(location.hash==='#updated'){ toast('Aktualisiert','Erfolgreich auf v4.3 aktualisiert','good'); }
+else if(location.hash==='#updatebar'){ showUpdate('v4.2'); }
 if(location.hash.indexOf('toast')>=0){
   setConsole(false);
   toast('SFC scannow','Erfolgreich – keine Fehler','good');

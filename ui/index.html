@@ -115,6 +115,20 @@
     <button id="ub-skip" class="ub-x" title="Diese Version überspringen"></button>
   </div>
 
+  <!-- Update-Dialog (In-App-Update) -->
+  <div id="update-modal" class="modal-ov hidden">
+    <div class="modal upd">
+      <div class="modal-ico accent" id="um-ico"></div>
+      <h3 id="um-title">Update verfügbar</h3>
+      <p id="um-text">Eine neue Version ist verfügbar. Jetzt herunterladen?</p>
+      <div id="um-progress" class="um-progress hidden"><div id="um-bar"></div></div>
+      <div class="modal-btns" id="um-btns">
+        <button class="mb cancel" id="um-later">Später</button>
+        <button class="mb ok" id="um-go">Jetzt herunterladen</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Shutdown-Banner -->
   <div id="shutdown-bar">
     <span class="sb-ico"></span>

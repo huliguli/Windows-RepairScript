@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.IO.Compression;
 using System.Net;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -32,6 +33,7 @@ namespace WartungsToolbox
         const string Repo = "huliguli/Windows-RepairScript";
         string _updateUrl;
         string _updateTag;
+        string _updateAsset;
 
         [DllImport("user32.dll")] static extern bool ReleaseCapture();
         [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
@@ -105,7 +107,10 @@ namespace WartungsToolbox
             else if (_view == "toast") suffix = "#toast";
             else if (_view == "queue") suffix = "#queue";
             else if (_view == "shutdown") suffix = "#shutdown";
-            else if (_view == "update") suffix = "#update";
+            else if (_view == "update") suffix = "#updatebar";
+            else if (_view == "updateprompt") suffix = "#updateprompt";
+            else if (_view == "updating") suffix = "#updating";
+            else if (_view == "updated") suffix = "#updated";
 
             _web.Source = new Uri("https://app/index.html" + suffix);
 
@@ -120,6 +125,7 @@ namespace WartungsToolbox
                 try
                 {
                     Thread.Sleep(1500); // dem UI Zeit zum Laden geben
+                    CheckUpdatedMarker(); // nach einem Update: Erfolgsmeldung zeigen
                     try { ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12; } catch { }
 
                     HttpWebRequest req = (HttpWebRequest)WebRequest.Create(
@@ -141,6 +147,24 @@ namespace WartungsToolbox
                     string url = data.ContainsKey("html_url") ? Convert.ToString(data["html_url"]) : null;
                     string name = data.ContainsKey("name") ? Convert.ToString(data["name"]) : "";
                     if (string.IsNullOrEmpty(tag)) return;
+
+                    // ZIP-Asset fuer das In-App-Update suchen
+                    object assetsObj;
+                    if (data.TryGetValue("assets", out assetsObj) && assetsObj is object[])
+                    {
+                        foreach (object ao in (object[])assetsObj)
+                        {
+                            Dictionary<string, object> ad = ao as Dictionary<string, object>;
+                            if (ad == null) continue;
+                            string an = ad.ContainsKey("name") ? Convert.ToString(ad["name"]) : "";
+                            string au = ad.ContainsKey("browser_download_url") ? Convert.ToString(ad["browser_download_url"]) : "";
+                            if (au.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                            {
+                                _updateAsset = au;
+                                if (an.IndexOf("WindowsWartung", StringComparison.OrdinalIgnoreCase) >= 0) break;
+                            }
+                        }
+                    }
 
                     Version latest = ParseVer(tag);
                     Version cur = typeof(ShellForm).Assembly.GetName().Version;
@@ -173,6 +197,117 @@ namespace WartungsToolbox
         {
             if (string.IsNullOrEmpty(_updateUrl) || !_updateUrl.StartsWith("http")) return;
             try { Process.Start(new ProcessStartInfo(_updateUrl) { UseShellExecute = true }); }
+            catch { }
+        }
+
+        // ---------- In-App-Update: herunterladen, entpacken, tauschen, neu starten ----------
+        void BeginUpdate()
+        {
+            if (string.IsNullOrEmpty(_updateAsset))
+            {
+                Post(new { type = "updateError", message = "Kein Download-Paket im Release gefunden." });
+                return;
+            }
+            try
+            {
+                string tmp = Path.Combine(Path.GetTempPath(), "WindowsWartung_update");
+                try { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); } catch { }
+                Directory.CreateDirectory(tmp);
+                string zip = Path.Combine(tmp, "update.zip");
+
+                try { ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12; } catch { }
+
+                WebClient wc = new WebClient();
+                wc.Headers.Add("User-Agent", "WindowsWartung-Updater");
+                wc.DownloadProgressChanged += delegate (object s, DownloadProgressChangedEventArgs e)
+                {
+                    Post(new { type = "updateProgress", percent = e.ProgressPercentage });
+                };
+                wc.DownloadFileCompleted += delegate (object s, System.ComponentModel.AsyncCompletedEventArgs e)
+                {
+                    if (e.Error != null) { Post(new { type = "updateError", message = e.Error.Message }); return; }
+                    if (e.Cancelled) return;
+                    FinishUpdate(tmp, zip);
+                };
+                Post(new { type = "updateStatus", phase = "download" });
+                wc.DownloadFileAsync(new Uri(_updateAsset), zip);
+            }
+            catch (Exception ex) { Post(new { type = "updateError", message = ex.Message }); }
+        }
+
+        void FinishUpdate(string tmp, string zip)
+        {
+            try
+            {
+                Post(new { type = "updateStatus", phase = "extract" });
+                string newDir = Path.Combine(tmp, "new");
+                if (Directory.Exists(newDir)) Directory.Delete(newDir, true);
+                ZipFile.ExtractToDirectory(zip, newDir);
+
+                if (!File.Exists(Path.Combine(newDir, "WindowsWartung.exe")))
+                {
+                    Post(new { type = "updateError", message = "Paket enthält keine WindowsWartung.exe." });
+                    return;
+                }
+
+                string appDir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
+                string appExe = Path.Combine(appDir, "WindowsWartung.exe");
+                int pid = Process.GetCurrentProcess().Id;
+
+                WriteMarker(_updateTag);
+
+                string bat = Path.Combine(Path.GetTempPath(), "ww_update.cmd");
+                string content =
+                    "@echo off\r\n" +
+                    ":w\r\n" +
+                    "tasklist /FI \"PID eq " + pid + "\" 2>nul | find \"" + pid + "\" >nul\r\n" +
+                    "if not errorlevel 1 ( timeout /t 1 /nobreak >nul & goto w )\r\n" +
+                    "robocopy \"" + newDir + "\" \"" + appDir + "\" /E /NFL /NDL /NJH /NJS /R:3 /W:2 >nul\r\n" +
+                    "start \"\" \"" + appExe + "\"\r\n" +
+                    "rmdir /s /q \"" + tmp + "\" >nul 2>&1\r\n" +
+                    "del \"%~f0\" >nul 2>&1\r\n";
+                File.WriteAllText(bat, content, Encoding.Default);
+
+                Post(new { type = "updateStatus", phase = "restart" });
+
+                ProcessStartInfo psi = new ProcessStartInfo("cmd.exe", "/c \"" + bat + "\"");
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+                Process.Start(psi);
+
+                BeginInvoke((Action)delegate { Application.Exit(); });
+            }
+            catch (Exception ex) { Post(new { type = "updateError", message = ex.Message }); }
+        }
+
+        string MarkerPath()
+        {
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "WindowsWartung", "pending_update.txt");
+        }
+        void WriteMarker(string tag)
+        {
+            try { Directory.CreateDirectory(Path.GetDirectoryName(MarkerPath())); File.WriteAllText(MarkerPath(), tag ?? ""); }
+            catch { }
+        }
+        void CheckUpdatedMarker()
+        {
+            try
+            {
+                string p = MarkerPath();
+                if (!File.Exists(p)) return;
+                string tag = File.ReadAllText(p).Trim();
+                try { File.Delete(p); } catch { }
+                Version target = ParseVer(tag);
+                Version cur = typeof(ShellForm).Assembly.GetName().Version;
+                if (target != null && cur >= target && _web != null && _web.IsHandleCreated)
+                {
+                    string ftag = tag;
+                    try { _web.BeginInvoke((Action)delegate { Post(new { type = "updated", version = ftag }); }); }
+                    catch { }
+                }
+            }
             catch { }
         }
 
@@ -271,6 +406,7 @@ namespace WartungsToolbox
             else if (type == "cancel") { if (_runner != null) _runner.Cancel(); }
             else if (type == "cancelShutdown") CancelShutdown();
             else if (type == "openUpdate") OpenUpdate();
+            else if (type == "startUpdate") BeginUpdate();
             else if (type == "skipUpdate") WriteSkip(_updateTag);
             else if (type == "save") SaveLog();
             else if (type == "win") Win(Str(m, "action"));

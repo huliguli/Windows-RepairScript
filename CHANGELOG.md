@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.3] - 2026-06-03
+
+### Neu
+- **In-App-Update** – „Update verfügbar"-Dialog mit *Jetzt herunterladen / Später*, Download-Fortschrittsbalken, automatischer Datei-Tausch über einen Helfer, Neustart und Erfolgsmeldung „Erfolgreich auf vX.X aktualisiert"
+
+### Geändert
+- Der Update-Hinweis lädt jetzt direkt **in der App** statt nur den Browser zu öffnen (Browser bleibt als Fallback)
+
 ## [4.2] - 2026-06-03
 
 ### Neu
