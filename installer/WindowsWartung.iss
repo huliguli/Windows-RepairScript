@@ -97,6 +97,7 @@ begin
       TRichEditViewer(C).Color := clSurf;
       TRichEditViewer(C).Font.Color := clTxt;
     end
+    else if C is TBitmapImage then TBitmapImage(C).BackColor := clBg
     else if C is TPanel then TPanel(C).Color := clBg
     else if C is TBevel then TBevel(C).Visible := False;
     if C is TWinControl then Recolor(TWinControl(C));

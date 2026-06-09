@@ -1,5 +1,10 @@
 # Changelog
 
+## [5.8] - 2026-06-09
+
+### Behoben
+- **Setup**: weißer Rahmen um das Banner auf Willkommens-/Abschlussseite entfernt – das Bild ist jetzt flach im App-Dunkel gehalten und der Bildflächen-Hintergrund (`TBitmapImage.BackColor`) dunkel; dazu ein dezenter Logo-Schein.
+
 ## [5.7] - 2026-06-09
 
 ### Behoben
