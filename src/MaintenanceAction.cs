@@ -12,6 +12,7 @@ namespace WartungsToolbox
         public Encoding Enc;      // null => OEM-Codepage
         public bool Detached;     // im eigenen Fenster starten, nicht abwarten/mitschneiden
         public bool IgnoreExit;   // ExitCode != 0 ist hier erwartbar/harmlos -> nicht als Problem werten
+        public bool Progress;     // zeichenweise lesen und Prozent (DISM/SFC: \r-Fortschritt) ans UI melden
     }
 
     class Job

@@ -15,6 +15,15 @@ jobs:
       - name: Repository auschecken
         uses: actions/checkout@v4
 
+      - name: Release-Beschreibung aus Changelog setzen
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REL_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          ./tools/release-notes.ps1 -Tag "$env:REL_TAG" -OutFile "release-notes.md"
+          gh release edit "$env:REL_TAG" --notes-file "release-notes.md"
+
       - name: Build (Release)
         shell: powershell
         run: ./build.ps1 -Release

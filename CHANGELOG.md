@@ -1,5 +1,19 @@
 # Changelog
 
+## [6.0] - 2026-06-09
+
+### Neu
+- **Reparatur-Verlauf** – jede Ausführung (Zeit, Aktion, Ergebnis, Dauer) wird protokolliert; neue Sidebar-Ansicht „Verlauf" zeigt die letzten Läufe (mit „Leeren"). Gespeichert unter `%LOCALAPPDATA%\WindowsWartung\history.json`.
+- **Wiederherstellungspunkt-Verwaltung** – eigene Ansicht: Punkt anlegen (mit Beschreibung), vorhandene auflisten und – nach **doppelter** Sicherheitsabfrage – auf einen Punkt zurücksetzen.
+- **Geplante Wartung** – richtet über die Windows-Aufgabenplanung (schtasks, mit höchsten Rechten) einen wiederkehrenden Wartungslauf ein (täglich/wöchentlich + Uhrzeit). Der neue **`--auto`-Modus** führt einen gründlichen, ungefährlichen Satz (DISM RestoreHealth + SFC + Temp + Papierkorb) still im Hintergrund aus und meldet sich per Windows-Benachrichtigung; ist die App gerade geöffnet, wird der Termin ausgelassen.
+- **Energieplan-Umschalter** – neue Ansicht „Energie": zeigt die vorhandenen Energiesparpläne, markiert den aktiven und wechselt per Klick (powercfg).
+- **Netzwerk-Diagnose** – Ping und Route (tracert) zu einem frei eingebbaren Ziel; die Eingabe wird streng geprüft und ohne Shell ausgeführt (keine Befehls-Injektion).
+- **Treiber-Backup** – exportiert alle installierten Treiber in einen über den System-Dialog wählbaren Ordner (pnputil `/export-driver`).
+- **Live-Fortschritt für DISM/SFC** – der Prozentwert wird laufend aus der (mit `\r` aktualisierten) Ausgabe gelesen und als Fortschrittsbalken angezeigt, statt dass die App „eingefroren" wirkt.
+
+### Geändert
+- Der Screenshot-/Vorschaumodus nutzt einen eigenen WebView2-Datenordner und stört so eine bereits laufende Instanz nicht mehr.
+
 ## [5.10] - 2026-06-09
 
 ### Sicherheit

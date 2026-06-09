@@ -20,8 +20,8 @@ namespace WartungsToolbox
         static Step Cmd(string c)  { return new Step { File = "cmd.exe", Args = "/c " + c }; }
         static Step CmdBE(string c){ return new Step { File = "cmd.exe", Args = "/c " + c, IgnoreExit = true }; } // best-effort
         static Step Ps(string c)   { return new Step { File = "powershell.exe", Args = "-NoProfile -ExecutionPolicy Bypass -Command \"" + c + "\"" }; }
-        static Step Dism(string a) { return new Step { File = "DISM.exe", Args = a }; }
-        static Step Sfc(string a)  { return new Step { File = "sfc.exe", Args = a, Enc = Encoding.Unicode }; }
+        static Step Dism(string a) { return new Step { File = "DISM.exe", Args = a, Progress = true }; }
+        static Step Sfc(string a)  { return new Step { File = "sfc.exe", Args = a, Enc = Encoding.Unicode, Progress = true }; }
 
         public static List<MaintenanceAction> All()
         {
@@ -188,6 +188,18 @@ namespace WartungsToolbox
                 Steps = { new Step { File = "mdsched.exe", Detached = true } }
             });
 
+            return l;
+        }
+
+        // Stiller, gruendlicher Satz fuer die geplante Wartung (--auto):
+        // reparierend + aufraeumend, nichts Destruktives, kein interaktiver Schritt.
+        public static List<Step> AutoSet()
+        {
+            var l = new List<Step>();
+            l.Add(Dism("/Online /Cleanup-Image /RestoreHealth"));
+            l.Add(Sfc("/scannow"));
+            l.Add(Ps("$t=@($env:TEMP,(Join-Path $env:WINDIR 'Temp')); Get-ChildItem $t -Force -EA SilentlyContinue | Remove-Item -Recurse -Force -EA SilentlyContinue; 'Temp geleert.'"));
+            l.Add(Ps("try { Clear-RecycleBin -Force -EA Stop } catch {}; 'Papierkorb geleert.'"));
             return l;
         }
     }

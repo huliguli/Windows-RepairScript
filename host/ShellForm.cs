@@ -318,9 +318,11 @@ namespace WartungsToolbox
 
             try
             {
+                // Screenshot-Laeufe bekommen einen eigenen Datenordner, damit sie eine
+                // bereits laufende Instanz (die den normalen Ordner sperrt) nicht stoeren.
                 string udf = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "WindowsWartung", "WebView2");
+                    "WindowsWartung", _shotPath != null ? "WebView2_shot" : "WebView2");
                 Directory.CreateDirectory(udf);
 
                 CoreWebView2Environment env = await CoreWebView2Environment.CreateAsync(null, udf, null);
@@ -346,7 +348,7 @@ namespace WartungsToolbox
             core.Settings.IsSwipeNavigationEnabled = false;
 
             core.WebMessageReceived += OnWebMessage;
-            _runner = new CommandRunner(_web, Log, SetState, Done);
+            _runner = new CommandRunner(_web, Log, SetState, Done, OnProgress);
 
             // Gespeicherte UI-Groesse schon vor dem Anzeigen anwenden (kein Flackern)
             try { _web.ZoomFactor = _view == "zoombig" ? 1.5 : ((_shotPath != null) ? 1.0 : ReadZoom()); } catch { }
@@ -367,6 +369,12 @@ namespace WartungsToolbox
             else if (_view == "autostart") suffix = "#autostart";
             else if (_view == "settings") suffix = "#settings";
             else if (_view == "rep") suffix = "#rep";
+            else if (_view == "history") suffix = "#history";
+            else if (_view == "restore") suffix = "#restore";
+            else if (_view == "power") suffix = "#power";
+            else if (_view == "netdiag") suffix = "#netdiag";
+            else if (_view == "sched") suffix = "#sched";
+            else if (_view == "progress") suffix = "#progress";
 
             _web.Source = new Uri("https://app/index.html" + suffix);
             // Update-Prüfung startet erst, wenn das UI 'ready' meldet (siehe OnReady)
@@ -761,6 +769,18 @@ namespace WartungsToolbox
             }
             else if (type == "autostartList") Post(new { type = "autostart", items = Autostart.List() });
             else if (type == "autostartSet") Autostart.SetEnabled(Str(m, "loc"), Str(m, "key"), ToBool(m, "enable"));
+            else if (type == "historyList") Post(new { type = "history", items = History.List() });
+            else if (type == "historyClear") { History.Clear(); Post(new { type = "history", items = History.List() }); }
+            else if (type == "restoreList") StartRestoreList();
+            else if (type == "restoreCreate") RestoreCreate(Str(m, "desc"));
+            else if (type == "restoreRevert") RestoreRevert(ToInt(m, "seq"));
+            else if (type == "powerList") StartPowerList();
+            else if (type == "powerSet") PowerSet(Str(m, "guid"));
+            else if (type == "netDiag") NetDiag(Str(m, "target"));
+            else if (type == "driverBackup") DriverBackup();
+            else if (type == "scheduleStatus") SendScheduleStatus();
+            else if (type == "scheduleCreate") ScheduleCreate(m);
+            else if (type == "scheduleDelete") ScheduleDelete();
         }
 
         void Win(string a)
@@ -807,8 +827,10 @@ namespace WartungsToolbox
             Post(new { type = "log", text = text, kind = KindStr(k) });
         }
         void SetState(bool running) { Post(new { type = "state", running = running }); }
-        void Done(string title, LogKind k, string message)
+        void OnProgress(int pct) { Post(new { type = "progress", percent = pct }); }
+        void Done(string title, LogKind k, string message, double seconds)
         {
+            History.Add(title, KindStr(k), message, seconds);
             Post(new { type = "done", title = title, kind = KindStr(k), message = message });
             if (k != LogKind.Bad && _pendingPost != "none") ScheduleShutdown();
             _pendingPost = "none";
@@ -894,6 +916,192 @@ namespace WartungsToolbox
                 File = "powershell.exe",
                 Args = "-NoProfile -ExecutionPolicy Bypass -Command \"try { Checkpoint-Computer -Description 'Wartungstool' -RestorePointType MODIFY_SETTINGS -EA Stop; 'Wiederherstellungspunkt erstellt.' } catch { 'Wiederherstellungspunkt uebersprungen: ' + $_.Exception.Message }\""
             };
+        }
+
+        // ---------- Wiederherstellungspunkte ----------
+        void StartRestoreList()
+        {
+            Thread t = new Thread(delegate ()
+            {
+                List<object> items = RestorePoints.List();
+                UiPost(new { type = "restorePoints", items = items });
+            });
+            t.IsBackground = true;
+            t.Start();
+        }
+
+        void RestoreCreate(string desc)
+        {
+            string safe = SanitizeDesc(desc);
+            // Frequenz-Drossel kurz aufheben, damit ein bewusst angelegter Punkt nicht still verworfen wird.
+            string cmd =
+                "try { " +
+                "Set-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore' -Name 'SystemRestorePointCreationFrequency' -Value 0 -EA SilentlyContinue; " +
+                "Checkpoint-Computer -Description '" + safe + "' -RestorePointType MODIFY_SETTINGS -EA Stop; " +
+                "'Wiederherstellungspunkt wurde angelegt.' " +
+                "} catch { 'Konnte nicht angelegt werden (Systemschutz aktiv?): ' + $_.Exception.Message }";
+            Step s = new Step { File = "powershell.exe", Args = "-NoProfile -ExecutionPolicy Bypass -Command \"" + cmd + "\"" };
+            List<Job> jobs = new List<Job>();
+            jobs.Add(new Job { Title = "Wiederherstellungspunkt anlegen", Steps = new List<Step> { s } });
+            _runner.RunJobs("Wiederherstellungspunkt anlegen", jobs);
+        }
+
+        void RestoreRevert(int seq)
+        {
+            if (seq <= 0) return; // Sequenznummer ist eine reine Zahl -> keine Injektion moeglich
+            string cmd =
+                "try { Restore-Computer -RestorePoint " + seq + " -Confirm:$false -EA Stop; 'Wiederherstellung gestartet - der PC startet neu.' } " +
+                "catch { 'Wiederherstellung fehlgeschlagen: ' + $_.Exception.Message }";
+            Step s = new Step { File = "powershell.exe", Args = "-NoProfile -ExecutionPolicy Bypass -Command \"" + cmd + "\"" };
+            List<Job> jobs = new List<Job>();
+            jobs.Add(new Job { Title = "Auf Wiederherstellungspunkt zuruecksetzen", Steps = new List<Step> { s } });
+            _runner.RunJobs("Wiederherstellung", jobs);
+        }
+
+        // Beschreibung fuer Checkpoint-Computer absichern: nur unkritische Zeichen, begrenzte Laenge.
+        static string SanitizeDesc(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "Manueller Punkt (Windows-Wartung)";
+            StringBuilder sb = new StringBuilder();
+            foreach (char c in s)
+            {
+                if (char.IsLetterOrDigit(c) || c == ' ' || c == '-' || c == '_' || c == '.' || c == ':' || c == '(' || c == ')')
+                    sb.Append(c);
+                if (sb.Length >= 60) break;
+            }
+            string r = sb.ToString().Trim();
+            return r.Length == 0 ? "Manueller Punkt (Windows-Wartung)" : r;
+        }
+
+        // ---------- Energieplaene ----------
+        void StartPowerList()
+        {
+            Thread t = new Thread(delegate ()
+            {
+                List<object> items = PowerPlans.List();
+                UiPost(new { type = "powerPlans", items = items });
+            });
+            t.IsBackground = true;
+            t.Start();
+        }
+
+        void PowerSet(string guid)
+        {
+            Guid x;
+            if (string.IsNullOrEmpty(guid) || !Guid.TryParse(guid, out x)) return;
+            Thread t = new Thread(delegate ()
+            {
+                PowerPlans.SetActive(guid);
+                List<object> items = PowerPlans.List();
+                UiPost(new { type = "powerPlans", items = items });
+            });
+            t.IsBackground = true;
+            t.Start();
+        }
+
+        // ---------- Netzwerk-Diagnose ----------
+        void NetDiag(string target)
+        {
+            string t = SanitizeHost(target);
+            if (t == null)
+            {
+                Post(new { type = "log", text = "Ungueltiges Ziel - erlaubt sind nur Buchstaben, Zahlen, Punkt, Doppelpunkt und Bindestrich.", kind = "bad" });
+                Post(new { type = "done", title = "Netzwerk-Diagnose", kind = "bad", message = "Ungueltiges Ziel" });
+                return;
+            }
+            // ping.exe/tracert.exe werden direkt (ohne Shell) aufgerufen -> der Parameter wird nie interpretiert.
+            List<Step> steps = new List<Step>();
+            steps.Add(new Step { File = "ping.exe", Args = "-n 4 " + t });
+            steps.Add(new Step { File = "tracert.exe", Args = "-d -h 20 " + t });
+            List<Job> jobs = new List<Job>();
+            jobs.Add(new Job { Title = "Netzwerk-Diagnose: " + t, Steps = steps });
+            _runner.RunJobs("Netzwerk-Diagnose: " + t, jobs);
+        }
+
+        // Hostname/IP streng auf unkritische Zeichen begrenzen.
+        static string SanitizeHost(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return null;
+            s = s.Trim();
+            if (s.Length == 0 || s.Length > 253) return null;
+            foreach (char c in s)
+            {
+                bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+                          || c == '.' || c == '-' || c == ':';
+                if (!ok) return null;
+            }
+            return s;
+        }
+
+        // ---------- Treiber-Backup ----------
+        void DriverBackup()
+        {
+            string folder;
+            using (FolderBrowserDialog d = new FolderBrowserDialog())
+            {
+                d.Description = "Zielordner fuer das Treiber-Backup waehlen";
+                d.ShowNewFolderButton = true;
+                if (d.ShowDialog(this) != DialogResult.OK) return;
+                folder = d.SelectedPath;
+            }
+            if (string.IsNullOrEmpty(folder)) return;
+            // Pfad stammt aus dem System-Ordnerdialog; pnputil wird direkt (ohne Shell) gestartet.
+            List<Step> steps = new List<Step>();
+            steps.Add(new Step { File = "pnputil.exe", Args = "/export-driver * \"" + folder + "\"" });
+            List<Job> jobs = new List<Job>();
+            jobs.Add(new Job { Title = "Treiber-Backup nach " + folder, Steps = steps });
+            _runner.RunJobs("Treiber-Backup", jobs);
+        }
+
+        // ---------- Geplante Wartung ----------
+        void SendScheduleStatus()
+        {
+            Thread t = new Thread(delegate ()
+            {
+                bool exists = Scheduler.Exists();
+                object cfg = Scheduler.Read();
+                UiPost(new { type = "schedule", exists = exists, config = cfg });
+            });
+            t.IsBackground = true;
+            t.Start();
+        }
+
+        void ScheduleCreate(Dictionary<string, object> m)
+        {
+            string mode = Str(m, "mode");
+            string day = Str(m, "day");
+            int hh = ToInt(m, "hh");
+            int mi = ToInt(m, "mm");
+
+            if (mode != "daily" && mode != "weekly") return;
+            string[] days = { "MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN" };
+            if (mode == "weekly" && Array.IndexOf(days, day) < 0) return;
+            if (hh < 0 || hh > 23 || mi < 0 || mi > 59) return;
+
+            string hhs = hh.ToString("00");
+            string mms = mi.ToString("00");
+            string exe = Application.ExecutablePath;
+
+            Thread t = new Thread(delegate ()
+            {
+                bool ok = Scheduler.Create(mode, day, hhs, mms, exe);
+                if (ok) Scheduler.Write(mode, day, hhs + ":" + mms);
+                UiPost(new { type = "schedule", exists = Scheduler.Exists(), config = Scheduler.Read(), justCreated = ok });
+            });
+            t.IsBackground = true;
+            t.Start();
+        }
+
+        void ScheduleDelete()
+        {
+            Thread t = new Thread(delegate ()
+            {
+                Scheduler.Delete();
+                Scheduler.Clear();
+                UiPost(new { type = "schedule", exists = Scheduler.Exists(), config = (object)null });
+            });
+            t.IsBackground = true;
+            t.Start();
         }
 
         // ---------- Rahmenloses Fenster: Größe ändern ----------

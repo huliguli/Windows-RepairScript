@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Forms;
 
@@ -12,19 +13,21 @@ namespace WartungsToolbox
         readonly Control _ui;
         readonly Action<string, LogKind> _log;
         readonly Action<bool> _onState;
-        readonly Action<string, LogKind, string> _onComplete;
-        Process _current;
+        readonly Action<string, LogKind, string, double> _onComplete;
+        readonly Action<int> _onProgress;
+        volatile Process _current;
         volatile bool _cancel;
 
         public bool Running { get; private set; }
 
         public CommandRunner(Control ui, Action<string, LogKind> log, Action<bool> onState,
-                             Action<string, LogKind, string> onComplete)
+                             Action<string, LogKind, string, double> onComplete, Action<int> onProgress)
         {
             _ui = ui;
             _log = log;
             _onState = onState;
             _onComplete = onComplete;
+            _onProgress = onProgress;
         }
 
         void Log(string s, LogKind k)
@@ -32,6 +35,15 @@ namespace WartungsToolbox
             if (_ui != null && _ui.IsHandleCreated)
             {
                 try { _ui.BeginInvoke((Action)delegate { _log(s, k); }); }
+                catch { }
+            }
+        }
+
+        void Progress(int pct)
+        {
+            if (_onProgress != null && _ui != null && _ui.IsHandleCreated)
+            {
+                try { _ui.BeginInvoke((Action)delegate { _onProgress(pct); }); }
                 catch { }
             }
         }
@@ -78,6 +90,7 @@ namespace WartungsToolbox
                     }
                 }
                 sw.Stop();
+                double fsec = sw.Elapsed.TotalSeconds;
                 LogKind fk;
                 string fmsg;
                 if (_cancel)
@@ -107,7 +120,7 @@ namespace WartungsToolbox
                         _ui.BeginInvoke((Action)delegate
                         {
                             _onState(false);
-                            if (_onComplete != null) _onComplete(ftitle, fk, fmsg);
+                            if (_onComplete != null) _onComplete(ftitle, fk, fmsg, fsec);
                         });
                     }
                     catch { }
@@ -147,18 +160,24 @@ namespace WartungsToolbox
                 using (var proc = new Process())
                 {
                     proc.StartInfo = psi;
-                    proc.OutputDataReceived += delegate (object o, DataReceivedEventArgs e)
-                    {
-                        if (e.Data != null) Log(e.Data, LogKind.Normal);
-                    };
                     proc.ErrorDataReceived += delegate (object o, DataReceivedEventArgs e)
                     {
                         if (!string.IsNullOrEmpty(e.Data)) Log(e.Data, LogKind.Normal);
                     };
+                    // Fortschritts-Schritte (DISM/SFC) werden zeichenweise gelesen (siehe ReadWithProgress);
+                    // sonst zeilenweise asynchron.
+                    if (!s.Progress)
+                    {
+                        proc.OutputDataReceived += delegate (object o, DataReceivedEventArgs e)
+                        {
+                            if (e.Data != null) Log(e.Data, LogKind.Normal);
+                        };
+                    }
                     _current = proc;
                     proc.Start();
-                    proc.BeginOutputReadLine();
                     proc.BeginErrorReadLine();
+                    if (s.Progress) ReadWithProgress(proc);
+                    else proc.BeginOutputReadLine();
                     proc.WaitForExit();
                     int code = proc.ExitCode;
                     _current = null;
@@ -171,6 +190,51 @@ namespace WartungsToolbox
                 Log("   Fehler: " + ex.Message, LogKind.Bad);
                 return -1;
             }
+        }
+
+        // DISM/SFC schreiben ihren Fortschritt mit Carriage-Return (\r) auf EINE Zeile, ohne Zeilenumbruch.
+        // Der zeilenbasierte Reader (BeginOutputReadLine) wuerde das erst am Ende sehen -> hier zeichenweise lesen.
+        void ReadWithProgress(Process proc)
+        {
+            StringBuilder sb = new StringBuilder();
+            int lastPct = -1;
+            System.IO.TextReader rdr = proc.StandardOutput;
+            int ch;
+            while ((ch = rdr.Read()) >= 0)
+            {
+                if (_cancel) break;
+                char c = (char)ch;
+                if (c == '\r' || c == '\n')
+                {
+                    if (sb.Length > 0) { lastPct = HandleProgressLine(sb.ToString(), lastPct); sb.Length = 0; }
+                }
+                else sb.Append(c);
+            }
+            if (sb.Length > 0) HandleProgressLine(sb.ToString(), lastPct);
+        }
+
+        int HandleProgressLine(string line, int lastPct)
+        {
+            int pct = ParsePercent(line);
+            if (pct >= 0)
+            {
+                if (pct != lastPct) Progress(pct);   // Fortschrittszeile selbst nicht als Log-Spam ausgeben
+                return pct;
+            }
+            string t = line.TrimEnd();
+            if (t.Length > 0) Log(t, LogKind.Normal);
+            return lastPct;
+        }
+
+        static readonly Regex PctRx = new Regex("(\\d{1,3})([.,]\\d+)?\\s*%", RegexOptions.Compiled);
+        static int ParsePercent(string line)
+        {
+            Match m = PctRx.Match(line);
+            if (!m.Success) return -1;
+            int v;
+            if (!int.TryParse(m.Groups[1].Value, out v)) return -1;
+            if (v < 0 || v > 100) return -1;
+            return v;
         }
 
         static readonly Encoding Oem = GetOem();

@@ -34,6 +34,11 @@ const ICONS = {
   check:'<path d="M22 11.1V12a10 10 0 1 1-5.9-9.1"/><path d="M22 4 12 14.1l-3-3"/>',
   xcirc:'<circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6"/><path d="M9 9l6 6"/>',
   warn:'<circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/>',
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>',
+  zap:'<path d="M13 2 4 14h7l-1 8 9-12h-7l1-6Z"/>',
+  history:'<path d="M3 3v6h6"/><path d="M3.5 13A9 9 0 1 0 6 5.3L3 9"/><path d="M12 8v5l3.5 2"/>',
+  calendar:'<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18"/><path d="M8 2v4"/><path d="M16 2v4"/>',
+  save:'<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/>',
 };
 function svg(name){return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'+(ICONS[name]||'')+'</svg>';}
 
@@ -44,9 +49,26 @@ const CATS = [
   {name:'Netzwerk',     icon:'globe'},
   {name:'Aufräumen',    icon:'trash'},
   {name:'Diagnose',     icon:'activity'},
+  {name:'Energie',      icon:'zap'},
+  {name:'Wiederherstellung', icon:'rotate'},
+  {name:'Geplant',      icon:'calendar'},
+  {name:'Verlauf',      icon:'history'},
   {name:'Autostart',    icon:'rocket'},
   {name:'Einstellungen',icon:'gear'},
 ];
+const DAYS = [['MON','Montag'],['TUE','Dienstag'],['WED','Mittwoch'],['THU','Donnerstag'],['FRI','Freitag'],['SAT','Samstag'],['SUN','Sonntag']];
+const DAY_NAMES = {MON:'Montag',TUE:'Dienstag',WED:'Mittwoch',THU:'Donnerstag',FRI:'Freitag',SAT:'Samstag',SUN:'Sonntag'};
+// Sonderaktionen mit eigener Eingabe (nicht id-/queue-basiert, eigener Handler).
+const SPECIALS = [
+  {cat:'Netzwerk', icon:'activity', title:'Netzwerk-Diagnose', special:'netdiag',
+   desc:'Ping und Route (tracert) zu einem Ziel deiner Wahl.'},
+  {cat:'Diagnose', icon:'save', title:'Treiber-Backup', special:'driverbackup',
+   desc:'Alle installierten Treiber in einen wählbaren Ordner exportieren.'},
+];
+const INFO_SPECIAL = {
+  netdiag:'Prüft, ob und wie gut dein PC ein bestimmtes Ziel im Internet erreicht. „Ping" misst die Antwortzeit, „tracert" zeigt den Weg dorthin Schritt für Schritt. Gut, um Verbindungsprobleme einzukreisen. Gib z. B. google.com oder 8.8.8.8 ein.',
+  driverbackup:'Sichert alle zusätzlich installierten Gerätetreiber (z. B. Drucker, Grafik, WLAN) in einen Ordner deiner Wahl. Praktisch vor einer Windows-Neuinstallation – die Treiber lassen sich später daraus wiederherstellen.'
+};
 const ACTIONS = [
   {id:0,  cat:'Reparieren', icon:'wrench',      title:'Komplett-Reparatur', rec:true,  desc:'DISM ScanHealth + RestoreHealth, danach SFC. Der Rundum-Sorglos-Lauf.'},
   {id:1,  cat:'Reparieren', icon:'refresh',     title:'DISM RestoreHealth',           desc:'Repariert den Komponentenspeicher über Windows Update.'},
@@ -106,6 +128,7 @@ if(HOST){ HOST.addEventListener('message', e => { try{ onHost(JSON.parse(e.data)
 function onHost(m){
   if(m.type==='log')   append(m.text, m.kind);
   else if(m.type==='state') setRunning(m.running);
+  else if(m.type==='progress') setProgress(m.percent);
   else if(m.type==='done')  onDone(m.title, m.kind, m.message);
   else if(m.type==='shutdownScheduled') showShutdownBar(m.mode, m.delay);
   else if(m.type==='shutdownCancelled') hideShutdownBar();
@@ -116,6 +139,10 @@ function onHost(m){
   else if(m.type==='updated') toast('Aktualisiert','Erfolgreich auf '+m.version+' aktualisiert','good');
   else if(m.type==='stats') updateStats(m);
   else if(m.type==='autostart') renderAutostartList(m.items);
+  else if(m.type==='history') renderHistoryList(m.items);
+  else if(m.type==='restorePoints') renderRestoreList(m.items);
+  else if(m.type==='powerPlans') renderPowerList(m.items);
+  else if(m.type==='schedule') renderScheduleStatus(m);
   else if(m.type==='zoom'){ SET.zoom=m.factor||1; markZoomActive(); }
   else if(m.type==='admin') setAdmin(m.on);
 }
@@ -187,7 +214,7 @@ function buildNav(){
 }
 function selectCat(name){
   active=name; buildNav();
-  cards.classList.remove('dashboard','settings','autostart');
+  cards.classList.remove('dashboard','settings','autostart','history','power','restore','sched');
   const isDash = (name==='Übersicht');
   send({type:'dashboard', active:isDash});
   if(isDash){
@@ -211,9 +238,42 @@ function selectCat(name){
     renderSettings();
     return;
   }
+  if(name==='Verlauf'){
+    $('#cat-title').textContent='Verlauf';
+    $('#cat-hint').textContent='Die letzten Ausführungen';
+    cards.classList.add('history');
+    renderHistory();
+    send({type:'historyList'});
+    return;
+  }
+  if(name==='Wiederherstellung'){
+    $('#cat-title').textContent='Wiederherstellung';
+    $('#cat-hint').textContent='Systemzustand sichern & zurücksetzen';
+    cards.classList.add('restore');
+    renderRestore();
+    send({type:'restoreList'});
+    return;
+  }
+  if(name==='Energie'){
+    $('#cat-title').textContent='Energie';
+    $('#cat-hint').textContent='Energiesparplan wählen';
+    cards.classList.add('power');
+    renderPower();
+    send({type:'powerList'});
+    return;
+  }
+  if(name==='Geplant'){
+    $('#cat-title').textContent='Geplante Wartung';
+    $('#cat-hint').textContent='Automatisch im Hintergrund warten lassen';
+    cards.classList.add('sched');
+    renderSchedule();
+    send({type:'scheduleStatus'});
+    return;
+  }
   const list=ACTIONS.filter(a=>a.cat===name);
+  const specials=SPECIALS.filter(a=>a.cat===name);
   $('#cat-title').textContent=name;
-  $('#cat-hint').textContent=list.length+' Aktionen · klicken zum Ausführen';
+  $('#cat-hint').textContent=(list.length+specials.length)+' Aktionen · klicken zum Ausführen';
   cards.innerHTML='';
   list.forEach((a,i)=>{
     const el=document.createElement('div');
@@ -231,6 +291,21 @@ function selectCat(name){
     el.onclick=()=>run(a);
     el.querySelector('.card-add').onclick=(e)=>{ e.stopPropagation(); addToQueue(a.id); };
     el.querySelector('.card-help').onclick=(e)=>{ e.stopPropagation(); infoModal(a); };
+    cards.appendChild(el);
+  });
+  specials.forEach((a,i)=>{
+    const el=document.createElement('div');
+    el.className='card special';
+    el.style.animationDelay=((list.length+i)*30)+'ms';
+    el.innerHTML=
+      '<button class="card-help" title="Was macht das?">'+svg('help')+'</button>'+
+      '<div class="card-ico">'+svg(a.icon)+'</div>'+
+      '<div class="card-body">'+
+        '<div class="card-title">'+a.title+'<span class="tag alt">Eingabe</span></div>'+
+        '<div class="card-desc">'+a.desc+'</div>'+
+      '</div>';
+    el.onclick=()=>runSpecial(a);
+    el.querySelector('.card-help').onclick=(e)=>{ e.stopPropagation(); infoModalText(a.title, a.icon, INFO_SPECIAL[a.special]||a.desc); };
     cards.appendChild(el);
   });
   refreshAdded();
@@ -337,6 +412,248 @@ function renderAutostartList(items){
   });
 }
 
+/* ---------- Verlauf ---------- */
+function renderHistory(){
+  cards.innerHTML='<div class="as-loading">Verlauf wird geladen …</div>';
+}
+function histResultLabel(kind){
+  if(kind==='good') return 'Erfolgreich';
+  if(kind==='bad')  return 'Fehlgeschlagen';
+  if(kind==='warn') return 'Mit Hinweisen';
+  return 'Ausgeführt';
+}
+function renderHistoryList(items){
+  if(!cards.classList.contains('history')) return;
+  if(!items || !items.length){
+    cards.innerHTML='<div class="hist-empty"><div class="hist-empty-ico">'+svg('clock')+'</div>'+
+      '<div>Noch keine Ausführungen aufgezeichnet.</div>'+
+      '<span>Sobald du eine Aktion startest, erscheint sie hier.</span></div>';
+    return;
+  }
+  let html='<div class="hist-head"><span class="hist-count">'+items.length+(items.length===1?' Eintrag':' Einträge')+'</span>'+
+    '<button id="hist-clear" class="link">Leeren</button></div><div class="hist-wrap">';
+  items.forEach(it=>{
+    const kind=(it.kind==='good'||it.kind==='bad'||it.kind==='warn')?it.kind:'norm';
+    const secs=(it.seconds!=null && it.seconds!=='')?(it.seconds+' s'):'';
+    html+='<div class="hist-item">'+
+      '<span class="hist-dot '+kind+'"></span>'+
+      '<div class="hist-info"><div class="hist-action">'+esc(it.action)+'</div>'+
+      '<div class="hist-msg">'+esc(histResultLabel(kind))+(it.message?' · '+esc(it.message):'')+'</div></div>'+
+      '<div class="hist-meta"><div class="hist-time">'+esc(it.time)+'</div>'+
+      (secs?'<div class="hist-dur">'+esc(secs)+'</div>':'')+'</div>'+
+    '</div>';
+  });
+  html+='</div>';
+  cards.innerHTML=html;
+  const cb=$('#hist-clear');
+  if(cb) cb.onclick=()=>confirmModal('Verlauf leeren','Alle Verlaufseinträge endgültig löschen?',()=>send({type:'historyClear'}));
+}
+
+/* ---------- Wiederherstellung ---------- */
+function renderRestore(){
+  cards.innerHTML=
+    '<div class="restore-wrap">'+
+      '<div class="rp-note">'+svg('alert')+'<div><b>Wiederherstellungspunkte</b> sichern Systemzustand, Treiber, Programme und Einstellungen. '+
+        'Eine Wiederherstellung startet den PC neu und setzt ihn auf einen früheren Stand zurück – <b>persönliche Dateien bleiben unberührt</b>.</div></div>'+
+      '<div class="set-card">'+
+        '<div class="set-title">Neuen Punkt anlegen</div>'+
+        '<div class="set-desc" style="margin:4px 0 12px">Sichert den aktuellen Zustand – ideal vor riskanten Änderungen.</div>'+
+        '<div class="rp-create">'+
+          '<input id="rp-desc" type="text" maxlength="60" placeholder="Beschreibung (optional)" />'+
+          '<button id="rp-create-btn" class="primary">Punkt anlegen</button>'+
+        '</div>'+
+      '</div>'+
+      '<div class="rp-list-head"><span class="hist-count">Vorhandene Punkte</span><button id="rp-refresh" class="link">Aktualisieren</button></div>'+
+      '<div id="rp-list"><div class="as-loading">Wiederherstellungspunkte werden geladen …</div></div>'+
+    '</div>';
+  $('#rp-create-btn').onclick=()=>{
+    if(running){ if(consoleEl.classList.contains('open')) append('Es läuft bereits eine Aktion – bitte warten.','warn'); return; }
+    send({type:'restoreCreate', desc:$('#rp-desc').value.trim()});
+  };
+  $('#rp-refresh').onclick=()=>{ const l=$('#rp-list'); if(l) l.innerHTML='<div class="as-loading">Wird geladen …</div>'; send({type:'restoreList'}); };
+}
+function rpTypeLabel(t){
+  t=parseInt(t,10);
+  if(t===0)  return 'Anwendung';
+  if(t===10) return 'Systemänderung';
+  if(t===12) return 'Einstellungen';
+  if(t===13) return 'Deinstallation';
+  return 'Punkt';
+}
+function renderRestoreList(items){
+  if(!cards.classList.contains('restore')) return;
+  const list=$('#rp-list'); if(!list) return;
+  if(!items || !items.length){
+    list.innerHTML='<div class="rp-empty">Keine Wiederherstellungspunkte vorhanden – der Systemschutz ist möglicherweise deaktiviert. Lege oben einen Punkt an, um ihn zu aktivieren.</div>';
+    return;
+  }
+  let html='<div class="rp-items">';
+  items.forEach(it=>{
+    html+='<div class="rp-item">'+
+      '<div class="rp-ico">'+svg('rotate')+'</div>'+
+      '<div class="rp-info"><div class="rp-desc-t">'+esc(it.desc||'(ohne Beschreibung)')+'</div>'+
+      '<div class="rp-meta">'+esc(it.time||'')+' · '+esc(rpTypeLabel(it.rtype))+' · Nr. '+esc(it.seq)+'</div></div>'+
+      '<button class="rp-revert" data-seq="'+esc(it.seq)+'" data-desc="'+esc(it.desc||'')+'">Zurücksetzen</button>'+
+    '</div>';
+  });
+  html+='</div>';
+  list.innerHTML=html;
+  list.querySelectorAll('.rp-revert').forEach(b=>{
+    b.onclick=()=>confirmRevert(parseInt(b.dataset.seq,10), b.dataset.desc||'(ohne Beschreibung)');
+  });
+}
+function confirmRevert(seq, desc){
+  if(isNaN(seq)||seq<=0) return;
+  // Wegen Tragweite: zweistufige Bestätigung
+  confirmModal('Wirklich wiederherstellen?',
+    'Windows wird auf „'+esc(desc)+'" zurückgesetzt und der PC startet sofort neu. Programme, Treiber und Einstellungen, die danach geändert wurden, gehen verloren. Persönliche Dateien bleiben erhalten.',
+    ()=>confirmModal('Letzte Sicherheitsfrage',
+      'Jetzt endgültig zurücksetzen und neu starten?',
+      ()=>send({type:'restoreRevert', seq:seq})));
+}
+
+/* ---------- Energie ---------- */
+function renderPower(){
+  cards.innerHTML=
+    '<div class="power-wrap">'+
+      '<div class="rp-note">'+svg('zap')+'<div>Der Energiesparplan steuert das Verhältnis von <b>Leistung</b> und <b>Stromverbrauch</b>. '+
+        '„Höchstleistung" ist schneller, braucht aber mehr Strom; „Energiesparmodus" schont den Akku.</div></div>'+
+      '<div id="power-list"><div class="as-loading">Energiepläne werden geladen …</div></div>'+
+    '</div>';
+}
+function renderPowerList(items){
+  if(!cards.classList.contains('power')) return;
+  const list=$('#power-list'); if(!list) return;
+  if(!items || !items.length){ list.innerHTML='<div class="rp-empty">Keine Energiepläne gefunden.</div>'; return; }
+  let html='<div class="power-items">';
+  items.forEach(p=>{
+    const on=!!p.active;
+    html+='<button class="power-item'+(on?' on':'')+'" data-guid="'+esc(p.guid)+'">'+
+      '<span class="power-radio"></span>'+
+      '<span class="power-name">'+esc(p.name)+'</span>'+
+      (on?'<span class="power-active">aktiv</span>':'')+
+    '</button>';
+  });
+  html+='</div>';
+  list.innerHTML=html;
+  list.querySelectorAll('.power-item').forEach(b=>{
+    b.onclick=()=>{
+      if(b.classList.contains('on')) return;
+      list.querySelectorAll('.power-item').forEach(x=>{ x.classList.remove('on'); const a=x.querySelector('.power-active'); if(a) a.remove(); });
+      b.classList.add('on');
+      send({type:'powerSet', guid:b.dataset.guid});
+    };
+  });
+}
+
+/* ---------- Geplante Wartung ---------- */
+let schedMode='daily';
+function renderSchedule(){
+  schedMode='daily';
+  cards.innerHTML=
+    '<div class="sched-wrap">'+
+      '<div class="rp-note">'+svg('calendar')+'<div>Die geplante Wartung führt regelmäßig einen <b>gründlichen Reparatur- und Aufräumlauf</b> aus (DISM, SFC, Temp- und Papierkorb-Bereinigung) und meldet sich danach per Benachrichtigung. Sie läuft mit Administratorrechten im Hintergrund; ist die App gerade geöffnet, wird der Termin übersprungen.</div></div>'+
+      '<div id="sched-status" class="sched-status"><div class="as-loading">Status wird geladen …</div></div>'+
+      '<div class="set-card">'+
+        '<div class="set-title" style="margin-bottom:14px">Zeitplan einrichten</div>'+
+        '<div class="sched-form">'+
+          '<div class="sched-field"><label>Intervall</label>'+
+            '<div class="seg sched-seg" id="sched-mode">'+
+              '<button data-mode="daily" class="active">Täglich</button>'+
+              '<button data-mode="weekly">Wöchentlich</button>'+
+            '</div>'+
+          '</div>'+
+          '<div class="sched-field hidden" id="sched-day-field"><label>Wochentag</label>'+
+            '<select id="sched-day" class="sched-select">'+DAYS.map(d=>'<option value="'+d[0]+'">'+d[1]+'</option>').join('')+'</select>'+
+          '</div>'+
+          '<div class="sched-field"><label>Uhrzeit</label>'+
+            '<input id="sched-time" type="time" value="12:00" class="sched-time" />'+
+          '</div>'+
+        '</div>'+
+        '<div class="sched-save-row"><button id="sched-save" class="primary">Zeitplan speichern</button></div>'+
+      '</div>'+
+    '</div>';
+  document.querySelectorAll('#sched-mode button').forEach(b=>{
+    b.onclick=()=>{
+      document.querySelectorAll('#sched-mode button').forEach(x=>x.classList.remove('active'));
+      b.classList.add('active'); schedMode=b.dataset.mode;
+      $('#sched-day-field').classList.toggle('hidden', schedMode!=='weekly');
+    };
+  });
+  $('#sched-save').onclick=()=>{
+    const time=$('#sched-time').value||'12:00';
+    const parts=time.split(':');
+    const hh=parseInt(parts[0],10), mm=parseInt(parts[1],10);
+    if(isNaN(hh)||isNaN(mm)) return;
+    send({type:'scheduleCreate', mode:schedMode, day:$('#sched-day').value, hh:hh, mm:mm});
+  };
+}
+function renderScheduleStatus(d){
+  const st=$('#sched-status'); if(!st) return;
+  if(d.justCreated===false) toast('Nicht gespeichert','Der Zeitplan konnte nicht angelegt werden.','bad');
+  else if(d.justCreated===true) toast('Geplant','Die automatische Wartung ist eingerichtet.','good');
+  if(d.exists && d.config){
+    const c=d.config;
+    const txt = c.mode==='weekly'
+      ? ('Jeden '+(DAY_NAMES[c.day]||c.day)+' um '+esc(c.time)+' Uhr')
+      : ('Täglich um '+esc(c.time)+' Uhr');
+    st.innerHTML='<div class="sched-on"><span class="sched-badge">Aktiv</span>'+
+      '<div class="sched-on-txt">'+txt+'</div>'+
+      '<button id="sched-del" class="link danger">Entfernen</button></div>';
+    $('#sched-del').onclick=()=>confirmModal('Geplante Wartung entfernen','Den automatischen Wartungstermin wirklich löschen?',()=>send({type:'scheduleDelete'}));
+  } else {
+    st.innerHTML='<div class="sched-off"><span class="sched-dot"></span>Aktuell ist keine automatische Wartung eingerichtet.</div>';
+  }
+}
+
+/* ---------- Sonderaktionen (mit Eingabe) ---------- */
+function runSpecial(a){
+  if(running){ if(consoleEl.classList.contains('open')) append('Es läuft bereits eine Aktion – bitte warten oder stoppen.','warn'); return; }
+  if(a.special==='netdiag'){
+    promptModal('Netzwerk-Diagnose','Ziel eingeben – Webadresse oder IP (z. B. google.com oder 8.8.8.8):','google.com', val=>{
+      const t=(val||'').trim();
+      if(!t) return;
+      if(!/^[a-zA-Z0-9][a-zA-Z0-9.\-:]*$/.test(t)){ toast('Ungültiges Ziel','Nur Buchstaben, Zahlen, Punkt und Bindestrich erlaubt.','bad'); return; }
+      send({type:'netDiag', target:t});
+    });
+  } else if(a.special==='driverbackup'){
+    confirmModal('Treiber-Backup','Im nächsten Schritt wählst du einen Zielordner. Anschließend werden alle installierten Treiber dorthin exportiert. Das kann ein paar Minuten dauern. Fortfahren?', ()=>send({type:'driverBackup'}));
+  }
+}
+function promptModal(title, label, preset, onOk){
+  const ov=document.createElement('div'); ov.className='modal-ov';
+  ov.innerHTML=
+    '<div class="modal">'+
+      '<div class="modal-ico accent">'+svg('globe')+'</div>'+
+      '<h3>'+esc(title)+'</h3><p>'+esc(label)+'</p>'+
+      '<input class="modal-input" type="text" spellcheck="false" />'+
+      '<div class="modal-btns"><button class="mb cancel">Abbrechen</button><button class="mb ok">Starten</button></div>'+
+    '</div>';
+  document.body.appendChild(ov);
+  const inp=ov.querySelector('.modal-input');
+  inp.value=preset||'';
+  setTimeout(()=>{ try{ inp.focus(); inp.select(); }catch(_){} }, 60);
+  const go=()=>{ const v=inp.value; ov.remove(); onOk(v); };
+  ov.querySelector('.cancel').onclick=()=>ov.remove();
+  ov.querySelector('.ok').onclick=go;
+  inp.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); go(); } });
+  ov.onclick=e=>{ if(e.target===ov) ov.remove(); };
+}
+function infoModalText(title, icon, body){
+  const ov=document.createElement('div'); ov.className='modal-ov';
+  ov.innerHTML=
+    '<div class="modal info-modal">'+
+      '<div class="modal-ico accent">'+svg(icon)+'</div>'+
+      '<h3>'+esc(title)+'</h3>'+
+      '<div class="info-lead">In einfachen Worten</div>'+
+      '<p class="info-body">'+esc(body)+'</p>'+
+      '<div class="modal-btns"><button class="mb ok">Verstanden</button></div>'+
+    '</div>';
+  document.body.appendChild(ov);
+  ov.querySelector('.ok').onclick=()=>ov.remove();
+  ov.onclick=e=>{ if(e.target===ov) ov.remove(); };
+}
+
 /* ---------- Einstellungen ---------- */
 function toggleHTML(id, on){ return '<span class="switch"><input type="checkbox" id="'+id+'"'+(on?' checked':'')+'/><i></i></span>'; }
 function renderSettings(){
@@ -389,7 +706,16 @@ function setRunning(r){
   $('#btn-stop').disabled=!r;
   $('#q-run').disabled=r || queue.length===0;
   if(r){ statusEl.classList.add('run'); statusText.textContent='läuft …'; }
-  else { statusEl.classList.remove('run'); statusText.textContent='bereit'; }
+  else { statusEl.classList.remove('run'); statusText.textContent='bereit'; setProgress(-1); }
+}
+// Live-Fortschritt von DISM/SFC (oder -1 zum Ausblenden)
+function setProgress(pct){
+  const w=$('#console-progress'), b=$('#console-progress-bar');
+  if(pct==null || pct<0){ if(w) w.classList.remove('show'); if(b) b.style.width='0%'; if(running) statusText.textContent='läuft …'; return; }
+  if(pct>100) pct=100;
+  if(w) w.classList.add('show');
+  if(b) b.style.width=pct+'%';
+  if(running) statusText.textContent='läuft … '+pct+' %';
 }
 function setConsole(open){
   consoleEl.classList.toggle('open', open);
@@ -430,6 +756,8 @@ function run(a){
 }
 function onDone(title, kind, message){
   if(!consoleEl.classList.contains('open')) toast(title, message, kind);
+  // Nach dem Anlegen eines Punktes die Liste auffrischen
+  if(active==='Wiederherstellung') send({type:'restoreList'});
 }
 
 /* ---------- Warteschlange ---------- */
@@ -701,6 +1029,54 @@ else if(location.hash==='#info'){ selectCat('Reparieren'); infoModal(byId(7)); }
 else if(location.hash==='#autostart'){ selectCat('Autostart'); }
 else if(location.hash==='#settings'){ selectCat('Einstellungen'); }
 else if(location.hash==='#rep'){ selectCat('Reparieren'); }
+else if(location.hash==='#history'){ selectCat('Verlauf'); }
+else if(location.hash==='#restore'){
+  active='Wiederherstellung'; buildNav();
+  cards.classList.remove('dashboard','settings','autostart','history','power','restore','sched');
+  cards.classList.add('restore'); send({type:'dashboard', active:false});
+  $('#cat-title').textContent='Wiederherstellung';
+  $('#cat-hint').textContent='Systemzustand sichern & zurücksetzen';
+  renderRestore();
+  renderRestoreList([
+    {seq:128,desc:'Manueller Punkt (Windows-Wartung)',rtype:12,time:'2026-06-09 14:05'},
+    {seq:127,desc:'Geplante Wartung',rtype:12,time:'2026-06-08 03:00'},
+    {seq:125,desc:'Windows Update',rtype:13,time:'2026-06-05 11:42'}
+  ]);
+}
+else if(location.hash==='#power'){
+  active='Energie'; buildNav();
+  cards.classList.remove('dashboard','settings','autostart','history','power','restore','sched');
+  cards.classList.add('power'); send({type:'dashboard', active:false});
+  $('#cat-title').textContent='Energie';
+  $('#cat-hint').textContent='Energiesparplan wählen';
+  renderPower();
+  renderPowerList([
+    {guid:'381b4222-f694-41f0-9685-ff5bb260df2e', name:'Ausbalanciert', active:true},
+    {guid:'8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c', name:'Höchstleistung', active:false},
+    {guid:'a1841308-3541-4fab-bc81-f71556f20b4a', name:'Energiesparmodus', active:false}
+  ]);
+}
+else if(location.hash==='#netdiag'){
+  selectCat('Netzwerk');
+  promptModal('Netzwerk-Diagnose','Ziel eingeben – Webadresse oder IP (z. B. google.com oder 8.8.8.8):','google.com', ()=>{});
+}
+else if(location.hash==='#sched'){
+  active='Geplant'; buildNav();
+  cards.classList.remove('dashboard','settings','autostart','history','power','restore','sched');
+  cards.classList.add('sched'); send({type:'dashboard', active:false});
+  $('#cat-title').textContent='Geplante Wartung';
+  $('#cat-hint').textContent='Automatisch im Hintergrund warten lassen';
+  renderSchedule();
+  renderScheduleStatus({exists:true, config:{mode:'weekly', day:'SUN', time:'12:00'}});
+}
+else if(location.hash==='#progress'){
+  selectCat('Reparieren'); setConsole(true);
+  append('▶  Komplett-Reparatur','head');
+  append('›  DISM /Online /Cleanup-Image /RestoreHealth','dim');
+  append('Tool für die Abbildverwaltung für die Bereitstellung','norm');
+  append('Abbildversion: 10.0.22631.3737','norm');
+  setRunning(true); setProgress(45);
+}
 
 /* UI ist vollständig geladen -> Host darf jetzt Marker prüfen + auf Updates checken */
 send({type:'ready'});

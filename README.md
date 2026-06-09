@@ -8,15 +8,25 @@ Die Oberfläche ist in HTML/CSS gebaut und läuft in einem schlanken **WebView2*
 
 **Reparieren** — Komplett-Reparatur (DISM + SFC), DISM RestoreHealth, SFC scannow & nur prüfen, WinSxS aufräumen, Komponentenspeicher analysieren, Windows-Update reparieren, CHKDSK planen
 
-**Netzwerk** — Netzwerk-Reset (DNS / Winsock / IP), DNS-Cache leeren, IP-Adresse erneuern
+**Netzwerk** — Netzwerk-Reset (DNS / Winsock / IP), DNS-Cache leeren, IP-Adresse erneuern, Netzwerk-Diagnose (Ping/Route zu einem Ziel)
 
 **Aufräumen** — Temp-Dateien, Windows-Update-Cache, Papierkorb, Datenträgerbereinigung
 
-**Diagnose** — System-Übersicht, Festplatten-Gesundheit (SMART), Akkubericht, Defender-Schnellscan, RAM-Diagnose
+**Diagnose** — System-Übersicht, Festplatten-Gesundheit (SMART), Akkubericht, Defender-Schnellscan, RAM-Diagnose, Treiber-Backup
+
+**Energie** — vorhandene Energiesparpläne anzeigen, den aktiven markieren und per Klick wechseln
+
+**Wiederherstellung** — Wiederherstellungspunkt anlegen, vorhandene auflisten und (mit doppelter Bestätigung) auf einen zurücksetzen
+
+**Geplant** — wiederkehrende, automatische Wartung per Aufgabenplanung (täglich/wöchentlich); läuft still im Hintergrund und meldet sich per Benachrichtigung
+
+**Verlauf** — protokolliert jede Ausführung (Zeit, Aktion, Ergebnis, Dauer) zum Nachschlagen
 
 **Autostart** — alle Startprogramme anzeigen und per Schalter an-/abschalten (umkehrbar)
 
 Dazu:
+
+- **Live-Fortschritt** – bei DISM und SFC zeigt ein Fortschrittsbalken den tatsächlichen Stand statt nur „arbeitet …"
 
 - **Dashboard** – Startseite mit Live-Systemzustand (Prozessor/RAM/Festplatte), Gesundheits-Score und konkreten Empfehlungen
 - **Erklärungen in einfacher Sprache** – das „?" auf jeder Kachel erklärt laienverständlich, was die Aktion macht
@@ -66,7 +76,7 @@ oder einfach **`build.cmd` doppelklicken**. Ergebnis in `bin\`: `WindowsWartung.
 
 ## Hinweise
 
-- DISM und SFC brauchen je nach System ein paar Minuten – das Fenster arbeitet, auch wenn die Ausgabe kurz still steht.
+- DISM und SFC brauchen je nach System ein paar Minuten – ein Fortschrittsbalken zeigt den Stand.
 - Netzwerk-Reset und RAM-Diagnose erfordern anschließend einen Neustart.
 - Ausführliche SFC-Ergebnisse stehen wie immer in `C:\Windows\Logs\CBS\CBS.log`.
 - Die `.exe` ist nicht signiert – beim ersten Start zeigt Windows SmartScreen ggf. „Der Computer wurde geschützt"; über *Weitere Informationen → Trotzdem ausführen* startet sie.
