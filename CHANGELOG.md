@@ -1,5 +1,10 @@
 # Changelog
 
+## [5.3] - 2026-06-09
+
+### Geändert
+- **Update-Download** fühlt sich jetzt wie ein echtes Update an: der Fortschrittsbalken läuft bewusst über einige Sekunden (parallel zum tatsächlichen Download), danach „Wird entpackt …" und Neustart – statt sofort durchzuspringen.
+
 ## [5.2] - 2026-06-09
 
 ### Neu

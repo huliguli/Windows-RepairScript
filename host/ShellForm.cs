@@ -466,38 +466,66 @@ namespace WartungsToolbox
                 Post(new { type = "updateError", message = "Kein Download-Paket im Release gefunden." });
                 return;
             }
-            try
+            Thread t = new Thread(delegate ()
             {
                 string tmp = Path.Combine(Path.GetTempPath(), "WindowsWartung_update");
-                try { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); } catch { }
-                Directory.CreateDirectory(tmp);
-                string zip = Path.Combine(tmp, "update.zip");
-
-                try { ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12; } catch { }
-
-                WebClient wc = new WebClient();
-                wc.Headers.Add("User-Agent", "WindowsWartung-Updater");
-                wc.DownloadProgressChanged += delegate (object s, DownloadProgressChangedEventArgs e)
+                try
                 {
-                    Post(new { type = "updateProgress", percent = e.ProgressPercentage });
-                };
-                wc.DownloadFileCompleted += delegate (object s, System.ComponentModel.AsyncCompletedEventArgs e)
-                {
-                    if (e.Error != null) { Post(new { type = "updateError", message = e.Error.Message }); return; }
-                    if (e.Cancelled) return;
-                    FinishUpdate(tmp, zip);
-                };
-                Post(new { type = "updateStatus", phase = "download" });
-                wc.DownloadFileAsync(new Uri(_updateAsset), zip);
-            }
-            catch (Exception ex) { Post(new { type = "updateError", message = ex.Message }); }
+                    try { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); } catch { }
+                    Directory.CreateDirectory(tmp);
+                    string zip = Path.Combine(tmp, "update.zip");
+
+                    try { ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12; } catch { }
+                    UiPost(new { type = "updateStatus", phase = "download" });
+
+                    // Echter Download laeuft parallel zum Fortschrittsbalken
+                    Exception dlError = null;
+                    Thread dl = new Thread(delegate ()
+                    {
+                        try
+                        {
+                            using (WebClient wc = new WebClient())
+                            {
+                                wc.Headers.Add("User-Agent", "WindowsWartung-Updater");
+                                wc.DownloadFile(new Uri(_updateAsset), zip);
+                            }
+                        }
+                        catch (Exception ex) { dlError = ex; }
+                    });
+                    dl.IsBackground = true;
+                    dl.Start();
+
+                    // Gemaechlicher Fortschritt fuer echtes Update-Gefuehl (~3,5 s)
+                    int steps = 70;
+                    for (int i = 0; i <= steps; i++)
+                    {
+                        UiPost(new { type = "updateProgress", percent = (int)(i * 100.0 / steps) });
+                        Thread.Sleep(50);
+                    }
+
+                    dl.Join(); // auf das echte Ende warten (langsame Leitung)
+                    if (dlError != null || !File.Exists(zip))
+                    {
+                        UiPost(new { type = "updateError", message = dlError != null ? dlError.Message : "Download fehlgeschlagen." });
+                        return;
+                    }
+
+                    UiPost(new { type = "updateStatus", phase = "extract" });
+                    Thread.Sleep(600);
+
+                    if (_web != null && _web.IsHandleCreated)
+                        _web.BeginInvoke((Action)delegate { FinishUpdate(tmp, zip); });
+                }
+                catch (Exception ex) { UiPost(new { type = "updateError", message = ex.Message }); }
+            });
+            t.IsBackground = true;
+            t.Start();
         }
 
         void FinishUpdate(string tmp, string zip)
         {
             try
             {
-                Post(new { type = "updateStatus", phase = "extract" });
                 string newDir = Path.Combine(tmp, "new");
                 if (Directory.Exists(newDir)) Directory.Delete(newDir, true);
                 ZipFile.ExtractToDirectory(zip, newDir);
@@ -819,6 +847,14 @@ namespace WartungsToolbox
         {
             try { _web.CoreWebView2.PostWebMessageAsString(_js.Serialize(o)); }
             catch { }
+        }
+        void UiPost(object o)
+        {
+            if (_web != null && _web.IsHandleCreated)
+            {
+                try { _web.BeginInvoke((Action)delegate { Post(o); }); }
+                catch { }
+            }
         }
 
         void SaveLog()
