@@ -74,7 +74,7 @@ namespace WartungsToolbox
                     {
                         if (_cancel) break;
                         int code = RunStep(s);
-                        if (code != 0) problem = true;
+                        if (code != 0 && !s.IgnoreExit) problem = true;
                     }
                 }
                 sw.Stop();
@@ -162,7 +162,7 @@ namespace WartungsToolbox
                     proc.WaitForExit();
                     int code = proc.ExitCode;
                     _current = null;
-                    Log("   ↳ ExitCode " + code, code == 0 ? LogKind.Dim : LogKind.Bad);
+                    Log("   ↳ ExitCode " + code, (code == 0 || s.IgnoreExit) ? LogKind.Dim : LogKind.Bad);
                     return code;
                 }
             }

@@ -1,5 +1,15 @@
 # Changelog
 
+## [5.10] - 2026-06-09
+
+### Sicherheit
+- **Update-Download wird per SHA-256 geprüft.** Das Release liefert eine Prüfsumme (`WindowsWartung.zip.sha256`); die App vergleicht den heruntergeladenen Inhalt damit und bricht bei Abweichung ab – bevor mit Adminrechten getauscht wird.
+
+### Geändert
+- **Erfolg/Fehler ehrlicher**: Best-effort-Schritte (Dienste stoppen/starten, catroot2 umbenennen …) werten einen erwartbaren Fehlercode nicht mehr als Gesamtfehler – die Windows-Update-Reparatur läuft dadurch robuster durch.
+- **Aufräumen meldet Konkretes**: Temp & Update-Cache zeigen die freigegebenen MB, der Papierkorb erkennt „bereits leer".
+- **Defender-Schnellscan** mit Fallback: klare Meldung, wenn Defender nicht verfügbar ist (z. B. anderes Antivirus aktiv).
+
 ## [5.9] - 2026-06-09
 
 ### Behoben

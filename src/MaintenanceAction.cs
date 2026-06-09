@@ -11,6 +11,7 @@ namespace WartungsToolbox
         public string Args = "";
         public Encoding Enc;      // null => OEM-Codepage
         public bool Detached;     // im eigenen Fenster starten, nicht abwarten/mitschneiden
+        public bool IgnoreExit;   // ExitCode != 0 ist hier erwartbar/harmlos -> nicht als Problem werten
     }
 
     class Job

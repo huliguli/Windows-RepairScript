@@ -18,6 +18,7 @@ namespace WartungsToolbox
         }
 
         static Step Cmd(string c)  { return new Step { File = "cmd.exe", Args = "/c " + c }; }
+        static Step CmdBE(string c){ return new Step { File = "cmd.exe", Args = "/c " + c, IgnoreExit = true }; } // best-effort
         static Step Ps(string c)   { return new Step { File = "powershell.exe", Args = "-NoProfile -ExecutionPolicy Bypass -Command \"" + c + "\"" }; }
         static Step Dism(string a) { return new Step { File = "DISM.exe", Args = a }; }
         static Step Sfc(string a)  { return new Step { File = "sfc.exe", Args = a, Enc = Encoding.Unicode }; }
@@ -71,17 +72,19 @@ namespace WartungsToolbox
                 Category = "Reparieren", Glyph = "E777", IsRepair = true,
                 Title = "Windows-Update reparieren",
                 Desc = "Setzt die Update-Komponenten zurück (SoftwareDistribution + catroot2).",
+                // Best-effort: einzelne Schritte dürfen fehlschlagen (z. B. catroot2 gesperrt), ohne den ganzen Lauf als Fehler zu werten.
                 Steps = {
-                    Cmd("net stop wuauserv"),
-                    Cmd("net stop bits"),
-                    Cmd("net stop cryptsvc"),
-                    Cmd("if exist \"%windir%\\SoftwareDistribution.old\" rd /s /q \"%windir%\\SoftwareDistribution.old\""),
-                    Cmd("ren \"%windir%\\SoftwareDistribution\" SoftwareDistribution.old"),
-                    Cmd("if exist \"%windir%\\System32\\catroot2.old\" rd /s /q \"%windir%\\System32\\catroot2.old\""),
-                    Cmd("ren \"%windir%\\System32\\catroot2\" catroot2.old"),
-                    Cmd("net start cryptsvc"),
-                    Cmd("net start bits"),
-                    Cmd("net start wuauserv"),
+                    CmdBE("net stop wuauserv"),
+                    CmdBE("net stop bits"),
+                    CmdBE("net stop cryptsvc"),
+                    CmdBE("if exist \"%windir%\\SoftwareDistribution.old\" rd /s /q \"%windir%\\SoftwareDistribution.old\""),
+                    CmdBE("ren \"%windir%\\SoftwareDistribution\" SoftwareDistribution.old"),
+                    CmdBE("if exist \"%windir%\\System32\\catroot2.old\" rd /s /q \"%windir%\\System32\\catroot2.old\""),
+                    CmdBE("ren \"%windir%\\System32\\catroot2\" catroot2.old"),
+                    CmdBE("net start cryptsvc"),
+                    CmdBE("net start bits"),
+                    CmdBE("net start wuauserv"),
+                    CmdBE("echo Windows-Update-Komponenten wurden zurueckgesetzt - bitte den PC neu starten."),
                 }
             });
             l.Add(new MaintenanceAction {
@@ -125,23 +128,23 @@ namespace WartungsToolbox
                 Category = "Aufräumen", Glyph = "E74D",
                 Title = "Temp-Dateien löschen",
                 Desc = "Leert den Benutzer- und Windows-Temp-Ordner.",
-                Steps = { Ps("$t=@($env:TEMP,(Join-Path $env:WINDIR 'Temp')); Get-ChildItem $t -Force -EA SilentlyContinue | Remove-Item -Recurse -Force -EA SilentlyContinue; 'Temp-Dateien geleert.'") }
+                Steps = { Ps("$t=@($env:TEMP,(Join-Path $env:WINDIR 'Temp')); $b=(Get-ChildItem $t -Recurse -Force -EA SilentlyContinue | Measure-Object Length -Sum).Sum; Get-ChildItem $t -Force -EA SilentlyContinue | Remove-Item -Recurse -Force -EA SilentlyContinue; $a=(Get-ChildItem $t -Recurse -Force -EA SilentlyContinue | Measure-Object Length -Sum).Sum; 'Temp geleert - ca. ' + [math]::Round((([double]$b-[double]$a)/1MB),1) + ' MB freigegeben (genutzte Dateien bleiben).'") }
             });
             l.Add(new MaintenanceAction {
                 Category = "Aufräumen", Glyph = "E896",
                 Title = "Update-Cache leeren",
                 Desc = "Löscht heruntergeladene Update-Dateien (SoftwareDistribution\\Download).",
                 Steps = {
-                    Cmd("net stop wuauserv"),
-                    Ps("Get-ChildItem (Join-Path $env:WINDIR 'SoftwareDistribution\\Download') -Force -EA SilentlyContinue | Remove-Item -Recurse -Force -EA SilentlyContinue; 'Update-Cache geleert.'"),
-                    Cmd("net start wuauserv"),
+                    CmdBE("net stop wuauserv"),
+                    Ps("$p=(Join-Path $env:WINDIR 'SoftwareDistribution\\Download'); $b=(Get-ChildItem $p -Recurse -Force -EA SilentlyContinue | Measure-Object Length -Sum).Sum; Get-ChildItem $p -Force -EA SilentlyContinue | Remove-Item -Recurse -Force -EA SilentlyContinue; $a=(Get-ChildItem $p -Recurse -Force -EA SilentlyContinue | Measure-Object Length -Sum).Sum; 'Update-Cache geleert - ca. ' + [math]::Round((([double]$b-[double]$a)/1MB),1) + ' MB freigegeben.'"),
+                    CmdBE("net start wuauserv"),
                 }
             });
             l.Add(new MaintenanceAction {
                 Category = "Aufräumen", Glyph = "E74D",
                 Title = "Papierkorb leeren",
                 Desc = "Leert den Papierkorb aller Laufwerke.",
-                Steps = { Ps("Clear-RecycleBin -Force -EA SilentlyContinue; 'Papierkorb geleert.'") }
+                Steps = { Ps("try { Clear-RecycleBin -Force -EA Stop; 'Papierkorb geleert.' } catch { if ($_.Exception.Message -match 'leer|empty') { 'Papierkorb war bereits leer.' } else { 'Papierkorb: ' + $_.Exception.Message } }") }
             });
             l.Add(new MaintenanceAction {
                 Category = "Aufräumen", Glyph = "E713",
@@ -176,7 +179,7 @@ namespace WartungsToolbox
                 Category = "Diagnose", Glyph = "E730",
                 Title = "Defender-Schnellscan",
                 Desc = "Startet einen schnellen Microsoft-Defender-Scan.",
-                Steps = { Ps("Start-MpScan -ScanType QuickScan; 'Defender-Schnellscan abgeschlossen.'") }
+                Steps = { Ps("if (Get-Command Start-MpScan -EA SilentlyContinue) { try { Start-MpScan -ScanType QuickScan -EA Stop; 'Defender-Schnellscan abgeschlossen.' } catch { 'Defender-Scan nicht moeglich: ' + $_.Exception.Message } } else { 'Microsoft Defender ist nicht verfuegbar (evtl. ist ein anderes Antivirus aktiv).' }") }
             });
             l.Add(new MaintenanceAction {
                 Category = "Diagnose", Glyph = "E7BA", Danger = true,

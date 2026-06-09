@@ -39,6 +39,8 @@ jobs:
           Copy-Item bin\*.dll $dist
           Copy-Item bin\ui $dist -Recurse
           Compress-Archive -Path "$dist\*" -DestinationPath WindowsWartung.zip -Force
+          # SHA-256 fuer die Update-Pruefung der App
+          (Get-FileHash WindowsWartung.zip -Algorithm SHA256).Hash | Set-Content -NoNewline WindowsWartung.zip.sha256
 
       - name: Installer bauen (Inno Setup)
         shell: powershell
@@ -52,4 +54,5 @@ jobs:
         with:
           files: |
             WindowsWartung.zip
+            WindowsWartung.zip.sha256
             dist/WindowsWartung-Setup.exe

@@ -6,6 +6,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Net;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Threading;
 using Microsoft.Win32;
@@ -36,6 +37,7 @@ namespace WartungsToolbox
         string _updateUrl;
         string _updateTag;
         string _updateAsset;
+        string _updateHashUrl;
 
         [DllImport("user32.dll")] static extern bool ReleaseCapture();
         [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
@@ -389,6 +391,13 @@ namespace WartungsToolbox
             catch { return false; }
         }
 
+        static string Sha256File(string path)
+        {
+            using (SHA256 sha = SHA256.Create())
+            using (FileStream fs = File.OpenRead(path))
+                return BitConverter.ToString(sha.ComputeHash(fs)).Replace("-", "");
+        }
+
         // ---------- Update-Prüfung (GitHub-Releases) ----------
         void StartUpdateCheck()
         {
@@ -426,13 +435,11 @@ namespace WartungsToolbox
                         {
                             Dictionary<string, object> ad = ao as Dictionary<string, object>;
                             if (ad == null) continue;
-                            string an = ad.ContainsKey("name") ? Convert.ToString(ad["name"]) : "";
                             string au = ad.ContainsKey("browser_download_url") ? Convert.ToString(ad["browser_download_url"]) : "";
                             if (au.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-                            {
                                 _updateAsset = au;
-                                if (an.IndexOf("WindowsWartung", StringComparison.OrdinalIgnoreCase) >= 0) break;
-                            }
+                            else if (au.EndsWith(".sha256", StringComparison.OrdinalIgnoreCase))
+                                _updateHashUrl = au;
                         }
                     }
 
@@ -519,6 +526,27 @@ namespace WartungsToolbox
                     {
                         UiPost(new { type = "updateError", message = dlError != null ? dlError.Message : "Download fehlgeschlagen." });
                         return;
+                    }
+
+                    // Sicherheit: heruntergeladene Datei gegen die im Release hinterlegte SHA-256 prüfen
+                    if (!string.IsNullOrEmpty(_updateHashUrl))
+                    {
+                        string expected = "";
+                        try
+                        {
+                            using (WebClient hw = new WebClient())
+                            {
+                                hw.Headers.Add("User-Agent", "WindowsWartung-Updater");
+                                expected = hw.DownloadString(_updateHashUrl).Trim();
+                            }
+                        }
+                        catch { }
+                        if (!string.IsNullOrEmpty(expected) &&
+                            !string.Equals(expected, Sha256File(zip), StringComparison.OrdinalIgnoreCase))
+                        {
+                            UiPost(new { type = "updateError", message = "Prüfsumme stimmt nicht überein – Update aus Sicherheitsgründen abgebrochen." });
+                            return;
+                        }
                     }
 
                     UiPost(new { type = "updateStatus", phase = "extract" });
