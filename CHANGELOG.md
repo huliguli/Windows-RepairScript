@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.9] - 2026-06-09
+
+### Behoben
+- **„CHKDSK planen" → „Zugriff verweigert" behoben.** Der Befehl ist interaktiv (Rückfrage beim System-Laufwerk) und lief bisher headless ohne Konsole, sodass die Bestätigung nie ankam. Läuft jetzt in einem eigenen, sichtbaren (elevated) Fenster, in dem die Rückfrage mit J/Y bestätigt wird – auch locale-unabhängig.
+
+### Geändert
+- **Admin-Status wird echt geprüft.** Die „Als Administrator"-Anzeige war fest verdrahtet; sie zeigt jetzt den tatsächlichen Rechtestatus und warnt rot, falls ohne Adminrechte gestartet.
+
 ## [5.8] - 2026-06-09
 
 ### Behoben

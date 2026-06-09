@@ -6,6 +6,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Net;
 using System.Runtime.InteropServices;
+using System.Security.Principal;
 using System.Threading;
 using Microsoft.Win32;
 using System.Text;
@@ -373,8 +374,19 @@ namespace WartungsToolbox
         {
             if (_shotPath != null) return;
             try { Post(new { type = "zoom", factor = _web.ZoomFactor }); } catch { }
+            try { Post(new { type = "admin", on = IsElevated() }); } catch { }
             CheckUpdatedMarker();   // nach einem Update: Erfolgsmeldung zeigen
             StartUpdateCheck();     // auf neue Version prüfen
+        }
+
+        static bool IsElevated()
+        {
+            try
+            {
+                using (WindowsIdentity id = WindowsIdentity.GetCurrent())
+                    return new WindowsPrincipal(id).IsInRole(WindowsBuiltInRole.Administrator);
+            }
+            catch { return false; }
         }
 
         // ---------- Update-Prüfung (GitHub-Releases) ----------

@@ -87,8 +87,10 @@ namespace WartungsToolbox
             l.Add(new MaintenanceAction {
                 Category = "Reparieren", Glyph = "E7BA", Danger = true,
                 Title = "CHKDSK planen",
-                Desc = "Plant eine Datenträgerprüfung mit Reparatur beim nächsten Neustart.",
-                Steps = { Cmd("echo J| chkdsk %SystemDrive% /f /r") }
+                Desc = "Plant eine Datenträgerprüfung beim nächsten Neustart. Öffnet ein Fenster – dort die Rückfrage mit J bzw. Y bestätigen.",
+                // chkdsk ist interaktiv (Rückfrage) und liest die Konsole, nicht die Pipe -> in eigenem,
+                // sichtbarem (elevated) Fenster ausführen, damit die Rückfrage beantwortet werden kann.
+                Steps = { new Step { File = "cmd.exe", Args = "/k chkdsk %SystemDrive% /f /r", Detached = true } }
             });
 
             // ---------- Netzwerk ----------

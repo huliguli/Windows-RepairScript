@@ -117,6 +117,14 @@ function onHost(m){
   else if(m.type==='stats') updateStats(m);
   else if(m.type==='autostart') renderAutostartList(m.items);
   else if(m.type==='zoom'){ SET.zoom=m.factor||1; markZoomActive(); }
+  else if(m.type==='admin') setAdmin(m.on);
+}
+function setAdmin(on){
+  const b=$('#admin-badge'), t=$('#admin-text');
+  if(!b) return;
+  b.classList.toggle('warn', !on);
+  if(t) t.textContent = on ? 'Als Administrator' : 'Ohne Administratorrechte';
+  b.title = on ? '' : 'Ohne Adminrechte funktionieren Reparaturen nicht. App als Administrator starten.';
 }
 
 /* ---------- DOM ---------- */
