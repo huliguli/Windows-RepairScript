@@ -373,6 +373,7 @@ namespace WartungsToolbox
             else if (_view == "restore") suffix = "#restore";
             else if (_view == "power") suffix = "#power";
             else if (_view == "netdiag") suffix = "#netdiag";
+            else if (_view == "bloat") suffix = "#bloat";
             else if (_view == "sched") suffix = "#sched";
             else if (_view == "progress") suffix = "#progress";
 
@@ -776,6 +777,8 @@ namespace WartungsToolbox
             else if (type == "restoreRevert") RestoreRevert(ToInt(m, "seq"));
             else if (type == "powerList") StartPowerList();
             else if (type == "powerSet") PowerSet(Str(m, "guid"));
+            else if (type == "bloatList") StartBloatList();
+            else if (type == "bloatRemove") BloatRemove(m);
             else if (type == "netDiag") NetDiag(Str(m, "target"));
             else if (type == "driverBackup") DriverBackup();
             else if (type == "scheduleStatus") SendScheduleStatus();
@@ -997,6 +1000,88 @@ namespace WartungsToolbox
             });
             t.IsBackground = true;
             t.Start();
+        }
+
+        // ---------- Bloatware-Entferner ----------
+        void StartBloatList()
+        {
+            Thread t = new Thread(delegate ()
+            {
+                List<object> items = AppxCleaner.List();
+                UiPost(new { type = "bloatPackages", items = items });
+            });
+            t.IsBackground = true;
+            t.Start();
+        }
+
+        void BloatRemove(Dictionary<string, object> m)
+        {
+            bool restore = ToBool(m, "restore");
+
+            // Jede angefragte PackageFullName streng pruefen: nur gueltige Zeichen, im Katalog,
+            // nicht kritisch (AppxCleaner.IsRemovable). Ungeprueftes geht NIE in den Befehl.
+            List<string> fulls = new List<string>();
+            object arr;
+            if (m.TryGetValue("fulls", out arr) && arr is object[])
+            {
+                foreach (object o in (object[])arr)
+                {
+                    string full = o == null ? "" : o.ToString();
+                    if (!AppxCleaner.IsRemovable(full)) continue;
+                    if (fulls.Contains(full)) continue;
+                    fulls.Add(full);
+                }
+            }
+
+            if (fulls.Count == 0)
+            {
+                Post(new { type = "log", text = "Keine gueltigen Pakete zum Entfernen.", kind = "bad" });
+                Post(new { type = "done", title = "Bloatware entfernen", kind = "bad", message = "Nichts entfernt" });
+                return;
+            }
+
+            List<Step> steps = new List<Step>();
+            if (restore) steps.Add(BloatRestoreStep());
+            foreach (string full in fulls)
+                steps.Add(BloatRemoveStep(full, AppxCleaner.LabelFor(full)));
+
+            string title = "Bloatware entfernen (" + fulls.Count + ")";
+            List<Job> jobs = new List<Job>();
+            jobs.Add(new Job { Title = title, Steps = steps });
+            _runner.RunJobs(title, jobs);
+        }
+
+        // Zuverlaessiger Wiederherstellungspunkt vor dem Entfernen (Frequenz-Drossel kurz aufheben).
+        // Ein uebersprungener Punkt (Systemschutz aus) darf den Lauf nicht als Fehler werten.
+        Step BloatRestoreStep()
+        {
+            string cmd =
+                "try { " +
+                "Set-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore' -Name 'SystemRestorePointCreationFrequency' -Value 0 -EA SilentlyContinue; " +
+                "Checkpoint-Computer -Description 'Vor Bloatware-Entfernung' -RestorePointType MODIFY_SETTINGS -EA Stop; " +
+                "'Wiederherstellungspunkt angelegt.' " +
+                "} catch { 'Wiederherstellungspunkt uebersprungen (Systemschutz aktiv?): ' + $_.Exception.Message }";
+            return new Step
+            {
+                File = "powershell.exe",
+                Args = "-NoProfile -ExecutionPolicy Bypass -Command \"" + cmd + "\"",
+                IgnoreExit = true
+            };
+        }
+
+        // full ist bereits per AppxCleaner.IsRemovable geprueft (nur [A-Za-z0-9._-]) -> sicher in '' .
+        Step BloatRemoveStep(string full, string label)
+        {
+            string safe = AppxCleaner.SafeLabel(label);
+            string cmd =
+                "$ErrorActionPreference='Stop'; " +
+                "try { Remove-AppxPackage -Package '" + full + "' -EA Stop; 'Entfernt: " + safe + "' } " +
+                "catch { 'Fehler bei " + safe + ": ' + $_.Exception.Message; exit 1 }";
+            return new Step
+            {
+                File = "powershell.exe",
+                Args = "-NoProfile -ExecutionPolicy Bypass -Command \"" + cmd + "\""
+            };
         }
 
         // ---------- Netzwerk-Diagnose ----------

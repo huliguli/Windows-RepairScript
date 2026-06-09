@@ -39,6 +39,8 @@ const ICONS = {
   history:'<path d="M3 3v6h6"/><path d="M3.5 13A9 9 0 1 0 6 5.3L3 9"/><path d="M12 8v5l3.5 2"/>',
   calendar:'<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18"/><path d="M8 2v4"/><path d="M16 2v4"/>',
   save:'<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/>',
+  package:'<path d="M16.5 9.4 7.5 4.21"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>',
+  tick:'<path d="M20 6 9 17l-5-5"/>',
 };
 function svg(name){return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'+(ICONS[name]||'')+'</svg>';}
 
@@ -54,6 +56,7 @@ const CATS = [
   {name:'Geplant',      icon:'calendar'},
   {name:'Verlauf',      icon:'history'},
   {name:'Autostart',    icon:'rocket'},
+  {name:'Bloatware',    icon:'package'},
   {name:'Einstellungen',icon:'gear'},
 ];
 const DAYS = [['MON','Montag'],['TUE','Dienstag'],['WED','Mittwoch'],['THU','Donnerstag'],['FRI','Freitag'],['SAT','Samstag'],['SUN','Sonntag']];
@@ -142,6 +145,7 @@ function onHost(m){
   else if(m.type==='history') renderHistoryList(m.items);
   else if(m.type==='restorePoints') renderRestoreList(m.items);
   else if(m.type==='powerPlans') renderPowerList(m.items);
+  else if(m.type==='bloatPackages') renderBloatList(m.items);
   else if(m.type==='schedule') renderScheduleStatus(m);
   else if(m.type==='zoom'){ SET.zoom=m.factor||1; markZoomActive(); }
   else if(m.type==='admin') setAdmin(m.on);
@@ -214,7 +218,7 @@ function buildNav(){
 }
 function selectCat(name){
   active=name; buildNav();
-  cards.classList.remove('dashboard','settings','autostart','history','power','restore','sched');
+  cards.classList.remove('dashboard','settings','autostart','history','power','restore','sched','bloat');
   const isDash = (name==='Übersicht');
   send({type:'dashboard', active:isDash});
   if(isDash){
@@ -268,6 +272,14 @@ function selectCat(name){
     cards.classList.add('sched');
     renderSchedule();
     send({type:'scheduleStatus'});
+    return;
+  }
+  if(name==='Bloatware'){
+    $('#cat-title').textContent='Bloatware';
+    $('#cat-hint').textContent='Vorinstallierte Apps entfernen';
+    cards.classList.add('bloat');
+    renderBloat();
+    send({type:'bloatList'});
     return;
   }
   const list=ACTIONS.filter(a=>a.cat===name);
@@ -546,6 +558,85 @@ function renderPowerList(items){
   });
 }
 
+/* ---------- Bloatware ---------- */
+let bloatSel = new Set();
+function renderBloat(){
+  bloatSel = new Set();
+  cards.innerHTML=
+    '<div class="bloat-wrap">'+
+      '<div class="rp-note">'+svg('shield')+'<div>Entfernt <b>vorinstallierte Apps</b>, die viele nicht brauchen. Aus Sicherheit erscheinen <b>nur als unbedenklich bekannte</b> Apps – System, Store und Virenschutz sind geschützt. Entfernte Apps lassen sich jederzeit kostenlos über den <b>Microsoft Store</b> neu installieren.</div></div>'+
+      '<div id="bloat-body"><div class="as-loading">Installierte Apps werden geladen …</div></div>'+
+    '</div>';
+}
+function renderBloatList(items){
+  if(!cards.classList.contains('bloat')) return;
+  const body=$('#bloat-body'); if(!body) return;
+  bloatSel=new Set();
+  if(!items || !items.length){
+    body.innerHTML='<div class="rp-empty">Keine bekannte Bloatware gefunden – auf diesem PC ist nichts aus der sicheren Liste vorinstalliert.</div>';
+    return;
+  }
+  let html='<div class="bloat-bar">'+
+      '<label class="bloat-rp"><span class="switch"><input type="checkbox" id="bloat-rp" checked/><i></i></span><span>Vorher Wiederherstellungspunkt anlegen</span></label>'+
+      '<div class="bloat-bar-actions">'+
+        '<button id="bloat-all" class="link">Alle</button>'+
+        '<button id="bloat-none" class="link">Keine</button>'+
+        '<button id="bloat-remove" class="primary" disabled>Entfernen</button>'+
+      '</div>'+
+    '</div>';
+  const groups={}; items.forEach(it=>{ (groups[it.cat]=groups[it.cat]||[]).push(it); });
+  html+='<div class="bloat-items">';
+  Object.keys(groups).forEach(g=>{
+    html+='<div class="as-group">'+esc(g)+'</div>';
+    groups[g].forEach(it=>{
+      html+='<button class="bloat-item" data-full="'+esc(it.full)+'">'+
+        '<span class="bloat-box">'+svg('tick')+'</span>'+
+        '<div class="bloat-ico">'+svg('package')+'</div>'+
+        '<div class="bloat-info"><div class="bloat-name">'+esc(it.label)+'</div>'+
+        '<div class="bloat-meta">'+esc(it.name)+(it.pub?' · '+esc(it.pub):'')+'</div></div>'+
+      '</button>';
+    });
+  });
+  html+='</div>';
+  body.innerHTML=html;
+  body.querySelectorAll('.bloat-item').forEach(b=>{
+    b.onclick=()=>{
+      const f=b.dataset.full;
+      if(bloatSel.has(f)){ bloatSel.delete(f); b.classList.remove('sel'); }
+      else { bloatSel.add(f); b.classList.add('sel'); }
+      updateBloatRemove();
+    };
+  });
+  $('#bloat-all').onclick=()=>{ body.querySelectorAll('.bloat-item').forEach(b=>{ bloatSel.add(b.dataset.full); b.classList.add('sel'); }); updateBloatRemove(); };
+  $('#bloat-none').onclick=()=>{ bloatSel.clear(); body.querySelectorAll('.bloat-item').forEach(b=>b.classList.remove('sel')); updateBloatRemove(); };
+  $('#bloat-remove').onclick=()=>bloatRemoveFlow();
+  updateBloatRemove();
+}
+function updateBloatRemove(){
+  const btn=$('#bloat-remove'); if(!btn) return;
+  const n=bloatSel.size;
+  btn.disabled = running || n===0;
+  btn.textContent = n>0 ? ('Entfernen ('+n+')') : 'Entfernen';
+}
+function bloatRemoveFlow(){
+  if(running){ if(consoleEl.classList.contains('open')) append('Es läuft bereits eine Aktion – bitte warten.','warn'); return; }
+  const fulls=Array.from(bloatSel).filter(f=>/^[A-Za-z0-9._-]+$/.test(f));
+  if(!fulls.length) return;
+  const labels=[];
+  cards.querySelectorAll('.bloat-item.sel .bloat-name').forEach(e=>labels.push(e.textContent));
+  const rp = !!($('#bloat-rp') && $('#bloat-rp').checked);
+  const shown=labels.slice(0,8).map(l=>'• '+esc(l)).join('<br>');
+  const more=labels.length>8 ? '<br>… und '+(labels.length-8)+' weitere' : '';
+  // Wegen Tragweite: zweistufige Bestätigung (wie bei der Wiederherstellung).
+  confirmModal('Ausgewählte Apps entfernen?',
+    '<b>'+fulls.length+'</b> App(en) werden entfernt:<br><br>'+shown+more+'<br><br>'+
+    (rp?'Vorher wird ein Wiederherstellungspunkt angelegt. ':'')+
+    'Die Apps lassen sich später über den Microsoft Store wieder installieren.',
+    ()=>confirmModal('Letzte Sicherheitsfrage',
+      'Jetzt '+fulls.length+' App(en) endgültig entfernen?',
+      ()=>send({type:'bloatRemove', fulls:fulls, restore:rp})));
+}
+
 /* ---------- Geplante Wartung ---------- */
 let schedMode='daily';
 function renderSchedule(){
@@ -705,6 +796,7 @@ function setRunning(r){
   running=r;
   $('#btn-stop').disabled=!r;
   $('#q-run').disabled=r || queue.length===0;
+  updateBloatRemove();
   if(r){ statusEl.classList.add('run'); statusText.textContent='läuft …'; }
   else { statusEl.classList.remove('run'); statusText.textContent='bereit'; setProgress(-1); }
 }
@@ -758,6 +850,8 @@ function onDone(title, kind, message){
   if(!consoleEl.classList.contains('open')) toast(title, message, kind);
   // Nach dem Anlegen eines Punktes die Liste auffrischen
   if(active==='Wiederherstellung') send({type:'restoreList'});
+  // Nach dem Entfernen die Bloatware-Liste neu laden (zeigt verbleibende Apps)
+  if(active==='Bloatware') send({type:'bloatList'});
 }
 
 /* ---------- Warteschlange ---------- */
@@ -1068,6 +1162,32 @@ else if(location.hash==='#sched'){
   $('#cat-hint').textContent='Automatisch im Hintergrund warten lassen';
   renderSchedule();
   renderScheduleStatus({exists:true, config:{mode:'weekly', day:'SUN', time:'12:00'}});
+}
+else if(location.hash==='#bloat'){
+  active='Bloatware'; buildNav();
+  cards.classList.remove('dashboard','settings','autostart','history','power','restore','sched','bloat');
+  cards.classList.add('bloat'); send({type:'dashboard', active:false});
+  $('#cat-title').textContent='Bloatware';
+  $('#cat-hint').textContent='Vorinstallierte Apps entfernen';
+  renderBloat();
+  renderBloatList([
+    {name:'Microsoft.MicrosoftSolitaireCollection', full:'Microsoft.MicrosoftSolitaireCollection_x', label:'Solitaire-Sammlung', cat:'Spiele & Xbox', pub:'Microsoft Corporation'},
+    {name:'Microsoft.XboxGamingOverlay', full:'Microsoft.XboxGamingOverlay_x', label:'Xbox Game Bar', cat:'Spiele & Xbox', pub:'Microsoft Corporation'},
+    {name:'Microsoft.GamingApp', full:'Microsoft.GamingApp_x', label:'Xbox-App', cat:'Spiele & Xbox', pub:'Microsoft Corporation'},
+    {name:'Clipchamp.Clipchamp', full:'Clipchamp.Clipchamp_x', label:'Clipchamp (Videoeditor)', cat:'Medien', pub:'Microsoft Corporation'},
+    {name:'Microsoft.ZuneVideo', full:'Microsoft.ZuneVideo_x', label:'Filme & TV', cat:'Medien', pub:'Microsoft Corporation'},
+    {name:'Microsoft.BingNews', full:'Microsoft.BingNews_x', label:'Nachrichten (Bing)', cat:'Bing & Nachrichten', pub:'Microsoft Corporation'},
+    {name:'Microsoft.BingWeather', full:'Microsoft.BingWeather_x', label:'Wetter (MSN)', cat:'Bing & Nachrichten', pub:'Microsoft Corporation'},
+    {name:'MicrosoftTeams', full:'MicrosoftTeams_x', label:'Teams (privat / Chat)', cat:'Kommunikation & Office', pub:'Microsoft Corporation'},
+    {name:'Microsoft.GetHelp', full:'Microsoft.GetHelp_x', label:'Hilfe anfordern', cat:'System-Extras', pub:'Microsoft Corporation'},
+    {name:'Microsoft.Getstarted', full:'Microsoft.Getstarted_x', label:'Tipps', cat:'System-Extras', pub:'Microsoft Corporation'}
+  ]);
+  // Vorschau: zwei Apps vorausgewählt, damit der Button-/Auswahl-Zustand sichtbar ist
+  ['Microsoft.MicrosoftSolitaireCollection_x','Microsoft.BingNews_x'].forEach(f=>{
+    const b=cards.querySelector('.bloat-item[data-full="'+f+'"]');
+    if(b){ b.classList.add('sel'); bloatSel.add(f); }
+  });
+  updateBloatRemove();
 }
 else if(location.hash==='#progress'){
   selectCat('Reparieren'); setConsole(true);

@@ -1,5 +1,14 @@
 # Changelog
 
+## [6.1] - 2026-06-09
+
+### Neu
+- **Bloatware-Entferner** – neue Sidebar-Ansicht „Bloatware": listet vorinstallierte Apps (`Get-AppxPackage`), die viele nicht brauchen, gruppiert nach Kategorie. Mehrere auf einmal auswählen und – nach **doppelter** Sicherheitsabfrage – entfernen (`Remove-AppxPackage`). Auf Wunsch wird vorher ein **Wiederherstellungspunkt** angelegt; jeder Lauf landet im Verlauf.
+
+### Sicherheit
+- **Strikte Whitelist statt Holzhammer**: Es werden ausschließlich als unbedenklich bekannte Apps (Solitaire, Bing-News/Wetter, Xbox-Apps, Clipchamp, Teams-Consumer, 3D-Viewer, Cortana, OEM-Spiele u. a.) zur Auswahl angeboten. Eine zusätzliche **Blockliste** schützt System-, Shell-, Store-, Runtime- und Defender-Pakete hart – auch gegen versehentliche Katalog-Einträge (Defense-in-Depth).
+- **Keine Befehls-Injektion**: Der `PackageFullName` wird vor jeder Verwendung streng auf erlaubte Zeichen `[A-Za-z0-9._-]` geprüft und nur in einfachen Anführungszeichen an PowerShell übergeben; entfernt wird ausschließlich, was die Whitelist erlaubt.
+
 ## [6.0] - 2026-06-09
 
 ### Neu

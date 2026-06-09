@@ -24,6 +24,8 @@ Die Oberfläche ist in HTML/CSS gebaut und läuft in einem schlanken **WebView2*
 
 **Autostart** — alle Startprogramme anzeigen und per Schalter an-/abschalten (umkehrbar)
 
+**Bloatware** — vorinstallierte Apps (`Get-AppxPackage`) gruppiert anzeigen, mehrere auswählen und (mit doppelter Bestätigung und optionalem Wiederherstellungspunkt) entfernen. Aus Sicherheit werden nur als unbedenklich bekannte Apps angeboten; System-, Store- und Defender-Pakete sind durch eine Blockliste hart geschützt
+
 Dazu:
 
 - **Live-Fortschritt** – bei DISM und SFC zeigt ein Fortschrittsbalken den tatsächlichen Stand statt nur „arbeitet …"
