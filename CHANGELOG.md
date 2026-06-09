@@ -1,5 +1,10 @@
 # Changelog
 
+## [5.7] - 2026-06-09
+
+### Behoben
+- **Setup**: das Zusammenfassungsfeld auf der Seite „Bereit zur Installation" war noch weiß – ist jetzt ebenfalls dunkel (`TRichEditViewer` mit eingefärbt).
+
 ## [5.6] - 2026-06-09
 
 ### Geändert
