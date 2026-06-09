@@ -102,8 +102,6 @@ procedure ApplyTheme;
 begin
   WizardForm.Color := clBg;
   WizardForm.MainPanel.Color := clBg;
-  WizardForm.InnerNotebook.Color := clBg;
-  WizardForm.OuterNotebook.Color := clBg;
   WizardForm.WelcomePage.Color := clBg;
   WizardForm.InnerPage.Color := clBg;
   WizardForm.SelectDirPage.Color := clBg;
