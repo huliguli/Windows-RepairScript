@@ -1,5 +1,5 @@
-﻿; Inno-Setup-Skript fuer Windows-Wartung
-; Build:  ISCC.exe /DMyAppVersion=4.6 installer\WindowsWartung.iss
+﻿; Inno-Setup-Skript fuer Windows-Wartung (dunkles, gebrandetes Theme)
+; Build:  ISCC.exe /DMyAppVersion=5.5 installer\WindowsWartung.iss
 
 #define MyAppName "Windows-Wartung"
 #ifndef MyAppVersion
@@ -26,6 +26,9 @@ UninstallDisplayIcon={app}\{#MyAppExe}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+WizardImageFile=..\assets\wizard.bmp
+WizardSmallImageFile=..\assets\wizard-small.bmp
+WizardImageStretch=no
 
 [Languages]
 Name: "de"; MessagesFile: "compiler:Languages\German.isl"
@@ -48,7 +51,13 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; Tasks: deskto
 Filename: "{app}\{#MyAppExe}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent shellexec
 
 [Code]
-// Durchsuchen-Dialog mit "Neuen Ordner anlegen"-Button
+const
+  clBg   = $00140F0D;  // #0d0f14  Hintergrund
+  clSurf = $00261E1B;  // #1b1e26  Eingabefelder/Listen
+  clTxt  = $00F0EBE9;  // #e9ebf0  Text hell
+  clDim  = $00B0A19A;  // #9aa1b0  Text gedaempft
+  clAcc  = $00BFD42D;  // #2dd4bf  Akzent (Teal)
+
 procedure DirBrowseClick(Sender: TObject);
 var
   Dir: String;
@@ -58,7 +67,63 @@ begin
     WizardForm.DirEdit.Text := Dir;
 end;
 
+procedure Recolor(P: TWinControl);
+var
+  i: Integer;
+  C: TControl;
+begin
+  for i := 0 to P.ControlCount - 1 do
+  begin
+    C := P.Controls[i];
+    if C is TNewStaticText then TNewStaticText(C).Font.Color := clTxt
+    else if C is TLabel then TLabel(C).Font.Color := clTxt
+    else if C is TNewCheckListBox then
+    begin
+      TNewCheckListBox(C).Color := clSurf;
+      TNewCheckListBox(C).Font.Color := clTxt;
+    end
+    else if C is TNewEdit then
+    begin
+      TNewEdit(C).Color := clSurf;
+      TNewEdit(C).Font.Color := clTxt;
+    end
+    else if C is TNewMemo then
+    begin
+      TNewMemo(C).Color := clSurf;
+      TNewMemo(C).Font.Color := clTxt;
+    end
+    else if C is TPanel then TPanel(C).Color := clBg
+    else if C is TBevel then TBevel(C).Visible := False;
+    if C is TWinControl then Recolor(TWinControl(C));
+  end;
+end;
+
+procedure ApplyTheme;
+begin
+  WizardForm.Color := clBg;
+  WizardForm.MainPanel.Color := clBg;
+  WizardForm.InnerNotebook.Color := clBg;
+  WizardForm.OuterNotebook.Color := clBg;
+  WizardForm.WelcomePage.Color := clBg;
+  WizardForm.InnerPage.Color := clBg;
+  WizardForm.SelectDirPage.Color := clBg;
+  WizardForm.SelectTasksPage.Color := clBg;
+  WizardForm.ReadyPage.Color := clBg;
+  WizardForm.InstallingPage.Color := clBg;
+  WizardForm.FinishedPage.Color := clBg;
+  WizardForm.Bevel.Visible := False;
+  Recolor(WizardForm);
+  WizardForm.PageNameLabel.Font.Color := clAcc;
+  WizardForm.PageDescriptionLabel.Font.Color := clDim;
+end;
+
 procedure InitializeWizard;
 begin
   WizardForm.DirBrowseButton.OnClick := @DirBrowseClick;
+  ApplyTheme;
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  ApplyTheme;
 end;

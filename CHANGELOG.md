@@ -1,5 +1,10 @@
 # Changelog
 
+## [5.5] - 2026-06-09
+
+### Geändert
+- **Setup im App-Look** – der Installer ist jetzt dunkel gestaltet (Akzentfarbe, helle Schrift, gebrandetes Logo-Banner) statt Standard-Windows-Wizard.
+
 ## [5.4] - 2026-06-09
 
 ### Behoben

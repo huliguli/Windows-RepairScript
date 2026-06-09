@@ -12,6 +12,10 @@ $iscc = @(
 ) | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $iscc) { throw "ISCC.exe (Inno Setup 6) nicht gefunden. Installieren: https://jrsoftware.org/isdl.php" }
 
+if (-not (Test-Path (Join-Path $root 'assets\wizard.bmp'))) {
+    & (Join-Path $root 'tools\generate-installer-art.ps1')
+}
+
 $ver = (Get-Item $exe).VersionInfo.FileVersion
 & $iscc "/DMyAppVersion=$ver" (Join-Path $root 'installer\WindowsWartung.iss')
 
