@@ -557,7 +557,7 @@ function setUpdateError(msg){
 }
 function hideUpdateModal(){ $('#update-modal').classList.add('hidden'); }
 $('#ub-get').onclick=()=>startUpdateFlow();
-$('#ub-skip').onclick=()=>{ send({type:'skipUpdate'}); $('#update-bar').classList.remove('show'); };
+$('#ub-skip').onclick=()=>{ $('#update-bar').classList.remove('show'); }; // nur ausblenden, erscheint beim nächsten Start wieder
 
 /* ---------- Toasts ---------- */
 function toast(title, msg, kind){

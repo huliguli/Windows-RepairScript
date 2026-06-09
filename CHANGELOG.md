@@ -1,5 +1,10 @@
 # Changelog
 
+## [5.4] - 2026-06-09
+
+### Behoben
+- **Update-Erinnerung** – „Später" bzw. das Wegklicken des Hinweises blendet ihn jetzt nur noch für die aktuelle Sitzung aus; beim nächsten Start erscheint er wieder. Vorher hat das „×" die Version dauerhaft übersprungen.
+
 ## [5.3] - 2026-06-09
 
 ### Geändert

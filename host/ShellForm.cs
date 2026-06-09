@@ -427,7 +427,6 @@ namespace WartungsToolbox
                     Version latest = ParseVer(tag);
                     Version cur = typeof(ShellForm).Assembly.GetName().Version;
                     if (latest == null || latest <= cur) return;
-                    if (ReadSkip() == tag) return;
 
                     _updateTag = tag;
                     _updateUrl = string.IsNullOrEmpty(url) ? "https://github.com/" + Repo + "/releases/latest" : url;
@@ -645,28 +644,6 @@ namespace WartungsToolbox
             return Version.TryParse(v, out res) ? res : null;
         }
 
-        static string SkipPath()
-        {
-            return Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "WindowsWartung", "skip_version.txt");
-        }
-        static string ReadSkip()
-        {
-            try { return File.Exists(SkipPath()) ? File.ReadAllText(SkipPath()).Trim() : ""; }
-            catch { return ""; }
-        }
-        static void WriteSkip(string v)
-        {
-            if (string.IsNullOrEmpty(v)) return;
-            try
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(SkipPath()));
-                File.WriteAllText(SkipPath(), v);
-            }
-            catch { }
-        }
-
         async void OnNavForShot(object sender, CoreWebView2NavigationCompletedEventArgs e)
         {
             await Task.Delay(950);
@@ -730,7 +707,6 @@ namespace WartungsToolbox
             else if (type == "dashboard") SetDashboard(ToBool(m, "active"));
             else if (type == "openUpdate") OpenUpdate();
             else if (type == "startUpdate") BeginUpdate();
-            else if (type == "skipUpdate") WriteSkip(_updateTag);
             else if (type == "save") SaveLog();
             else if (type == "win") Win(Str(m, "action"));
             else if (type == "resize") BeginResize(Str(m, "dir"));
