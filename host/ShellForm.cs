@@ -376,6 +376,7 @@ namespace WartungsToolbox
             else if (_view == "bloat") suffix = "#bloat";
             else if (_view == "sched") suffix = "#sched";
             else if (_view == "progress") suffix = "#progress";
+            else if (_view == "dashseed") suffix = "#dashseed";
 
             _web.Source = new Uri("https://app/index.html" + suffix);
             // Update-Prüfung startet erst, wenn das UI 'ready' meldet (siehe OnReady)

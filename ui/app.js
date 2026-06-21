@@ -356,17 +356,48 @@ function renderDashboard(){
         '</div>'+
       '</div>'+
     '</div>';
+  // Ringe leer starten -> beim ersten Stats-Update füllen sie sich synchron zum Zahl-Count-up
+  ['cpu','ram','disk','hp'].forEach(function(id){
+    var a=$('#g-'+id+'-arc'); if(a){ a.style.strokeDasharray=GC; a.style.strokeDashoffset=GC; }
+  });
 }
 function gaugeColor(p){ return p<60 ? 'var(--green)' : (p<85 ? 'var(--yellow)' : 'var(--red)'); }
 function healthColor(s){ return s>=80 ? 'var(--green)' : (s>=50 ? 'var(--yellow)' : 'var(--red)'); }
 function setArc(arc, p, color){ p=Math.max(0,Math.min(100,p)); arc.style.strokeDasharray=GC; arc.style.strokeDashoffset=GC*(1-p/100); arc.style.stroke=color; }
-function setGauge(id, p){ const a=$('#g-'+id+'-arc'); if(a) setArc(a,p,gaugeColor(p)); const v=$('#g-'+id+'-val'); if(v) v.textContent=p+'%'; }
+
+// OS-Einstellung „Bewegung reduzieren" (in WebView2/Chromium nativ verfügbar)
+const REDUCE = window.matchMedia('(prefers-reduced-motion: reduce)');
+// Dezenter Zahl-Count-up: interpoliert NUR textContent (kein Layout-Thrash), easeOutCubic.
+// Respektiert prefers-reduced-motion (Endwert sofort) und löst laufende Animationen sauber ab.
+// Bewusst ohne Animations-Library – ein paar Zeilen requestAnimationFrame genügen (offline, leichtgewichtig).
+function countUp(el, to, suffix){
+  if(!el) return;
+  suffix = suffix || '';
+  to = Math.round(to);
+  if(REDUCE.matches || typeof requestAnimationFrame!=='function'){
+    if(el._cuRaf){ cancelAnimationFrame(el._cuRaf); el._cuRaf=0; }
+    el.textContent = to + suffix; return;
+  }
+  const cur = parseInt(el.textContent, 10);
+  const from = isNaN(cur) ? 0 : cur;
+  if(from === to){ el.textContent = to + suffix; return; }
+  if(el._cuRaf) cancelAnimationFrame(el._cuRaf); // laufende Animation ablösen (kein Frame-Stau bei schnellen Updates)
+  const t0 = performance.now();
+  const ease = p => 1 - Math.pow(1-p, 3); // easeOutCubic – dezent, kein Overshoot
+  const step = now => {
+    const p = Math.min(1, (now - t0) / 600);
+    el.textContent = Math.round(from + (to - from) * ease(p)) + suffix;
+    el._cuRaf = p < 1 ? requestAnimationFrame(step) : 0;
+  };
+  el._cuRaf = requestAnimationFrame(step);
+}
+function setGauge(id, p){ const a=$('#g-'+id+'-arc'); if(a) setArc(a,p,gaugeColor(p)); const v=$('#g-'+id+'-val'); if(v) countUp(v, p, '%'); }
 function dTxt(sel,v){ const e=$(sel); if(e) e.textContent=v; }
 function updateStats(s){
   if(!cards.classList.contains('dashboard')) return;
   setGauge('cpu', s.cpu); setGauge('ram', s.ram); setGauge('disk', s.disk);
   const hr=$('#g-hp-arc'); if(hr) setArc(hr, s.score, healthColor(s.score));
-  dTxt('#health-score', s.score);
+  countUp($('#health-score'), s.score);
   dTxt('#health-title', s.score>=80?'Alles in Ordnung':(s.score>=50?'Kleinere Hinweise':'Aufmerksamkeit nötig'));
   dTxt('#health-sub', s.score>=80?'Dein PC ist gut in Schuss.':'Siehe Empfehlungen unten.');
   const rc=$('#recs');
@@ -1196,6 +1227,19 @@ else if(location.hash==='#progress'){
   append('Tool für die Abbildverwaltung für die Bereitstellung','norm');
   append('Abbildversion: 10.0.22631.3737','norm');
   setRunning(true); setProgress(45);
+}
+else if(location.hash==='#dashseed'){
+  // Übersicht ist bereits aktiv – realistische Werte einspeisen, damit Count-up, Ring-Füllung und Reveal sichtbar werden
+  updateStats({
+    cpu:23, ram:58, disk:71, score:88,
+    ramUsedGB:9.3, ramTotalGB:16, diskFreeGB:148.6, diskTotalGB:512,
+    uptime:'2 Tage 4 Std', os:'Windows 11 Pro (24H2)', model:'ASUS TUF Gaming F15',
+    drives:[
+      {name:'C:',label:'System',freeGB:148.6,totalGB:512,used:71},
+      {name:'D:',label:'Daten',freeGB:402.1,totalGB:1024,used:61}
+    ],
+    recs:[{text:'Alles im grünen Bereich – aktuell ist nichts nötig.',action:-1}]
+  });
 }
 
 /* UI ist vollständig geladen -> Host darf jetzt Marker prüfen + auf Updates checken */

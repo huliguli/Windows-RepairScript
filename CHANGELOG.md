@@ -1,5 +1,13 @@
 # Changelog
 
+## [6.2] - 2026-06-21
+
+### Neu
+- **Lebendiges Dashboard** – beim Öffnen der Übersicht zählen die Werte für Prozessor, Arbeitsspeicher, Festplatte und der Gesundheits-Score nun weich von 0 auf ihren Stand hoch (synchron zur Ring-Füllung), und die Kacheln blenden dezent gestaffelt ein. Reine `transform`/`opacity`-Animation, **ohne zusätzliche Bibliothek** – leichtgewichtig auch auf älteren PCs.
+
+### Barrierefreiheit
+- **„Bewegung reduzieren" wird respektiert** – ist die gleichnamige Windows-Einstellung aktiv, verzichtet die App jetzt durchgängig auf Animationen und zeigt Inhalte sofort im Endzustand. Das gilt auch für alle bisherigen Effekte (Kacheln, Hinweise, Dialoge, Fortschritt).
+
 ## [6.1] - 2026-06-09
 
 ### Neu
