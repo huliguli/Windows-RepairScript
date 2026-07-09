@@ -191,16 +191,70 @@ namespace WartungsToolbox
             return l;
         }
 
-        // Stiller, gruendlicher Satz fuer die geplante Wartung (--auto):
-        // reparierend + aufraeumend, nichts Destruktives, kein interaktiver Schritt.
-        public static List<Step> AutoSet()
+        // ---------- Geplante Wartung (--auto) ----------
+        // Katalog der Aufgaben, die still/unbeaufsichtigt sicher sind: reparierend + aufraeumend,
+        // nichts Destruktives, kein interaktiver Schritt, nichts, was die Verbindung kappt.
+        // Std=true markiert den Standard-Satz (gilt, solange der Nutzer nichts anderes waehlt).
+        public static List<AutoItem> AutoCatalog()
         {
-            var l = new List<Step>();
-            l.Add(Dism("/Online /Cleanup-Image /RestoreHealth"));
-            l.Add(Sfc("/scannow"));
-            l.Add(Ps("$t=@($env:TEMP,(Join-Path $env:WINDIR 'Temp')); Get-ChildItem $t -Force -EA SilentlyContinue | Remove-Item -Recurse -Force -EA SilentlyContinue; 'Temp geleert.'"));
-            l.Add(Ps("try { Clear-RecycleBin -Force -EA Stop } catch {}; 'Papierkorb geleert.'"));
+            var l = new List<AutoItem>();
+            l.Add(new AutoItem { Key = "dism", Std = true,
+                Title = "Windows reparieren (DISM)",
+                Desc = "Repariert den Komponentenspeicher über Windows Update.",
+                Steps = { Dism("/Online /Cleanup-Image /RestoreHealth") } });
+            l.Add(new AutoItem { Key = "sfc", Std = true,
+                Title = "Systemdateien prüfen (SFC)",
+                Desc = "Prüft und repariert geschützte Systemdateien.",
+                Steps = { Sfc("/scannow") } });
+            l.Add(new AutoItem { Key = "temp", Std = true,
+                Title = "Temp-Dateien löschen",
+                Desc = "Leert Benutzer- und Windows-Temp-Ordner.",
+                Steps = { Ps("$t=@($env:TEMP,(Join-Path $env:WINDIR 'Temp')); Get-ChildItem $t -Force -EA SilentlyContinue | Remove-Item -Recurse -Force -EA SilentlyContinue; 'Temp geleert.'") } });
+            l.Add(new AutoItem { Key = "bin", Std = true,
+                Title = "Papierkorb leeren",
+                Desc = "Leert den Papierkorb aller Laufwerke.",
+                Steps = { Ps("try { Clear-RecycleBin -Force -EA Stop } catch {}; 'Papierkorb geleert.'") } });
+            l.Add(new AutoItem { Key = "winsxs",
+                Title = "WinSxS aufräumen",
+                Desc = "Entfernt veraltete Update-Komponenten (schafft Platz, dauert länger).",
+                Steps = { Dism("/Online /Cleanup-Image /StartComponentCleanup") } });
+            l.Add(new AutoItem { Key = "updcache",
+                Title = "Update-Cache leeren",
+                Desc = "Löscht heruntergeladene Update-Dateien.",
+                Steps = {
+                    CmdBE("net stop wuauserv"),
+                    Ps("$p=(Join-Path $env:WINDIR 'SoftwareDistribution\\Download'); Get-ChildItem $p -Force -EA SilentlyContinue | Remove-Item -Recurse -Force -EA SilentlyContinue; 'Update-Cache geleert.'"),
+                    CmdBE("net start wuauserv"),
+                } });
+            l.Add(new AutoItem { Key = "dns",
+                Title = "DNS-Cache leeren",
+                Desc = "Löscht den DNS-Auflösungscache.",
+                Steps = { Cmd("ipconfig /flushdns") } });
+            l.Add(new AutoItem { Key = "defender",
+                Title = "Defender-Schnellscan",
+                Desc = "Kurzer Virenscan der wichtigsten Bereiche.",
+                Steps = { Ps("if (Get-Command Start-MpScan -EA SilentlyContinue) { try { Start-MpScan -ScanType QuickScan -EA Stop; 'Defender-Schnellscan abgeschlossen.' } catch { 'Defender-Scan nicht moeglich: ' + $_.Exception.Message } } else { 'Microsoft Defender ist nicht verfuegbar.' }") } });
             return l;
         }
+
+        // Schritte fuer den --auto-Lauf. keys = vom Nutzer gewaehlte Aufgaben-Schluessel
+        // (nur bekannte Schluessel zaehlen); null/leer/unbekannt => Standard-Satz (Std=true).
+        public static List<Step> AutoSet(string[] keys)
+        {
+            var cat = AutoCatalog();
+            var steps = new List<Step>();
+            if (keys != null)
+            {
+                foreach (AutoItem it in cat)      // Katalogreihenfolge = sinnvolle Ausfuehrungsreihenfolge
+                    if (Array.IndexOf(keys, it.Key) >= 0) steps.AddRange(it.Steps);
+            }
+            if (steps.Count == 0)                 // fail-safe: nichts (Gueltiges) gewaehlt -> Standard
+            {
+                foreach (AutoItem it in cat)
+                    if (it.Std) steps.AddRange(it.Steps);
+            }
+            return steps;
+        }
+        public static List<Step> AutoSet() { return AutoSet(null); }
     }
 }

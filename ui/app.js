@@ -669,46 +669,128 @@ function bloatRemoveFlow(){
 }
 
 /* ---------- Geplante Wartung ---------- */
+// Spiegel zu Catalog.AutoCatalog() in C# (Schlüssel + Standard-Satz müssen übereinstimmen).
+const AUTO_TASKS = [
+  {key:'dism',     std:true,  title:'Windows reparieren (DISM)',  desc:'Repariert den Komponentenspeicher über Windows Update.'},
+  {key:'sfc',      std:true,  title:'Systemdateien prüfen (SFC)', desc:'Prüft und repariert geschützte Systemdateien.'},
+  {key:'temp',     std:true,  title:'Temp-Dateien löschen',       desc:'Leert Benutzer- und Windows-Temp-Ordner.'},
+  {key:'bin',      std:true,  title:'Papierkorb leeren',          desc:'Leert den Papierkorb aller Laufwerke.'},
+  {key:'winsxs',   std:false, title:'WinSxS aufräumen',           desc:'Entfernt veraltete Update-Komponenten (dauert länger).'},
+  {key:'updcache', std:false, title:'Update-Cache leeren',        desc:'Löscht heruntergeladene Update-Dateien.'},
+  {key:'dns',      std:false, title:'DNS-Cache leeren',           desc:'Löscht den DNS-Auflösungscache.'},
+  {key:'defender', std:false, title:'Defender-Schnellscan',       desc:'Kurzer Virenscan der wichtigsten Bereiche.'},
+];
+const AUTO_STD_KEYS = AUTO_TASKS.filter(t=>t.std).map(t=>t.key);
 let schedMode='daily';
+
+function schedUpdateCount(){
+  const n=AUTO_TASKS.filter(t=>{ const i=$('#at-'+t.key); return i&&i.checked; }).length;
+  const c=$('#sched-count'); if(c) c.textContent = n+(n===1?' Aufgabe':' Aufgaben')+' ausgewählt';
+  const s=$('#sched-save'); if(s) s.disabled = n===0;
+}
 function renderSchedule(){
   schedMode='daily';
+  let taskRows='';
+  AUTO_TASKS.forEach(t=>{
+    taskRows+='<div class="set-row"><div class="set-text">'+
+      '<div class="set-title">'+t.title+(t.std?'<span class="std-tag">Standard</span>':'')+'</div>'+
+      '<div class="set-desc">'+t.desc+'</div></div>'+
+      toggleHTML('at-'+t.key, t.std)+'</div>';
+  });
+  let domOpts='';
+  for(let i=1;i<=31;i++) domOpts+='<option value="'+i+'">'+i+'.</option>';
   cards.innerHTML=
     '<div class="sched-wrap">'+
-      '<div class="rp-note">'+svg('calendar')+'<div>Die geplante Wartung führt regelmäßig einen <b>gründlichen Reparatur- und Aufräumlauf</b> aus (DISM, SFC, Temp- und Papierkorb-Bereinigung) und meldet sich danach per Benachrichtigung. Sie läuft mit Administratorrechten im Hintergrund; ist die App gerade geöffnet, wird der Termin übersprungen.</div></div>'+
+      '<div class="rp-note">'+svg('calendar')+'<div>Die geplante Wartung läuft <b>automatisch im Hintergrund</b> (mit Administratorrechten) und meldet sich danach per Benachrichtigung. Unten lässt sich einstellen, <b>wann</b> sie läuft und <b>was</b> sie erledigt – ohne Änderung gilt der bewährte Standard. Ist die App gerade geöffnet, wird der Termin übersprungen.</div></div>'+
       '<div id="sched-status" class="sched-status"><div class="as-loading">Status wird geladen …</div></div>'+
       '<div class="set-card">'+
-        '<div class="set-title" style="margin-bottom:14px">Zeitplan einrichten</div>'+
+        '<div class="set-title" style="margin-bottom:14px">Wann? – Zeitplan</div>'+
         '<div class="sched-form">'+
           '<div class="sched-field"><label>Intervall</label>'+
             '<div class="seg sched-seg" id="sched-mode">'+
               '<button data-mode="daily" class="active">Täglich</button>'+
               '<button data-mode="weekly">Wöchentlich</button>'+
+              '<button data-mode="monthly">Monatlich</button>'+
             '</div>'+
           '</div>'+
-          '<div class="sched-field hidden" id="sched-day-field"><label>Wochentag</label>'+
-            '<select id="sched-day" class="sched-select">'+DAYS.map(d=>'<option value="'+d[0]+'">'+d[1]+'</option>').join('')+'</select>'+
+          '<div class="sched-field hidden" id="sched-days-field"><label>An diesen Tagen</label>'+
+            '<div class="day-chips" id="sched-days">'+DAYS.map(d=>'<button type="button" class="day-chip'+(d[0]==='SUN'?' on':'')+'" data-day="'+d[0]+'" title="'+d[1]+'">'+d[1].slice(0,2)+'</button>').join('')+'</div>'+
+          '</div>'+
+          '<div class="sched-field hidden" id="sched-dom-field"><label>Tag des Monats</label>'+
+            '<select id="sched-dom" class="sched-select">'+domOpts+'</select>'+
           '</div>'+
           '<div class="sched-field"><label>Uhrzeit</label>'+
             '<input id="sched-time" type="time" value="12:00" class="sched-time" />'+
           '</div>'+
         '</div>'+
-        '<div class="sched-save-row"><button id="sched-save" class="primary">Zeitplan speichern</button></div>'+
+        '<div class="sched-dom-hint hidden" id="sched-dom-hint">Hinweis: In Monaten ohne diesen Tag (z. B. Februar) wird der Lauf übersprungen.</div>'+
       '</div>'+
+      '<div class="set-card">'+
+        '<div class="set-title">Was? – Aufgaben des Wartungslaufs</div>'+
+        '<div class="set-desc" style="margin:3px 0 4px">Frei wählbar. Ohne Änderung läuft der bewährte Standard-Satz (Reparatur + Aufräumen).</div>'+
+        '<div id="sched-tasks">'+taskRows+'</div>'+
+        '<div class="sched-tasks-foot"><span class="sched-count" id="sched-count"></span><button id="sched-reset" class="link">Auf Standard zurücksetzen</button></div>'+
+      '</div>'+
+      '<div class="sched-save-row"><button id="sched-save" class="primary">Zeitplan speichern</button></div>'+
     '</div>';
   document.querySelectorAll('#sched-mode button').forEach(b=>{
     b.onclick=()=>{
       document.querySelectorAll('#sched-mode button').forEach(x=>x.classList.remove('active'));
       b.classList.add('active'); schedMode=b.dataset.mode;
-      $('#sched-day-field').classList.toggle('hidden', schedMode!=='weekly');
+      $('#sched-days-field').classList.toggle('hidden', schedMode!=='weekly');
+      $('#sched-dom-field').classList.toggle('hidden', schedMode!=='monthly');
+      domHint();
     };
   });
+  const domHint=()=>{
+    const v=parseInt($('#sched-dom').value,10)||1;
+    $('#sched-dom-hint').classList.toggle('hidden', !(schedMode==='monthly' && v>28));
+  };
+  $('#sched-dom').onchange=domHint;
+  cards.querySelectorAll('.day-chip').forEach(b=>{ b.onclick=()=>b.classList.toggle('on'); });
+  cards.querySelectorAll('#sched-tasks input').forEach(i=>{ i.onchange=schedUpdateCount; });
+  $('#sched-reset').onclick=()=>{
+    AUTO_TASKS.forEach(t=>{ const i=$('#at-'+t.key); if(i) i.checked=t.std; });
+    schedUpdateCount();
+  };
+  schedUpdateCount();
   $('#sched-save').onclick=()=>{
     const time=$('#sched-time').value||'12:00';
     const parts=time.split(':');
     const hh=parseInt(parts[0],10), mm=parseInt(parts[1],10);
     if(isNaN(hh)||isNaN(mm)) return;
-    send({type:'scheduleCreate', mode:schedMode, day:$('#sched-day').value, hh:hh, mm:mm});
+    const msg={type:'scheduleCreate', mode:schedMode, hh:hh, mm:mm};
+    if(schedMode==='weekly'){
+      const days=Array.from(cards.querySelectorAll('.day-chip.on')).map(b=>b.dataset.day);
+      if(!days.length){ toast('Kein Wochentag','Bitte mindestens einen Wochentag auswählen.','warn'); return; }
+      msg.days=days;
+    }
+    if(schedMode==='monthly') msg.dom=parseInt($('#sched-dom').value,10)||1;
+    const sel=AUTO_TASKS.filter(t=>{ const i=$('#at-'+t.key); return i&&i.checked; }).map(t=>t.key);
+    if(!sel.length){ toast('Keine Aufgabe','Bitte mindestens eine Aufgabe auswählen.','warn'); return; }
+    // Entspricht die Auswahl exakt dem Standard, wird sie NICHT gespeichert ->
+    // es gilt weiterhin der (ggf. künftig verbesserte) Standard-Satz.
+    const isStd = sel.length===AUTO_STD_KEYS.length && AUTO_STD_KEYS.every(k=>sel.indexOf(k)>=0);
+    if(!isStd) msg.actions=sel;
+    send(msg);
   };
+}
+function schedWhenLabel(c){
+  if(c.mode==='weekly'){
+    let names=[];
+    if(c.days && c.days.length) names=c.days.map(d=>DAY_NAMES[d]||d);
+    else if(c.day) names=[DAY_NAMES[c.day]||c.day]; // Config aus Versionen bis 6.2
+    return 'Jeden '+names.map(esc).join(', ')+' um '+esc(c.time)+' Uhr';
+  }
+  if(c.mode==='monthly') return 'Am '+(parseInt(c.dom,10)||1)+'. jedes Monats um '+esc(c.time)+' Uhr';
+  return 'Täglich um '+esc(c.time)+' Uhr';
+}
+function schedTasksLabel(c){
+  if(c.actions && c.actions.length){
+    const names=c.actions.map(k=>{ const t=AUTO_TASKS.find(x=>x.key===k); return t?t.title:null; }).filter(Boolean);
+    if(names.length) return names.join(' · ');
+  }
+  return 'Standard-Wartung: Reparatur (DISM + SFC) und Aufräumen (Temp + Papierkorb)';
 }
 function renderScheduleStatus(d){
   const st=$('#sched-status'); if(!st) return;
@@ -716,11 +798,9 @@ function renderScheduleStatus(d){
   else if(d.justCreated===true) toast('Geplant','Die automatische Wartung ist eingerichtet.','good');
   if(d.exists && d.config){
     const c=d.config;
-    const txt = c.mode==='weekly'
-      ? ('Jeden '+(DAY_NAMES[c.day]||c.day)+' um '+esc(c.time)+' Uhr')
-      : ('Täglich um '+esc(c.time)+' Uhr');
     st.innerHTML='<div class="sched-on"><span class="sched-badge">Aktiv</span>'+
-      '<div class="sched-on-txt">'+txt+'</div>'+
+      '<div class="sched-on-body"><div class="sched-on-txt">'+schedWhenLabel(c)+'</div>'+
+      '<div class="sched-on-sub">'+esc(schedTasksLabel(c))+'</div></div>'+
       '<button id="sched-del" class="link danger">Entfernen</button></div>';
     $('#sched-del').onclick=()=>confirmModal('Geplante Wartung entfernen','Den automatischen Wartungstermin wirklich löschen?',()=>send({type:'scheduleDelete'}));
   } else {
@@ -1192,7 +1272,7 @@ else if(location.hash==='#sched'){
   $('#cat-title').textContent='Geplante Wartung';
   $('#cat-hint').textContent='Automatisch im Hintergrund warten lassen';
   renderSchedule();
-  renderScheduleStatus({exists:true, config:{mode:'weekly', day:'SUN', time:'12:00'}});
+  renderScheduleStatus({exists:true, config:{mode:'weekly', days:['SAT','SUN'], time:'12:00'}});
 }
 else if(location.hash==='#bloat'){
   active='Bloatware'; buildNav();

@@ -1155,23 +1155,62 @@ namespace WartungsToolbox
         void ScheduleCreate(Dictionary<string, object> m)
         {
             string mode = Str(m, "mode");
-            string day = Str(m, "day");
             int hh = ToInt(m, "hh");
             int mi = ToInt(m, "mm");
 
-            if (mode != "daily" && mode != "weekly") return;
-            string[] days = { "MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN" };
-            if (mode == "weekly" && Array.IndexOf(days, day) < 0) return;
+            if (mode != "daily" && mode != "weekly" && mode != "monthly") return;
             if (hh < 0 || hh > 23 || mi < 0 || mi > 59) return;
+
+            // Wochentage: nur Whitelist-Tokens, dedupliziert, in Wochenreihenfolge (fuer /D MON,WED,...)
+            string[] valid = { "MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN" };
+            string dSpec = "";
+            string[] daysArr = null;
+            if (mode == "weekly")
+            {
+                List<string> chosen = new List<string>();
+                object dv;
+                if (m.TryGetValue("days", out dv) && dv is object[])
+                {
+                    foreach (string tok in valid)
+                        foreach (object o in (object[])dv)
+                            if (tok.Equals(o as string) && !chosen.Contains(tok)) chosen.Add(tok);
+                }
+                if (chosen.Count == 0) return;
+                daysArr = chosen.ToArray();
+                dSpec = string.Join(",", daysArr);
+            }
+            int dom = 1;
+            if (mode == "monthly")
+            {
+                dom = ToInt(m, "dom");
+                if (dom < 1 || dom > 31) return;
+                dSpec = dom.ToString();
+            }
+
+            // Aufgaben-Satz: nur bekannte Katalog-Schluessel, Katalogreihenfolge; null = Standard.
+            string[] actionsArr = null;
+            object av;
+            if (m.TryGetValue("actions", out av) && av is object[])
+            {
+                List<string> keys = new List<string>();
+                foreach (AutoItem it in Catalog.AutoCatalog())
+                    foreach (object o in (object[])av)
+                        if (it.Key.Equals(o as string) && !keys.Contains(it.Key)) keys.Add(it.Key);
+                if (keys.Count == 0) return; // explizit leer gewaehlt -> ungueltig (UI verhindert das)
+                actionsArr = keys.ToArray();
+            }
 
             string hhs = hh.ToString("00");
             string mms = mi.ToString("00");
             string exe = Application.ExecutablePath;
+            string fMode = mode, fSpec = dSpec;
+            string[] fDays = daysArr, fActions = actionsArr;
+            int fDom = dom;
 
             Thread t = new Thread(delegate ()
             {
-                bool ok = Scheduler.Create(mode, day, hhs, mms, exe);
-                if (ok) Scheduler.Write(mode, day, hhs + ":" + mms);
+                bool ok = Scheduler.Create(fMode, fSpec, hhs, mms, exe);
+                if (ok) Scheduler.Write(fMode, fDays, fDom, hhs + ":" + mms, fActions);
                 UiPost(new { type = "schedule", exists = Scheduler.Exists(), config = Scheduler.Read(), justCreated = ok });
             });
             t.IsBackground = true;

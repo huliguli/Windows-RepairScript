@@ -31,7 +31,8 @@ namespace WartungsToolbox
 
                 Stopwatch sw = Stopwatch.StartNew();
                 bool problem = false;
-                foreach (Step s in Catalog.AutoSet())
+                // Vom Nutzer gewaehlter Aufgaben-Satz (schedule.json); null => Standard-Satz.
+                foreach (Step s in Catalog.AutoSet(Scheduler.ReadActions()))
                 {
                     int code = RunSilent(s);
                     if (code != 0 && !s.IgnoreExit) problem = true;

@@ -31,4 +31,14 @@ namespace WartungsToolbox
         public bool IsRepair;     // optionaler Wiederherstellungspunkt davor
         public List<Step> Steps = new List<Step>();
     }
+
+    // Eine still/unbeaufsichtigt sichere Aufgabe der geplanten Wartung (--auto).
+    class AutoItem
+    {
+        public string Key;        // stabiler Schluessel (Whitelist fuer UI/Config)
+        public string Title;
+        public string Desc;
+        public bool Std;          // Teil des Standard-Satzes
+        public List<Step> Steps = new List<Step>();
+    }
 }

@@ -18,15 +18,16 @@ namespace WartungsToolbox
             return RunCode("schtasks.exe", "/Query /TN \"" + TaskName + "\"") == 0;
         }
 
-        // mode ("daily"/"weekly"), day (MON..SUN), hh/mm ("00".."59") sind vom Aufrufer validiert.
-        public static bool Create(string mode, string day, string hh, string mm, string exePath)
+        // mode ("daily"/"weekly"/"monthly") und dSpec sind vom Aufrufer validiert:
+        // weekly -> Tages-Liste "MON,WED,FRI" (Whitelist-Tokens), monthly -> Monatstag "1".."31".
+        public static bool Create(string mode, string dSpec, string hh, string mm, string exePath)
         {
-            string sc = (mode == "weekly") ? "WEEKLY" : "DAILY";
+            string sc = mode == "weekly" ? "WEEKLY" : (mode == "monthly" ? "MONTHLY" : "DAILY");
             string args =
                 "/Create /TN \"" + TaskName + "\" " +
                 "/TR \"\\\"" + exePath + "\\\" --auto\" " +
                 "/SC " + sc + " /ST " + hh + ":" + mm + " /RL HIGHEST /F";
-            if (mode == "weekly") args += " /D " + day;
+            if (mode == "weekly" || mode == "monthly") args += " /D " + dSpec;
             return RunCode("schtasks.exe", args) == 0;
         }
 
@@ -67,18 +68,39 @@ namespace WartungsToolbox
                 "WindowsWartung", "schedule.json");
         }
 
-        public static void Write(string mode, string day, string time)
+        // days = Wochentage (weekly), dom = Monatstag (monthly), actions = gewaehlte
+        // Aufgaben-Schluessel oder null (= Standard-Satz; bewusst NICHT gespeichert,
+        // damit ein spaeter geaenderter Standard automatisch gilt).
+        public static void Write(string mode, string[] days, int dom, string time, string[] actions)
         {
             try
             {
                 Dictionary<string, object> d = new Dictionary<string, object>();
                 d["mode"] = mode;
-                d["day"] = day;
+                if (mode == "weekly" && days != null) d["days"] = days;
+                if (mode == "monthly") d["dom"] = dom;
                 d["time"] = time;
+                if (actions != null && actions.Length > 0) d["actions"] = actions;
                 Directory.CreateDirectory(Path.GetDirectoryName(CfgPath()));
                 File.WriteAllText(CfgPath(), new JavaScriptSerializer().Serialize(d));
             }
             catch { }
+        }
+
+        // Gewaehlte Aufgaben-Schluessel fuer den --auto-Lauf (null = Standard-Satz).
+        public static string[] ReadActions()
+        {
+            try
+            {
+                Dictionary<string, object> d = Read() as Dictionary<string, object>;
+                if (d == null || !d.ContainsKey("actions")) return null;
+                object[] arr = d["actions"] as object[];
+                if (arr == null || arr.Length == 0) return null;
+                List<string> keys = new List<string>();
+                foreach (object o in arr) { string s = o as string; if (!string.IsNullOrEmpty(s)) keys.Add(s); }
+                return keys.Count > 0 ? keys.ToArray() : null;
+            }
+            catch { return null; }
         }
 
         public static object Read()

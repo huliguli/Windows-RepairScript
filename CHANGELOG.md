@@ -1,5 +1,14 @@
 # Changelog
 
+## [6.3] - 2026-06-22
+
+### Neu
+- **Geplante Wartung: Aufgaben frei wählbar** – in „Geplant" lässt sich jetzt einstellen, **was** der automatische Lauf erledigt: 8 stille, ungefährliche Aufgaben zur Auswahl (DISM, SFC, Temp, Papierkorb, WinSxS, Update-Cache, DNS-Cache, Defender-Schnellscan). Solange nichts geändert wird, gilt weiter der bewährte Standard-Satz; „Auf Standard zurücksetzen" ist ein Klick. Der Status zeigt die gewählten Aufgaben an.
+- **Flexiblere Zeitpläne** – neben täglich/wöchentlich jetzt auch **monatlich** (Tag 1–31, mit Hinweis bei 29–31) und bei „wöchentlich" **mehrere Wochentage** auf einmal (z. B. Mo + Mi + Fr) über anklickbare Tages-Chips.
+
+### Sicherheit
+- Alle neuen Eingaben (Wochentage, Monatstag, Aufgaben) werden ausschließlich über **feste Whitelists** übernommen – in die Aufgabenplanung (`schtasks`) gelangen nie Roh-Eingaben.
+
 ## [6.2] - 2026-06-21
 
 ### Neu
