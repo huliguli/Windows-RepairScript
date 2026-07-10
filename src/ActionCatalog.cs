@@ -188,6 +188,76 @@ namespace WartungsToolbox
                 Steps = { new Step { File = "mdsched.exe", Detached = true } }
             });
 
+            // ---------- Nachtraege v6.4 (IDs 20-27) ----------
+            // WICHTIG: Neue Aktionen IMMER ans Listenende anhaengen - die IDs sind Indizes
+            // und werden 1:1 in ui/app.js (ACTIONS) gespiegelt; Einfuegen mittendrin
+            // verschiebt alle folgenden IDs (u. a. Dashboard-Empfehlung -> id 11).
+            l.Add(new MaintenanceAction {                     // id 20
+                Category = "Reparieren", Glyph = "E749", IsRepair = true,
+                Title = "Drucker reparieren",
+                Desc = "Leert hängende Druckaufträge und startet die Druckerwarteschlange neu.",
+                Steps = {
+                    CmdBE("net stop spooler"),
+                    Ps("$p=Join-Path $env:WINDIR 'System32\\spool\\PRINTERS'; $n=(Get-ChildItem $p -EA SilentlyContinue | Measure-Object).Count; Remove-Item (Join-Path $p '*') -Force -EA SilentlyContinue; 'Druckerwarteschlange geleert (' + $n + ' Datei(en) entfernt).'"),
+                    CmdBE("net start spooler"),
+                }
+            });
+            l.Add(new MaintenanceAction {                     // id 21
+                Category = "Reparieren", Glyph = "E823",
+                Title = "Uhrzeit synchronisieren",
+                Desc = "Gleicht die Systemzeit mit dem Zeitserver ab (behebt Zertifikats-/Anmeldefehler).",
+                Steps = {
+                    CmdBE("sc config w32time start= demand"),
+                    CmdBE("net start w32time"),
+                    Cmd("w32tm /resync /force"),
+                    CmdBE("w32tm /query /status"),
+                }
+            });
+            l.Add(new MaintenanceAction {                     // id 22
+                Category = "Reparieren", Glyph = "E721", Danger = true,
+                Title = "Windows-Suche reparieren",
+                Desc = "Setzt den Suchindex zurück – er wird danach im Hintergrund neu aufgebaut.",
+                Steps = {
+                    CmdBE("net stop wsearch"),
+                    Ps("$d=Join-Path $env:ProgramData 'Microsoft\\Search\\Data\\Applications\\Windows'; Remove-Item (Join-Path $d 'Windows.edb') -Force -EA SilentlyContinue; Remove-Item (Join-Path $d 'Windows.db') -Force -EA SilentlyContinue; 'Suchindex zurueckgesetzt - er wird im Hintergrund neu aufgebaut (Suche kann voruebergehend unvollstaendig sein).'"),
+                    CmdBE("net start wsearch"),
+                }
+            });
+            l.Add(new MaintenanceAction {                     // id 23
+                Category = "Diagnose", Glyph = "E7BA",
+                Title = "Absturz-Historie",
+                Desc = "Zeigt unerwartete Neustarts und Bluescreens der letzten Zeit.",
+                Steps = { Ps("try { Get-WinEvent -FilterHashtable @{LogName='System'; Id=41,1074,6008,1001} -MaxEvents 12 -EA Stop | ForEach-Object { $w=''; if($_.Id -eq 41){$w='Unerwartet ausgeschaltet (Strom/Absturz)'} elseif($_.Id -eq 6008){$w='Unerwartetes Herunterfahren'} elseif($_.Id -eq 1074){$w='Geplanter Neustart/Herunterfahren'} else {$w='Bluescreen (Bugcheck)'}; ('{0}  {1}' -f $_.TimeCreated.ToString('yyyy-MM-dd HH:mm'), $w) } } catch { 'Keine Eintraege gefunden - sieht gut aus!' }") }
+            });
+            l.Add(new MaintenanceAction {                     // id 24
+                Category = "Diagnose", Glyph = "E774",
+                Title = "Netzwerk-Übersicht",
+                Desc = "IP-Adresse, Gateway und DNS aller aktiven Adapter.",
+                Steps = { Ps("Get-NetIPConfiguration | Where-Object {$_.IPv4Address} | ForEach-Object { Write-Output ('Adapter : ' + $_.InterfaceAlias); Write-Output ('  IPv4    : ' + ($_.IPv4Address.IPAddress -join ', ')); if($_.IPv4DefaultGateway){Write-Output ('  Gateway : ' + $_.IPv4DefaultGateway.NextHop)}; if($_.DNSServer){Write-Output ('  DNS     : ' + (($_.DNSServer | ForEach-Object {$_.ServerAddresses}) -join ', '))}; Write-Output '' }") }
+            });
+            l.Add(new MaintenanceAction {                     // id 25
+                Category = "Diagnose", Glyph = "E7C4",
+                Title = "Startzeit-Analyse",
+                Desc = "Wie lange die letzten Windows-Starts gedauert haben.",
+                Steps = { Ps("try { Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Diagnostics-Performance/Operational'; Id=100} -MaxEvents 5 -EA Stop | ForEach-Object { $x=[xml]$_.ToXml(); $ms=[int64](($x.Event.EventData.Data | Where-Object {$_.Name -eq 'BootTime'}).'#text'); ('{0}  Start dauerte {1:0.0} s' -f $_.TimeCreated.ToString('yyyy-MM-dd HH:mm'), ($ms/1000)) } } catch { 'Keine Startzeit-Daten vorhanden (Protokoll evtl. deaktiviert).' }") }
+            });
+            l.Add(new MaintenanceAction {                     // id 26
+                Category = "Aufräumen", Glyph = "EB9F", Danger = true,
+                Title = "Miniaturansichten-Cache leeren",
+                Desc = "Behebt falsche/fehlende Vorschaubilder. Die Taskleiste startet dabei kurz neu.",
+                Steps = {
+                    CmdBE("taskkill /f /im explorer.exe"),
+                    Ps("$p=Join-Path $env:LOCALAPPDATA 'Microsoft\\Windows\\Explorer'; $b=(Get-ChildItem (Join-Path $p 'thumbcache_*') -EA SilentlyContinue | Measure-Object Length -Sum).Sum; Remove-Item (Join-Path $p 'thumbcache_*') -Force -EA SilentlyContinue; 'Miniaturansichten-Cache geleert - ca. ' + [math]::Round([double]$b/1MB,1) + ' MB.'"),
+                    CmdBE("start explorer.exe"),
+                }
+            });
+            l.Add(new MaintenanceAction {                     // id 27
+                Category = "Aufräumen", Glyph = "E719",
+                Title = "Store-Cache leeren",
+                Desc = "Setzt den Microsoft-Store-Cache zurück (öffnet kurz ein eigenes Fenster).",
+                Steps = { new Step { File = "wsreset.exe", Detached = true } }
+            });
+
             return l;
         }
 

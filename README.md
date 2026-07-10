@@ -6,23 +6,23 @@ Die Oberfläche ist in HTML/CSS gebaut und läuft in einem schlanken **WebView2*
 
 ## Funktionen
 
-**Reparieren** — Komplett-Reparatur (DISM + SFC), DISM RestoreHealth, SFC scannow & nur prüfen, WinSxS aufräumen, Komponentenspeicher analysieren, Windows-Update reparieren, CHKDSK planen
+**Reparieren** — Komplett-Reparatur (DISM + SFC), DISM RestoreHealth, SFC scannow & nur prüfen, WinSxS aufräumen, Komponentenspeicher analysieren, Windows-Update reparieren, CHKDSK planen, Drucker reparieren, Uhrzeit synchronisieren, Windows-Suche reparieren
 
 **Netzwerk** — Netzwerk-Reset (DNS / Winsock / IP), DNS-Cache leeren, IP-Adresse erneuern, Netzwerk-Diagnose (Ping/Route zu einem Ziel)
 
-**Aufräumen** — Temp-Dateien, Windows-Update-Cache, Papierkorb, Datenträgerbereinigung
+**Aufräumen** — Temp-Dateien, Windows-Update-Cache, Papierkorb, Datenträgerbereinigung, Miniaturansichten-Cache, Store-Cache (wsreset)
 
-**Diagnose** — System-Übersicht, Festplatten-Gesundheit (SMART), Akkubericht, Defender-Schnellscan, RAM-Diagnose, Treiber-Backup
+**Diagnose** — System-Übersicht, Festplatten-Gesundheit (SMART), Akkubericht, Defender-Schnellscan, RAM-Diagnose, Treiber-Backup, Absturz-Historie, Netzwerk-Übersicht, Startzeit-Analyse
 
 **Energie** — vorhandene Energiesparpläne anzeigen, den aktiven markieren und per Klick wechseln
 
 **Wiederherstellung** — Wiederherstellungspunkt anlegen, vorhandene auflisten und (mit doppelter Bestätigung) auf einen zurücksetzen
 
-**Geplant** — wiederkehrende, automatische Wartung per Aufgabenplanung (täglich/wöchentlich); läuft still im Hintergrund und meldet sich per Benachrichtigung
+**Geplant** — wiederkehrende, automatische Wartung per Aufgabenplanung (täglich, wöchentlich mit mehreren Wochentagen oder monatlich); die Aufgaben des Laufs sind frei wählbar (Standard: Reparatur + Aufräumen); läuft still im Hintergrund und meldet sich per Benachrichtigung
 
 **Verlauf** — protokolliert jede Ausführung (Zeit, Aktion, Ergebnis, Dauer) zum Nachschlagen
 
-**Autostart** — alle Startprogramme anzeigen und per Schalter an-/abschalten (umkehrbar)
+**Autostart** — alle Startprogramme anzeigen und per Schalter an-/abschalten (umkehrbar); Windows-Wartung selbst per Schalter zum PC-Start hinzufügen (über die Aufgabenplanung, ohne UAC-Nachfrage); Autostart-Ordner direkt öffnen, mit Anleitung zum Hinzufügen eigener Programme
 
 **Bloatware** — vorinstallierte Apps (`Get-AppxPackage`) gruppiert anzeigen, mehrere auswählen und (mit doppelter Bestätigung und optionalem Wiederherstellungspunkt) entfernen. Aus Sicherheit werden nur als unbedenklich bekannte Apps angeboten; System-, Store- und Defender-Pakete sind durch eine Blockliste hart geschützt
 

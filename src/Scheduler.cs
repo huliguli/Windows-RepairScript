@@ -12,10 +12,30 @@ namespace WartungsToolbox
     static class Scheduler
     {
         public const string TaskName = "WindowsWartung-AutoWartung";
+        public const string StartTaskName = "WindowsWartung-Autostart";
 
         public static bool Exists()
         {
             return RunCode("schtasks.exe", "/Query /TN \"" + TaskName + "\"") == 0;
+        }
+
+        // ---- App-Selbststart bei der Anmeldung ----
+        // Die App verlangt Adminrechte (Manifest); elevated Programme im normalen
+        // Run-Key blockiert Windows still. Zuverlaessiger Weg: Aufgabenplanung
+        // mit /SC ONLOGON /RL HIGHEST - startet ohne UAC-Nachfrage.
+        public static bool StartTaskExists()
+        {
+            return RunCode("schtasks.exe", "/Query /TN \"" + StartTaskName + "\"") == 0;
+        }
+
+        public static bool StartTaskSet(bool on, string exePath)
+        {
+            if (!on) return RunCode("schtasks.exe", "/Delete /TN \"" + StartTaskName + "\" /F") == 0;
+            string args =
+                "/Create /TN \"" + StartTaskName + "\" " +
+                "/TR \"\\\"" + exePath + "\\\"\" " +
+                "/SC ONLOGON /RL HIGHEST /F";
+            return RunCode("schtasks.exe", args) == 0;
         }
 
         // mode ("daily"/"weekly"/"monthly") und dSpec sind vom Aufrufer validiert:

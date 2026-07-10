@@ -785,6 +785,40 @@ namespace WartungsToolbox
             else if (type == "scheduleStatus") SendScheduleStatus();
             else if (type == "scheduleCreate") ScheduleCreate(m);
             else if (type == "scheduleDelete") ScheduleDelete();
+            else if (type == "selfStartGet") SelfStartGet();
+            else if (type == "selfStartSet") SelfStartSet(ToBool(m, "on"));
+            else if (type == "openStartupFolder") OpenStartupFolder(Str(m, "scope"));
+        }
+
+        // ---------- App-Selbststart (Autostart-Ansicht) ----------
+        void SelfStartGet()
+        {
+            Thread t = new Thread(delegate ()
+            {
+                UiPost(new { type = "selfstart", on = Scheduler.StartTaskExists() });
+            });
+            t.IsBackground = true;
+            t.Start();
+        }
+
+        void SelfStartSet(bool on)
+        {
+            string exe = Application.ExecutablePath;
+            Thread t = new Thread(delegate ()
+            {
+                bool ok = Scheduler.StartTaskSet(on, exe);
+                UiPost(new { type = "selfstart", on = Scheduler.StartTaskExists(), changed = ok });
+            });
+            t.IsBackground = true;
+            t.Start();
+        }
+
+        void OpenStartupFolder(string scope)
+        {
+            // Explorer oeffnet den Autostart-Ordner (shell:-Moniker, kein Pfad-Gefrickel)
+            string arg = scope == "common" ? "shell:common startup" : "shell:startup";
+            try { Process.Start(new ProcessStartInfo("explorer.exe", arg) { UseShellExecute = true }); }
+            catch { }
         }
 
         void Win(string a)

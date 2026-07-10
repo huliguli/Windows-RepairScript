@@ -41,6 +41,8 @@ const ICONS = {
   save:'<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/>',
   package:'<path d="M16.5 9.4 7.5 4.21"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>',
   tick:'<path d="M20 6 9 17l-5-5"/>',
+  printer:'<path d="M6 9V3h12v6"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8" rx="1"/>',
+  image:'<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/>',
 };
 function svg(name){return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'+(ICONS[name]||'')+'</svg>';}
 
@@ -81,6 +83,9 @@ const ACTIONS = [
   {id:5,  cat:'Reparieren', icon:'activity',    title:'Komponentenspeicher analysieren', desc:'Zeigt, ob sich ein WinSxS-Cleanup lohnt.'},
   {id:6,  cat:'Reparieren', icon:'rotate',      title:'Windows-Update reparieren',    desc:'Setzt die Update-Komponenten zurück (SoftwareDistribution + catroot2).'},
   {id:7,  cat:'Reparieren', icon:'alert',       title:'CHKDSK planen', danger:true,    desc:'Plant eine Datenträgerprüfung beim nächsten Neustart.'},
+  {id:20, cat:'Reparieren', icon:'printer',     title:'Drucker reparieren',           desc:'Leert hängende Druckaufträge und startet die Warteschlange neu.'},
+  {id:21, cat:'Reparieren', icon:'clock',       title:'Uhrzeit synchronisieren',      desc:'Gleicht die Systemzeit mit dem Zeitserver ab.'},
+  {id:22, cat:'Reparieren', icon:'search',      title:'Windows-Suche reparieren', danger:true, desc:'Setzt den Suchindex zurück – wird im Hintergrund neu aufgebaut.'},
 
   {id:8,  cat:'Netzwerk', icon:'globe',   title:'Netzwerk-Reset (komplett)', danger:true, desc:'DNS, Winsock und IP-Stack zurücksetzen. Neustart empfohlen.'},
   {id:9,  cat:'Netzwerk', icon:'globe',   title:'DNS-Cache leeren',              desc:'Löscht den DNS-Auflösungscache.'},
@@ -90,12 +95,17 @@ const ACTIONS = [
   {id:12, cat:'Aufräumen', icon:'download', title:'Update-Cache leeren',          desc:'Löscht heruntergeladene Update-Dateien.'},
   {id:13, cat:'Aufräumen', icon:'trash',    title:'Papierkorb leeren',            desc:'Leert den Papierkorb aller Laufwerke.'},
   {id:14, cat:'Aufräumen', icon:'server',   title:'Datenträgerbereinigung',       desc:'Öffnet das Windows-Tool cleanmgr.'},
+  {id:26, cat:'Aufräumen', icon:'image',    title:'Miniaturansichten-Cache leeren', danger:true, desc:'Behebt falsche Vorschaubilder. Die Taskleiste startet kurz neu.'},
+  {id:27, cat:'Aufräumen', icon:'package',  title:'Store-Cache leeren',           desc:'Setzt den Microsoft-Store-Cache zurück (wsreset).'},
 
   {id:15, cat:'Diagnose', icon:'cpu',     title:'System-Übersicht',             desc:'Modell, Windows-Version, RAM und Laufzeit auf einen Blick.'},
   {id:16, cat:'Diagnose', icon:'hdd',     title:'Festplatten-Gesundheit',       desc:'SMART-Status und Typ aller Datenträger.'},
   {id:17, cat:'Diagnose', icon:'battery', title:'Akkubericht erstellen',        desc:'Erzeugt einen powercfg-Akkubericht und öffnet ihn.'},
   {id:18, cat:'Diagnose', icon:'shield',  title:'Defender-Schnellscan',         desc:'Startet einen schnellen Microsoft-Defender-Scan.'},
   {id:19, cat:'Diagnose', icon:'cpu',     title:'RAM-Diagnose planen', danger:true, desc:'Öffnet die Windows-Speicherdiagnose (Neustart nötig).'},
+  {id:23, cat:'Diagnose', icon:'alert',   title:'Absturz-Historie',             desc:'Zeigt unerwartete Neustarts und Bluescreens der letzten Zeit.'},
+  {id:24, cat:'Diagnose', icon:'globe',   title:'Netzwerk-Übersicht',           desc:'IP-Adresse, Gateway und DNS aller aktiven Adapter.'},
+  {id:25, cat:'Diagnose', icon:'rocket',  title:'Startzeit-Analyse',            desc:'Wie lange die letzten Windows-Starts gedauert haben.'},
 ];
 const byId = id => ACTIONS.find(a => a.id === id);
 
@@ -120,7 +130,15 @@ const INFO = {
   16:'Zeigt, ob deine Festplatten/SSDs gesund sind. Gut für einen schnellen Sicherheits-Check.',
   17:'Erstellt einen Bericht über den Akku (bei Laptops) und öffnet ihn – zeigt z. B. den Verschleiß.',
   18:'Lässt den Windows-Virenschutz schnell die wichtigsten Stellen auf Schädlinge prüfen.',
-  19:'Prüft den Arbeitsspeicher auf Fehler – beim nächsten Neustart. Sinnvoll bei häufigen Abstürzen oder Bluescreens.'
+  19:'Prüft den Arbeitsspeicher auf Fehler – beim nächsten Neustart. Sinnvoll bei häufigen Abstürzen oder Bluescreens.',
+  20:'Wenn der Drucker nicht mehr druckt, hängt oft ein alter Druckauftrag fest. Diese Aktion wirft alle wartenden Aufträge raus und startet das Drucksystem neu – danach klappt Drucken meist wieder.',
+  21:'Stellt die Uhr des PCs über das Internet richtig. Eine falsche Uhrzeit verursacht überraschend viele Probleme – z. B. Webseiten-Zertifikatsfehler oder fehlgeschlagene Anmeldungen.',
+  22:'Baut den Index der Windows-Suche neu auf. Hilft, wenn die Suche im Startmenü oder Explorer nichts oder Falsches findet. Der Neuaufbau läuft im Hintergrund und kann eine Weile dauern.',
+  23:'Zeigt, wann der PC zuletzt abgestürzt ist oder unerwartet ausging – und wann es ein normaler Neustart war. Gut, um Problemen auf die Spur zu kommen.',
+  24:'Zeigt die wichtigsten Netzwerk-Daten deines PCs: seine Adresse im Netz (IP), den Weg ins Internet (Gateway) und wer Webadressen auflöst (DNS). Praktisch für die Fehlersuche oder am Telefon mit dem Support.',
+  25:'Zeigt, wie lange die letzten Windows-Starts gedauert haben. Wird der Start immer langsamer, lohnt ein Blick in die Autostart-Verwaltung.',
+  26:'Windows speichert kleine Vorschaubilder für Fotos und Dateien. Ist dieser Speicher beschädigt, zeigen Ordner falsche oder keine Bilder – das behebt diese Aktion. Die Taskleiste verschwindet dabei für einen Moment, das ist normal.',
+  27:'Leert den Zwischenspeicher des Microsoft Store. Hilft, wenn der Store nicht öffnet, hängt oder Apps sich nicht installieren lassen. Es öffnet sich kurz ein schwarzes Fenster, danach der Store.'
 };
 
 /* ---------- Brücke zu C# (oder Mock im Browser) ---------- */
@@ -142,6 +160,7 @@ function onHost(m){
   else if(m.type==='updated') toast('Aktualisiert','Erfolgreich auf '+m.version+' aktualisiert','good');
   else if(m.type==='stats') updateStats(m);
   else if(m.type==='autostart') renderAutostartList(m.items);
+  else if(m.type==='selfstart') renderSelfStart(m);
   else if(m.type==='history') renderHistoryList(m.items);
   else if(m.type==='restorePoints') renderRestoreList(m.items);
   else if(m.type==='powerPlans') renderPowerList(m.items);
@@ -233,6 +252,7 @@ function selectCat(name){
     cards.classList.add('autostart');
     renderAutostart();
     send({type:'autostartList'});
+    send({type:'selfStartGet'});
     return;
   }
   if(name==='Einstellungen'){
@@ -429,11 +449,44 @@ function updateStats(s){
 
 /* ---------- Autostart ---------- */
 function renderAutostart(){
-  cards.innerHTML='<div class="as-loading">Autostart wird geladen …</div>';
+  cards.innerHTML=
+    '<div class="as-top">'+
+      '<div class="set-card">'+
+        '<div class="set-row" style="padding:0;border:0">'+
+          '<div class="set-text"><div class="set-title">Windows-Wartung beim PC-Start starten</div>'+
+          '<div class="set-desc">Startet die App automatisch nach der Anmeldung – über die Aufgabenplanung mit Administratorrechten, ganz ohne Nachfrage-Fenster.</div></div>'+
+          '<span class="switch"><input type="checkbox" id="as-self" disabled/><i></i></span>'+
+        '</div>'+
+      '</div>'+
+      '<div class="set-card">'+
+        '<div class="set-title">Eigene Programme zum Autostart hinzufügen</div>'+
+        '<div class="set-desc" style="margin:3px 0 12px">So geht es: Rechtsklick auf das Programm (im Startmenü oder auf dem Desktop) → <b>Verknüpfung erstellen</b> – und diese Verknüpfung in den Autostart-Ordner verschieben. Beim nächsten PC-Start läuft das Programm automatisch mit. Zum Entfernen die Verknüpfung dort einfach löschen.</div>'+
+        '<div class="as-folder-btns">'+
+          '<button id="as-open-user" class="mb">Autostart-Ordner öffnen</button>'+
+          '<button id="as-open-common" class="mb">Ordner für alle Benutzer öffnen</button>'+
+        '</div>'+
+      '</div>'+
+      '<div class="as-group" style="margin:4px 4px 0">Vorhandene Einträge</div>'+
+    '</div>'+
+    '<div id="as-list"><div class="as-loading">Autostart wird geladen …</div></div>';
+  $('#as-self').onchange=e=>{
+    e.target.disabled=true; // bis der Host den neuen Status bestätigt
+    send({type:'selfStartSet', on:e.target.checked});
+  };
+  $('#as-open-user').onclick=()=>send({type:'openStartupFolder', scope:'user'});
+  $('#as-open-common').onclick=()=>send({type:'openStartupFolder', scope:'common'});
+}
+function renderSelfStart(m){
+  const i=$('#as-self'); if(!i) return;
+  i.checked=!!m.on;
+  i.disabled=false;
+  if(m.changed===false) toast('Nicht geändert','Der Autostart-Eintrag konnte nicht angepasst werden.','bad');
+  else if(m.changed===true) toast(m.on?'Autostart aktiv':'Autostart entfernt', m.on?'Windows-Wartung startet künftig mit dem PC.':'Windows-Wartung startet nicht mehr automatisch.','good');
 }
 function renderAutostartList(items){
   if(!cards.classList.contains('autostart')) return;
-  if(!items || !items.length){ cards.innerHTML='<div class="as-loading">Keine Autostart-Einträge gefunden.</div>'; return; }
+  const list=$('#as-list'); if(!list) return;
+  if(!items || !items.length){ list.innerHTML='<div class="as-loading">Keine Autostart-Einträge gefunden.</div>'; return; }
   const groups={}; items.forEach(it=>{ (groups[it.locName]=groups[it.locName]||[]).push(it); });
   let html='<div class="as-wrap">';
   Object.keys(groups).forEach(g=>{
@@ -446,8 +499,8 @@ function renderAutostartList(items){
     });
   });
   html+='</div>';
-  cards.innerHTML=html;
-  cards.querySelectorAll('.as-item input').forEach(inp=>{
+  list.innerHTML=html;
+  list.querySelectorAll('.as-item input').forEach(inp=>{
     inp.onchange=()=>{
       inp.closest('.as-item').classList.toggle('off', !inp.checked);
       send({type:'autostartSet', loc:inp.dataset.loc, key:inp.dataset.key, enable:inp.checked});

@@ -1,5 +1,16 @@
 # Changelog
 
+## [6.4] - 2026-06-22
+
+### Neu
+- **Autostart ausgebaut** – die Autostart-Ansicht kann jetzt mehr:
+  - **Windows-Wartung selbst beim PC-Start starten**: ein Schalter richtet den Selbststart über die Windows-Aufgabenplanung ein (mit Administratorrechten, ohne UAC-Nachfrage – der normale Autostart-Weg blockiert Admin-Programme still).
+  - **Eigene Programme hinzufügen**: Buttons öffnen den Autostart-Ordner (für den Benutzer oder alle Benutzer) direkt im Explorer, dazu eine Schritt-für-Schritt-Erklärung in einfacher Sprache (Verknüpfung erstellen → in den Ordner verschieben).
+- **8 neue Aktionen** in den Werkzeug-Kategorien:
+  - *Reparieren:* **Drucker reparieren** (hängende Druckaufträge leeren + Warteschlange neu starten), **Uhrzeit synchronisieren** (behebt Zertifikats-/Anmeldefehler), **Windows-Suche reparieren** (Suchindex zurücksetzen, Neuaufbau im Hintergrund).
+  - *Diagnose:* **Absturz-Historie** (unerwartete Neustarts/Bluescreens aus dem Ereignisprotokoll, verständlich beschriftet), **Netzwerk-Übersicht** (IP, Gateway, DNS je Adapter), **Startzeit-Analyse** (Dauer der letzten Windows-Starts).
+  - *Aufräumen:* **Miniaturansichten-Cache leeren** (behebt falsche Vorschaubilder), **Store-Cache leeren** (wsreset).
+
 ## [6.3] - 2026-06-22
 
 ### Neu
