@@ -1,5 +1,13 @@
 # Changelog
 
+## [6.5] - 2026-07-11
+
+### Neu
+- **Updates automatisch installieren** – neuer Schalter in den Einstellungen: Wird beim Start eine neue Version gefunden, lädt und installiert sie sich ohne Nachfrage, danach startet das Programm einmal neu. Die Prüfsummen-Kontrolle des Downloads bleibt dabei unverändert aktiv. Standardmäßig ausgeschaltet – wer weiterhin gefragt werden möchte, muss nichts tun.
+
+### Behoben
+- **Update-Hinweis ohne Download-Paket** – direkt nach Erscheinen einer neuen Version konnte der Update-Dialog ins Leere laufen („Kein Download-Paket im Release gefunden"), weil das Release schon sichtbar war, während die Dateien noch gebaut wurden. Ein Release wird jetzt erst veröffentlicht, wenn alle Dateien vollständig angehängt sind; zusätzlich überspringt die App ein unvollständiges Release still und prüft beim nächsten Start erneut.
+
 ## [6.4] - 2026-06-22
 
 ### Neu

@@ -1,8 +1,19 @@
 name: Build and Release
 
+# Ausgeloest durch das Pushen eines Tags "v*". Das Release wird ATOMAR
+# veroeffentlicht: erst als Entwurf angelegt, dann alle Dateien (ZIP + SHA-256
+# + Installer) angehaengt, erst danach sichtbar geschaltet. Die Update-Pruefung
+# der App fragt releases/latest ab, das nie Entwuerfe liefert - sie kann also
+# kein Release ohne Download-Paket mehr sehen. (Der alte Ablauf veroeffentlichte
+# zuerst und haengte die Dateien ~5 Minuten spaeter an; ein Update-Klick in
+# diesem Fenster lief ins Leere: "Kein Download-Paket im Release gefunden.")
+#
+# Release-Notes kommen wie bisher aus dem CHANGELOG.md-Abschnitt des Tags
+# (tools/release-notes.ps1).
 on:
-  release:
-    types: [published]
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -15,18 +26,24 @@ jobs:
       - name: Repository auschecken
         uses: actions/checkout@v4
 
-      - name: Release-Beschreibung aus Changelog setzen
-        shell: powershell
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REL_TAG: ${{ github.event.release.tag_name }}
-        run: |
-          ./tools/release-notes.ps1 -Tag "$env:REL_TAG" -OutFile "release-notes.md"
-          gh release edit "$env:REL_TAG" --notes-file "release-notes.md"
-
       - name: Build (Release)
         shell: powershell
         run: ./build.ps1 -Release
+
+      # Schutz vor vergessenem Versions-Bump: die App vergleicht ihre eigene
+      # Assembly-Version mit dem Release-Tag; passt beides nicht zusammen,
+      # wuerde der Updater dasselbe Update endlos wieder anbieten.
+      - name: Version pruefen (Tag == Assembly-Version)
+        if: github.ref_type == 'tag'
+        shell: powershell
+        run: |
+          $ver = (Get-Item bin\WindowsWartung.exe).VersionInfo.FileVersion  # z. B. 6.5.0.0
+          $tag = "$env:GITHUB_REF_NAME".TrimStart("v")                       # z. B. 6.5
+          if (-not ($ver -eq $tag -or $ver.StartsWith($tag + "."))) {
+            Write-Error "Assembly-Version ($ver) passt nicht zum Tag ($tag) - bitte AssemblyInfo.cs anheben."
+            exit 1
+          }
+          Write-Host "Version ok: $ver (Tag $env:GITHUB_REF_NAME)"
 
       - name: Signieren (optional, wenn Zertifikat hinterlegt)
         shell: powershell
@@ -58,10 +75,33 @@ jobs:
           $ver = (Get-Item bin\WindowsWartung.exe).VersionInfo.FileVersion
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$ver" installer\WindowsWartung.iss
 
-      - name: Release-Assets hochladen
-        uses: softprops/action-gh-release@v2
+      - name: Build-Artefakt hochladen (manuelle Läufe)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
         with:
-          files: |
+          name: WindowsWartung
+          path: |
             WindowsWartung.zip
             WindowsWartung.zip.sha256
             dist/WindowsWartung-Setup.exe
+
+      # Erst Entwurf + alle Dateien, dann veroeffentlichen: die Update-Pruefung
+      # kann nie ein halbfertiges Release sehen.
+      - name: Release veröffentlichen (Entwurf → Assets → sichtbar)
+        if: github.ref_type == 'tag'
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "$env:GITHUB_REF_NAME"
+          foreach ($f in @("WindowsWartung.zip", "WindowsWartung.zip.sha256", "dist\WindowsWartung-Setup.exe")) {
+            if (-not (Test-Path $f) -or (Get-Item $f).Length -eq 0) { Write-Error "Asset fehlt oder ist leer: $f"; exit 1 }
+          }
+          ./tools/release-notes.ps1 -Tag $tag -OutFile "release-notes.md"
+          gh release create $tag --draft --title "Windows-Wartung $tag" --notes-file "release-notes.md"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          gh release upload $tag WindowsWartung.zip WindowsWartung.zip.sha256 dist\WindowsWartung-Setup.exe
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          gh release edit $tag --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Write-Host "Release $tag veroeffentlicht (alle Dateien angehaengt)."

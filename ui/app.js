@@ -153,7 +153,7 @@ function onHost(m){
   else if(m.type==='done')  onDone(m.title, m.kind, m.message);
   else if(m.type==='shutdownScheduled') showShutdownBar(m.mode, m.delay);
   else if(m.type==='shutdownCancelled') hideShutdownBar();
-  else if(m.type==='update') showUpdatePrompt(m.version);
+  else if(m.type==='update'){ if(SET.autoUpdate) startAutoUpdate(m.version); else showUpdatePrompt(m.version); }
   else if(m.type==='updateProgress') setUpdateProgress(m.percent);
   else if(m.type==='updateStatus') setUpdatePhase(m.phase);
   else if(m.type==='updateError') setUpdateError(m.message);
@@ -204,6 +204,7 @@ const SET = {
   consoleOpen: localStorage.getItem('consoleOpen') !== 'false',
   confirmAll:  localStorage.getItem('confirmAll') === 'true',
   notify:      localStorage.getItem('notify') !== 'false',
+  autoUpdate:  localStorage.getItem('autoUpdate') === 'true',
   zoom:        1,
 };
 applyAccent(SET.accent);
@@ -930,6 +931,7 @@ function renderSettings(){
         '<div class="set-row"><div class="set-text"><div class="set-title">Windows-Benachrichtigungen</div><div class="set-desc">Mitteilung anzeigen, wenn eine Aktion fertig ist (während das Fenster im Hintergrund ist)</div></div>'+toggleHTML('s-notify', SET.notify)+'</div>'+
         '<div class="set-row"><div class="set-text"><div class="set-title">Konsole beim Start öffnen</div><div class="set-desc">Den Ausgabe-Bereich direkt sichtbar anzeigen</div></div>'+toggleHTML('s-console', SET.consoleOpen)+'</div>'+
         '<div class="set-row"><div class="set-text"><div class="set-title">Immer vor dem Ausführen fragen</div><div class="set-desc">Sicherheitsabfrage auch für harmlose Aktionen</div></div>'+toggleHTML('s-confirm', SET.confirmAll)+'</div>'+
+        '<div class="set-row"><div class="set-text"><div class="set-title">Updates automatisch installieren</div><div class="set-desc">Wird beim Start eine neue Version gefunden, installiert sie sich ohne Nachfrage (Prüfsummen-Kontrolle bleibt aktiv) und das Programm startet neu</div></div>'+toggleHTML('s-autoupdate', SET.autoUpdate)+'</div>'+
       '</div>'+
       '<div class="set-card">'+
         '<div class="set-title">Akzentfarbe</div>'+
@@ -943,6 +945,7 @@ function renderSettings(){
   $('#s-notify').onchange=e=>{ SET.notify=e.target.checked; localStorage.setItem('notify', SET.notify); send({type:'setNotify', on:SET.notify}); };
   $('#s-console').onchange=e=>{ SET.consoleOpen=e.target.checked; localStorage.setItem('consoleOpen', SET.consoleOpen); };
   $('#s-confirm').onchange=e=>{ SET.confirmAll=e.target.checked; localStorage.setItem('confirmAll', SET.confirmAll); };
+  $('#s-autoupdate').onchange=e=>{ SET.autoUpdate=e.target.checked; localStorage.setItem('autoUpdate', SET.autoUpdate); };
   cards.querySelectorAll('.swatch').forEach(b=>{
     b.onclick=()=>{ SET.accent=b.dataset.acc; localStorage.setItem('accent', SET.accent); applyAccent(SET.accent); cards.querySelectorAll('.swatch').forEach(x=>x.classList.toggle('active', x===b)); };
   });
@@ -1133,6 +1136,14 @@ function showUpdatePrompt(version){
 function startUpdateFlow(){
   setUpdateProgress(0);
   umSet('Wird heruntergeladen …', 'Lade '+updateVersion+' …', {progress:true});
+  $('#update-modal').classList.remove('hidden');
+  send({type:'startUpdate'});
+}
+function startAutoUpdate(version){ // Einstellung „Updates automatisch installieren"
+  updateVersion=version||'';
+  $('#update-bar').classList.remove('show');
+  setUpdateProgress(0);
+  umSet('Update wird automatisch installiert', 'Version '+updateVersion+' wird geladen – das Programm startet gleich neu …', {progress:true});
   $('#update-modal').classList.remove('hidden');
   send({type:'startUpdate'});
 }

@@ -457,6 +457,13 @@ namespace WartungsToolbox
                     Version cur = typeof(ShellForm).Assembly.GetName().Version;
                     if (latest == null || latest <= cur) return;
 
+                    // Neueres Release ohne ZIP-Paket = Release wird gerade erst
+                    // bestueckt (der CI-Build haengt die Dateien einige Minuten
+                    // nach dem Veroeffentlichen an). Still ueberspringen statt
+                    // ein totes Update anzubieten - der naechste Start findet
+                    // das vollstaendige Release.
+                    if (string.IsNullOrEmpty(_updateAsset)) return;
+
                     _updateTag = tag;
                     _updateUrl = string.IsNullOrEmpty(url) ? "https://github.com/" + Repo + "/releases/latest" : url;
 
