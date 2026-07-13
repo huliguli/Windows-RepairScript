@@ -1,5 +1,10 @@
 # Changelog
 
+## [6.5.1] - 2026-07-13
+
+### Behoben
+- **Geplante Wartung läuft jetzt auch bei geöffneter App.** Bisher wurde der Termin übersprungen, wenn die App gerade offen war. Jetzt übergibt der Hintergrund-Lauf die Wartung an die offene App: sie wird dort **sichtbar mit Live-Ausgabe** ausgeführt und wie gewohnt im Verlauf protokolliert. Läuft gerade eine andere Aktion, startet die Wartung automatisch, sobald diese fertig ist – zwei gleichzeitige Reparatur-Läufe (DISM/SFC vertragen das nicht) bleiben damit weiterhin ausgeschlossen. Antwortet die offene App nicht (z. B. noch eine ältere Version), läuft die Wartung wie bisher still im Hintergrund – ein Termin fällt nie mehr ersatzlos aus.
+
 ## [6.5] - 2026-07-11
 
 ### Neu

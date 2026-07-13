@@ -18,7 +18,7 @@ Die Oberfläche ist in HTML/CSS gebaut und läuft in einem schlanken **WebView2*
 
 **Wiederherstellung** — Wiederherstellungspunkt anlegen, vorhandene auflisten und (mit doppelter Bestätigung) auf einen zurücksetzen
 
-**Geplant** — wiederkehrende, automatische Wartung per Aufgabenplanung (täglich, wöchentlich mit mehreren Wochentagen oder monatlich); die Aufgaben des Laufs sind frei wählbar (Standard: Reparatur + Aufräumen); läuft still im Hintergrund und meldet sich per Benachrichtigung
+**Geplant** — wiederkehrende, automatische Wartung per Aufgabenplanung (täglich, wöchentlich mit mehreren Wochentagen oder monatlich); die Aufgaben des Laufs sind frei wählbar (Standard: Reparatur + Aufräumen); läuft still im Hintergrund und meldet sich per Benachrichtigung – ist die App gerade geöffnet, übernimmt sie den Lauf sichtbar
 
 **Verlauf** — protokolliert jede Ausführung (Zeit, Aktion, Ergebnis, Dauer) zum Nachschlagen
 

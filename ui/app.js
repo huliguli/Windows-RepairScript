@@ -755,7 +755,7 @@ function renderSchedule(){
   for(let i=1;i<=31;i++) domOpts+='<option value="'+i+'">'+i+'.</option>';
   cards.innerHTML=
     '<div class="sched-wrap">'+
-      '<div class="rp-note">'+svg('calendar')+'<div>Die geplante Wartung läuft <b>automatisch im Hintergrund</b> (mit Administratorrechten) und meldet sich danach per Benachrichtigung. Unten lässt sich einstellen, <b>wann</b> sie läuft und <b>was</b> sie erledigt – ohne Änderung gilt der bewährte Standard. Ist die App gerade geöffnet, wird der Termin übersprungen.</div></div>'+
+      '<div class="rp-note">'+svg('calendar')+'<div>Die geplante Wartung läuft <b>automatisch im Hintergrund</b> (mit Administratorrechten) und meldet sich danach per Benachrichtigung. Unten lässt sich einstellen, <b>wann</b> sie läuft und <b>was</b> sie erledigt – ohne Änderung gilt der bewährte Standard. Ist die App zum Termin gerade geöffnet, läuft die Wartung sichtbar direkt in der App (bzw. sobald eine laufende Aktion fertig ist).</div></div>'+
       '<div id="sched-status" class="sched-status"><div class="as-loading">Status wird geladen …</div></div>'+
       '<div class="set-card">'+
         '<div class="set-title" style="margin-bottom:14px">Wann? – Zeitplan</div>'+

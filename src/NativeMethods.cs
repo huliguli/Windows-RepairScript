@@ -13,6 +13,27 @@ namespace WartungsToolbox
         [DllImport("kernel32.dll")]
         public static extern uint GetOEMCP();
 
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        static extern uint RegisterWindowMessage(string message);
+
+        [DllImport("user32.dll")]
+        public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+        // Synchron mit Timeout: Rueckgabe + lpdwResult zeigen, ob der Empfaenger die
+        // Nachricht WIRKLICH verarbeitet hat (Handshake). PostMessage allein meldet
+        // auch dann Erfolg, wenn die Nachricht verworfen wird (UIPI) oder eine alte
+        // App-Version sie gar nicht kennt.
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam,
+                                                       uint flags, uint timeoutMs, out IntPtr result);
+        public const uint SMTO_NORMAL = 0x0000;
+        public const uint SMTO_ABORTIFHUNG = 0x0002;
+
+        // Systemweit registrierte Fenster-Nachricht: der --auto-Prozess uebergibt damit
+        // den geplanten Wartungslauf an eine bereits offene App-Instanz (gleicher String
+        // in beiden Prozessen => gleiche Message-ID).
+        public static readonly uint WM_WW_RUNAUTO = RegisterWindowMessage("WindowsWartung.RunAuto");
+
         // Dunkle Titelleiste unter Windows 10/11
         public static void UseDarkTitleBar(IntPtr hwnd)
         {

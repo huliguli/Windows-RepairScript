@@ -880,6 +880,38 @@ namespace WartungsToolbox
             if (k != LogKind.Bad && _pendingPost != "none") ScheduleShutdown();
             _pendingPost = "none";
             Notify(title, message, k);
+            // Kam waehrend des Laufs ein geplanter Wartungs-Trigger, jetzt nachholen.
+            if (_autoRunPending) { _autoRunPending = false; RunScheduledJobsNow(); }
+        }
+
+        // ---------- Geplante Wartung, an die offene App uebergeben (--auto -> WM_WW_RUNAUTO) ----------
+        bool _autoRunPending;
+
+        // Rueckgabe true = Lauf uebernommen (gestartet oder fuer direkt danach vorgemerkt).
+        // false (z. B. UI noch nicht bereit) laesst den --auto-Prozess still selbst laufen.
+        bool OnScheduledRunRequested()
+        {
+            if (_runner == null) return false;
+            if (_runner.Running)
+            {
+                // Laufende Aktion nicht stoeren - die Wartung startet direkt danach.
+                if (!_autoRunPending)
+                {
+                    _autoRunPending = true;
+                    Log("●  Geplante Wartung wartet, bis die laufende Aktion abgeschlossen ist.", LogKind.Warn);
+                }
+                return true;
+            }
+            RunScheduledJobsNow();
+            return true;
+        }
+
+        void RunScheduledJobsNow()
+        {
+            List<Job> jobs = new List<Job>();
+            jobs.Add(new Job { Title = "Geplante Wartung", Steps = Catalog.AutoSet(Scheduler.ReadActions()) });
+            Log("●  Geplante Wartung wird jetzt automatisch ausgeführt (Zeitplan).", LogKind.Warn);
+            _runner.RunJobs("Geplante Wartung", jobs);
         }
 
         List<Step> BuildSteps(MaintenanceAction a, bool restore)
@@ -1273,6 +1305,13 @@ namespace WartungsToolbox
         // ---------- Rahmenloses Fenster: Größe ändern ----------
         protected override void WndProc(ref Message m)
         {
+            // Geplanter Wartungslauf, vom --auto-Prozess an diese offene Instanz uebergeben.
+            // Result 1 = uebernommen (Handshake); sonst faellt --auto auf den stillen Lauf zurueck.
+            if (Native.WM_WW_RUNAUTO != 0 && m.Msg == (int)Native.WM_WW_RUNAUTO)
+            {
+                m.Result = OnScheduledRunRequested() ? (IntPtr)1 : IntPtr.Zero;
+                return;
+            }
             const int WM_NCHITTEST = 0x84;
             if (m.Msg == WM_NCHITTEST && WindowState == FormWindowState.Normal)
             {

@@ -14,13 +14,18 @@ namespace WartungsToolbox
     {
         public static void Run()
         {
-            // Nicht laufen, wenn der Nutzer die App gerade offen hat (sichtbares Fenster) -> Termin auslassen.
-            if (InteractiveInstanceRunning())
+            // Ist die App gerade offen, wird der Lauf an sie uebergeben und dort sichtbar
+            // ausgefuehrt (verhindert zwei parallele DISM/SFC-Instanzen). Handshake per
+            // SendMessageTimeout: Nur wenn die App mit 1 antwortet, hat sie den Lauf
+            // WIRKLICH uebernommen - sonst (alte Version, blockierte Nachricht,
+            // haengendes Fenster) laeuft die Wartung hier still im Hintergrund weiter.
+            IntPtr win = FindInteractiveWindow();
+            if (win != IntPtr.Zero)
             {
-                Notify("Wartung verschoben",
-                    "Die App ist gerade geoeffnet - die geplante Wartung wird beim naechsten Termin nachgeholt.",
-                    ToolTipIcon.Info);
-                return;
+                IntPtr res;
+                IntPtr ok = Native.SendMessageTimeout(win, Native.WM_WW_RUNAUTO, IntPtr.Zero, IntPtr.Zero,
+                                                      Native.SMTO_NORMAL | Native.SMTO_ABORTIFHUNG, 5000, out res);
+                if (ok != IntPtr.Zero && res == (IntPtr)1) return; // App fuehrt den Lauf sichtbar aus
             }
 
             // Gegen doppelten Trigger in derselben Sitzung absichern.
@@ -48,19 +53,19 @@ namespace WartungsToolbox
             }
         }
 
-        static bool InteractiveInstanceRunning()
+        static IntPtr FindInteractiveWindow()
         {
             try
             {
                 int me = Process.GetCurrentProcess().Id;
                 foreach (Process pr in Process.GetProcessesByName("WindowsWartung"))
                 {
-                    try { if (pr.Id != me && pr.MainWindowHandle != IntPtr.Zero) return true; }
+                    try { if (pr.Id != me && pr.MainWindowHandle != IntPtr.Zero) return pr.MainWindowHandle; }
                     catch { }
                 }
             }
             catch { }
-            return false;
+            return IntPtr.Zero;
         }
 
         static int RunSilent(Step s)
