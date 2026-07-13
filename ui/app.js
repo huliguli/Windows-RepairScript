@@ -109,6 +109,14 @@ const ACTIONS = [
 ];
 const byId = id => ACTIONS.find(a => a.id === id);
 
+// Kurze Laien-Einordnung oben in den Werkzeug-Kategorien (ehrlich, ohne Übertreibung)
+const CAT_NOTES = {
+  'Reparieren':'Werkzeuge für ein Windows, das Probleme macht – bei Abstürzen, Fehlermeldungen oder hängenden Updates. Persönliche Dateien werden dabei nicht angerührt. Im Zweifel ist die <b>Komplett-Reparatur</b> die richtige Wahl; sie darf ruhig mehrere Minuten dauern.',
+  'Netzwerk':'Hilfe bei Internet-Problemen. Sinnvolle Reihenfolge: erst <b>DNS-Cache leeren</b>, dann <b>IP-Adresse erneuern</b> – und erst wenn das nicht hilft, der <b>Netzwerk-Reset</b> (danach den PC neu starten). Die <b>Netzwerk-Diagnose</b> zeigt vorher, wo es hakt.',
+  'Aufräumen':'Schafft Speicherplatz und entfernt Datenmüll. Eigene Dokumente, Bilder und Programme bleiben unberührt – nur der <b>Papierkorb</b> wird, falls gewählt, endgültig geleert.',
+  'Diagnose':'Nur nachsehen, nichts verändern: Diese Aktionen prüfen den PC und berichten. Ideal als erster Schritt, wenn sich der PC komisch verhält – die Ergebnisse erscheinen unten in der Ausgabe.',
+};
+
 // Erklärungen in einfacher Sprache (für Personen ohne Vorwissen)
 const INFO = {
   0:'Lässt Windows seine eigenen Dateien überprüfen und beschädigte automatisch ersetzen. Das gute Erste-Hilfe-Programm, wenn der PC spinnt, abstürzt oder sich komisch verhält. Dauert ein paar Minuten.',
@@ -308,6 +316,12 @@ function selectCat(name){
   $('#cat-title').textContent=name;
   $('#cat-hint').textContent=(list.length+specials.length)+' Aktionen · klicken zum Ausführen';
   cards.innerHTML='';
+  if(CAT_NOTES[name]){
+    const n=document.createElement('div');
+    n.className='rp-note cat-note';
+    n.innerHTML=svg('help')+'<div>'+CAT_NOTES[name]+'</div>';
+    cards.appendChild(n);
+  }
   list.forEach((a,i)=>{
     const el=document.createElement('div');
     el.className='card'+(a.danger?' danger':'');
@@ -1154,7 +1168,10 @@ function setUpdatePhase(phase){
   else if(phase==='restart') umSet('Neustart …','Das Programm startet sich neu …',{progress:true});
 }
 function setUpdateError(msg){
-  umSet('Update fehlgeschlagen', (msg||'Unbekannter Fehler'), {buttons:true});
+  umSet('Update fehlgeschlagen',
+    esc(msg||'Unbekannter Fehler')+
+    '<br><span class="um-hint">Häufigste Ursache: keine oder gestörte Internetverbindung. Einfach später erneut versuchen – oder das Update unten über den Browser laden.</span>',
+    {buttons:true});
   $('#um-later').textContent='Schließen';
   $('#um-go').textContent='Im Browser öffnen';
   $('#um-later').onclick=()=>hideUpdateModal();

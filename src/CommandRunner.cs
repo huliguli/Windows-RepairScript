@@ -18,6 +18,21 @@ namespace WartungsToolbox
         volatile Process _current;
         volatile bool _cancel;
 
+        // Puffer der letzten Ausgabezeilen des aktuellen Steps - Grundlage fuer die
+        // laienverstaendliche Deutung (Explain.ForOutput). Reader-Callbacks laufen
+        // auf Threadpool-Threads -> Zugriff nur unter _tailLock.
+        readonly object _tailLock = new object();
+        StringBuilder _tail = new StringBuilder();
+        void TailAdd(string line)
+        {
+            if (string.IsNullOrEmpty(line)) return;
+            lock (_tailLock) { if (_tail.Length < 6000) _tail.AppendLine(line); }
+        }
+        string TailText()
+        {
+            lock (_tailLock) { return _tail.ToString(); }
+        }
+
         public bool Running { get; private set; }
 
         public CommandRunner(Control ui, Action<string, LogKind> log, Action<bool> onState,
@@ -100,7 +115,7 @@ namespace WartungsToolbox
                 }
                 else if (problem)
                 {
-                    Log(string.Format("●  Fertig mit Hinweisen ({0:0.0}s) – siehe ExitCodes oben.", sw.Elapsed.TotalSeconds), LogKind.Warn);
+                    Log(string.Format("●  Fertig, aber nicht alles hat geklappt ({0:0.0}s) – die gelben Hinweise oben erklären Ursache und Lösung.", sw.Elapsed.TotalSeconds), LogKind.Warn);
                     fk = LogKind.Warn; fmsg = "Mit Hinweisen abgeschlossen";
                 }
                 else
@@ -133,6 +148,7 @@ namespace WartungsToolbox
         int RunStep(Step s)
         {
             Log("›  " + s.File + " " + s.Args, LogKind.Dim);
+            lock (_tailLock) { _tail = new StringBuilder(); }
             try
             {
                 if (s.Detached)
@@ -162,7 +178,7 @@ namespace WartungsToolbox
                     proc.StartInfo = psi;
                     proc.ErrorDataReceived += delegate (object o, DataReceivedEventArgs e)
                     {
-                        if (!string.IsNullOrEmpty(e.Data)) Log(e.Data, LogKind.Normal);
+                        if (!string.IsNullOrEmpty(e.Data)) { TailAdd(e.Data); Log(e.Data, LogKind.Normal); }
                     };
                     // Fortschritts-Schritte (DISM/SFC) werden zeichenweise gelesen (siehe ReadWithProgress);
                     // sonst zeilenweise asynchron.
@@ -170,7 +186,7 @@ namespace WartungsToolbox
                     {
                         proc.OutputDataReceived += delegate (object o, DataReceivedEventArgs e)
                         {
-                            if (e.Data != null) Log(e.Data, LogKind.Normal);
+                            if (e.Data != null) { TailAdd(e.Data); Log(e.Data, LogKind.Normal); }
                         };
                     }
                     _current = proc;
@@ -181,7 +197,30 @@ namespace WartungsToolbox
                     proc.WaitForExit();
                     int code = proc.ExitCode;
                     _current = null;
-                    Log("   ↳ ExitCode " + code, (code == 0 || s.IgnoreExit) ? LogKind.Dim : LogKind.Bad);
+
+                    if (code == 3010 && !s.IgnoreExit)
+                    {
+                        // Dokumentierte Windows-Semantik: 3010 = ERROR_SUCCESS_REBOOT_REQUIRED.
+                        // Vorher wurde das faelschlich als Fehler gewertet.
+                        Log("   ↳ ExitCode 3010 – Erfolgreich; Windows braucht einen Neustart, um die Änderung abzuschließen.", LogKind.Good);
+                        code = 0;
+                    }
+                    else
+                    {
+                        string hex = code < 0 ? string.Format(" (0x{0:X8})", code) : "";
+                        Log("   ↳ ExitCode " + code + hex, (code == 0 || s.IgnoreExit) ? LogKind.Dim : LogKind.Bad);
+                    }
+
+                    // Laienverstaendliche Deutung: erst die Tool-Ausgabe (SFC/DISM-Ergebnissaetze),
+                    // dann - falls der Schritt fehlschlug - der bekannte Exit-Code.
+                    bool oGood;
+                    string oxp = Explain.ForOutput(s.File, TailText(), out oGood);
+                    if (oxp != null) Log((oGood ? "   ✔  " : "   ●  ") + oxp, oGood ? LogKind.Good : LogKind.Warn);
+                    if (code != 0 && !s.IgnoreExit)
+                    {
+                        string xp = Explain.ForExit(code);
+                        if (xp != null) Log("   ●  " + xp, LogKind.Warn);
+                    }
                     return code;
                 }
             }
@@ -222,7 +261,7 @@ namespace WartungsToolbox
                 return pct;
             }
             string t = line.TrimEnd();
-            if (t.Length > 0) Log(t, LogKind.Normal);
+            if (t.Length > 0) { TailAdd(t); Log(t, LogKind.Normal); }
             return lastPct;
         }
 

@@ -1,5 +1,18 @@
 # Changelog
 
+## [6.6] - 2026-07-13
+
+### Neu
+- **Fehlermeldungen, die weiterhelfen.** Schlägt ein Schritt fehl, erklärt die Ausgabe jetzt bekannte Fehler in einfacher Sprache und nennt einen konkreten Lösungsweg – z. B. Zugriff verweigert (Virenschutz/Datei in Benutzung), deaktivierter Windows-Dienst (mit Weg über services.msc) oder die DISM-Quellfehler 0x800F081F/0x800F0906/0x800F0954 (Internet prüfen → Windows-Update reparieren → erneut). Gedeutet werden **ausschließlich offiziell dokumentierte** Windows-Fehlercodes – unbekannte Codes bleiben bewusst unkommentiert, statt etwas zu erfinden.
+- **SFC/DISM-Ergebnisse verständlich zusammengefasst.** Nach dem Lauf erscheint eine Klartext-Zeile („Verständlich gesagt: …") auf Basis der offiziellen Meldungstexte: alles in Ordnung / repariert (mit Neustart-Empfehlung) / teilweise nicht reparierbar – inklusive des offiziell empfohlenen nächsten Schritts (erst DISM RestoreHealth, dann SFC erneut).
+- **Erklärboxen in den Werkzeug-Kategorien.** Reparieren, Netzwerk, Aufräumen und Diagnose starten jetzt mit einer kurzen Laien-Einordnung (was passiert hier, was ist sicher, sinnvolle Reihenfolge).
+
+### Behoben
+- **Exit-Code 3010 wird korrekt als Erfolg gewertet.** 3010 bedeutet offiziell „erfolgreich, Neustart erforderlich" – bisher wurde das fälschlich als Fehler angezeigt.
+- Negative Fehlercodes werden zusätzlich als Hex-Code angezeigt (z. B. 0x800F081F) – so, wie man sie auch im Netz nachschlagen würde.
+- Beim übersprungenen Wiederherstellungspunkt erklärt die Meldung jetzt den Grund (Windows legt standardmäßig höchstens einen Punkt pro 24 Stunden an).
+- Der Update-Fehlerdialog nennt die häufigste Ursache (Internetverbindung) statt nur des technischen Fehlertexts.
+
 ## [6.5.1] - 2026-07-13
 
 ### Behoben

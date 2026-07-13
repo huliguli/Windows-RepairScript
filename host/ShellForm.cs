@@ -991,7 +991,7 @@ namespace WartungsToolbox
             return new Step
             {
                 File = "powershell.exe",
-                Args = "-NoProfile -ExecutionPolicy Bypass -Command \"try { Checkpoint-Computer -Description 'Wartungstool' -RestorePointType MODIFY_SETTINGS -EA Stop; 'Wiederherstellungspunkt erstellt.' } catch { 'Wiederherstellungspunkt uebersprungen: ' + $_.Exception.Message }\""
+                Args = "-NoProfile -ExecutionPolicy Bypass -Command \"try { Checkpoint-Computer -Description 'Wartungstool' -RestorePointType MODIFY_SETTINGS -EA Stop; 'Wiederherstellungspunkt erstellt.' } catch { 'Wiederherstellungspunkt uebersprungen: ' + $_.Exception.Message + ' (Hinweis: Windows legt standardmaessig hoechstens einen Punkt pro 24 Stunden an - der vorhandene ist dann noch aktuell.)' }\""
             };
         }
 

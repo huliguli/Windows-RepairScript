@@ -27,7 +27,7 @@ try {
         'host\Program.cs','host\ShellForm.cs','host\Autostart.cs',
         'src\ActionCatalog.cs','src\MaintenanceAction.cs','src\CommandRunner.cs',
         'src\NativeMethods.cs','src\History.cs','src\RestorePoints.cs','src\PowerPlans.cs',
-        'src\AppxCleaner.cs','src\Scheduler.cs','src\AutoRunner.cs','src\AssemblyInfo.cs'
+        'src\AppxCleaner.cs','src\Explain.cs','src\Scheduler.cs','src\AutoRunner.cs','src\AssemblyInfo.cs'
     )
 
     $argList = @(
