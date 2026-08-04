@@ -1,5 +1,63 @@
 # Changelog
 
+## [7.1.0] - 2026-08-04
+
+Zwei neue Ansichten beantworten Fragen, die das Programm bisher offengelassen hat.
+
+### Neu
+
+- **„Wo steckt der Platz?“** Bisher stand im Ergebnis „machen Sie Platz frei“, ohne zu
+  sagen, wo. Jetzt zeigt eine eigene Ansicht beides: was sich gefahrlos wegräumen lässt,
+  jede Kategorie einzeln mit ihrer Größe, und daneben die größten Ordner und Dateien in
+  Ihren eigenen Bereichen. Sie ist über die Bereichszeile „Freier Speicherplatz“, über den
+  Ratschlag im Ergebnis und über „Alle Werkzeuge“ erreichbar.
+- **Aufräumen mit Vorschau.** Sie sehen zuerst, was wie viel bringt, und wählen dann aus.
+  Hinterher steht dort, wie viel wirklich frei geworden ist, nicht wie viel erhofft war.
+  Der Papierkorb ist nie vorangehakt: Was darin liegt, ist danach endgültig weg. Der Ordner
+  „Downloads“ wird gar nicht erst angeboten, weil dort Dateien liegen, die Sie behalten
+  möchten.
+- **„Einträge, die ins Leere zeigen“.** Windows führt eine Liste, in der Programme
+  hinterlegen, wo ihre Dateien liegen. Wird ein Programm entfernt, bleibt der Eintrag
+  manchmal stehen. Gemeldet wird ausschließlich, was sich nachweisen lässt: Der Eintrag
+  nennt eine Datei, und die gibt es nicht mehr. Vor dem Entfernen legt das Programm einen
+  Sicherungspunkt an und schreibt zusätzlich eine Sicherungsdatei, mit der sich jeder
+  einzelne Eintrag per Doppelklick zurückholen lässt. Lässt sich die Sicherung nicht
+  schreiben, wird nichts verändert.
+
+### Gut zu wissen
+
+Das Aufräumen der Einträge macht Ihren PC nicht schneller, und die Ansicht behauptet das
+auch nicht. Diese Einträge kosten so gut wie keinen Platz und bremsen nichts. Was es
+bringt, ist Ordnung. Deshalb ist dort auch nichts vorausgewählt.
+
+### Sicherer
+
+- **Ein Eintrag gilt erst als tot, wenn auch der Weg zum Deinstallieren tot ist.** Auf
+  einem echten Rechner nachgemessen: Von neun gemeldeten Programmen waren drei fälschlich
+  dabei. Bei einem Chipsatz-Paket zeigte der eingetragene Ordner ins Leere, weil es der
+  längst gelöschte Entpack-Ordner war, während die Deinstallation einwandfrei funktioniert.
+  Wer solche Einträge entfernt, nimmt sich die Möglichkeit, das Paket je wieder sauber
+  loszuwerden. Diese drei Fälle werden jetzt übersprungen.
+- **Nur fest eingebaute Laufwerke werden beurteilt.** Bei USB-Sticks, Speicherkarten und
+  Netzlaufwerken sagt ein vorhandener Laufwerksbuchstabe nichts: Windows vergibt die
+  Buchstaben in der Reihenfolge des Ansteckens, dahinter kann ein anderer Datenträger
+  liegen als früher.
+- **Die Oberfläche kann keinen Pfad vorgeben.** Sie schickt nur Kennungen. Welcher Ordner
+  und welcher Eintrag dahintersteckt, entscheidet allein das Programm.
+- **Ohne vollständige Sicherung wird nichts entfernt, und zwar wörtlich.** Lässt sich auch
+  nur einer der betroffenen Einträge nicht sichern, bricht der ganze Vorgang ab und es
+  bleibt alles, wie es war.
+- **Der Papierkorb wird nur dort geleert, wo er vorher auch gezeigt wurde.** Auf diesem
+  Rechner waren das 5,1 GB auf allen fest eingebauten Laufwerken statt 1,3 GB auf dem
+  Windows-Laufwerk. Vorher wurde nur das Windows-Laufwerk gemessen, geleert aber jedes
+  Laufwerk einschließlich angesteckter USB-Datenträger.
+- **Beim Aufräumen wird auf jeder Ebene geprüft, nicht nur auf der obersten.** Verweise auf
+  andere Ordner werden als Verweis entfernt, niemals ihr Ziel, und Dateien, die nur
+  stellvertretend für die Cloud dastehen, bleiben unangetastet.
+- **Beim Entfernen von Einträgen bleibt das Fenster stehen.** Vorher ließ es sich mitten im
+  Vorgang schließen, obwohl der Bildschirm ausdrücklich sagt, dass sich das nicht mehr
+  anhalten lässt.
+
 ## [7.0.3] - 2026-08-04
 
 Erste signierte Ausgabe.

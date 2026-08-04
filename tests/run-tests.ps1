@@ -261,8 +261,10 @@ Test-Result "Kein fest verdrahtetes Zertifikat-Passwort" ($hits.Count -eq 0) $hi
 # Die Pruefsumme muss ueber den Dateinamen zugeordnet werden. Seit das Release zwei
 # .sha256-Dateien enthaelt (ZIP und Installer), entscheidet sonst die Reihenfolge der
 # API darueber, wogegen geprueft wird - heute zufaellig richtig, morgen vielleicht nicht.
+# Achtung: Hier stand $shellText3 - die Variable wird aber erst weiter unten gefuellt.
+# Damit lief diese Haelfte der Pruefung gegen $null und konnte nie anschlagen.
 $hits = @()
-if ($shellText3 -match 'EndsWith\("\.sha256"') {
+if ($shellText2 -match 'EndsWith\("\.sha256"') {
     $hits += "Der Updater ordnet die Pruefsumme wieder ueber die Endung statt ueber den Dateinamen zu"
 }
 if ($shellText2 -notmatch '\+ "\.sha256"') {
@@ -315,6 +317,100 @@ if (-not $dotnet) {
     }
 }
 Test-Result "Signatur-Bindung funktioniert gegen echte Dateien" ($hits.Count -eq 0) $hits
+
+# Die Registrierungs-Pruefung darf NUR melden, was sich nachweisen laesst. Ein Fehlalarm
+# kostet hier mehr als bei jeder anderen Funktion: wer einen Deinstallations-Eintrag
+# entfernt, nimmt dem Nutzer die Moeglichkeit, das Programm je wieder loszuwerden.
+#
+# Am 4. August 2026 auf einem echten Rechner gemessen: 3 von 9 Funden der Kategorie
+# "Programme, die es nicht mehr gibt" waren falsch, weil nur der InstallLocation-Ordner
+# geprueft wurde und nicht der Weg zum Deinstallieren. Die Probe faehrt den echten Lauf
+# und prueft jeden Fund gegen die Festplatte gegen.
+$hits = @()
+if (-not $csc -or -not $refDir) {
+    $hits += "Compiler oder Referenzassemblies nicht gefunden - Registrierungs-Probe uebersprungen"
+} else {
+    $exe = Join-Path $env:TEMP 'WW_RegistryProbe.exe'
+    $refs = @('mscorlib.dll','System.dll','System.Core.dll','System.Drawing.dll',
+              'System.Windows.Forms.dll','System.Web.Extensions.dll') |
+            ForEach-Object { "/r:$($refDir.FullName)\$_" }
+    $bauArgs = @($csc.FullName,'/nologo','/nostdlib+','/target:exe','/platform:x64',
+                 "/out:$exe",'/codepage:65001','/langversion:latest') + $refs +
+               @((Join-Path $root 'src\RegistryScan.cs'), (Join-Path $root 'src\AppLog.cs'),
+                 (Join-Path $root 'src\Shell.cs'), (Join-Path $root 'src\NativeMethods.cs'),
+                 (Join-Path $root 'tests\RegistryProbe.cs'))
+    $bauOut = & dotnet @bauArgs 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        $hits += "Probe liess sich nicht uebersetzen: " + (($bauOut | Select-Object -First 2) -join ' | ')
+    } else {
+        & $exe
+        if ($LASTEXITCODE -ne 0) { $hits += "mindestens eine Teilpruefung der Registrierungs-Suche ist rot" }
+        Remove-Item $exe -ErrorAction SilentlyContinue
+    }
+}
+Test-Result "Registrierungs-Suche meldet nur Nachweisbares" ($hits.Count -eq 0) $hits
+
+# Der Weg zum Deinstallieren MUSS mitgeprueft werden. Ohne diese Bedingung galt das
+# AMD-Chipsatzpaket als "Programm, das es nicht mehr gibt", obwohl seine Deinstallation
+# ueber MsiExec einwandfrei laeuft. Hier wird abgesichert, dass die Bedingung bleibt.
+$regText = [IO.File]::ReadAllText((Join-Path $root 'src\RegistryScan.cs'), [Text.Encoding]::UTF8)
+$hits = @()
+if ($regText -notmatch 'DeinstallationTot') {
+    $hits += "Die Pruefung des Deinstallations-Wegs wurde entfernt"
+}
+if ($regText -notmatch 'DriveType\.Fixed') {
+    $hits += "Es werden wieder Wechseldatentraeger und Netzlaufwerke beurteilt"
+}
+if ($regText -notmatch 'DarfEntferntWerden') {
+    $hits += "Das zweite Schloss vor dem Entfernen wurde entfernt"
+}
+Test-Result "Schutzregeln der Registrierungs-Suche sind vorhanden" ($hits.Count -eq 0) $hits
+
+# Der Loeschweg beim Speicher darf NIE einen Pfad aus der Oberflaeche entgegennehmen.
+# Die Oberflaeche schickt Kennungen, welcher Ordner dahintersteckt entscheidet der
+# Quelltext. Und der Downloads-Ordner ist keine Kategorie: genau daran ist Razer Cortex
+# gescheitert (Fotos und Videos geloescht, weil sie in Downloads lagen).
+$storText = [IO.File]::ReadAllText((Join-Path $root 'src\StorageScan.cs'), [Text.Encoding]::UTF8)
+$scanText = [IO.File]::ReadAllText((Join-Path $root 'host\ScanFlow.cs'), [Text.Encoding]::UTF8)
+$hits = @()
+if ($storText -notmatch 'Aufraeumen\(IEnumerable<string> schluessel') {
+    $hits += "StorageScan.Aufraeumen nimmt nicht mehr nur Kennungen entgegen"
+}
+$aufraeumTeil = [regex]::Match($storText, '(?s)public static object Aufraeumen.*?^        \}', 'Multiline')
+if ($aufraeumTeil.Success -and $aufraeumTeil.Value -match 'Downloads') {
+    $hits += "Der Downloads-Ordner ist wieder eine aufraeumbare Kategorie"
+}
+if ($scanText -notmatch 'erlaubt\.Contains\(k\)') {
+    $hits += "host/ScanFlow.cs prueft die Kennungen nicht mehr gegen das angezeigte Ergebnis"
+}
+Test-Result "Aufraeumen kennt nur eigene Kennungen, nie fremde Pfade" ($hits.Count -eq 0) $hits
+
+# Die eine Frage, die beim Loeschen zaehlt: Kann LeereOrdner ueber eine Abzweigung in einen
+# FREMDEN Ordner laufen? Daran sind reihenweise "PC-Reiniger" gescheitert. Die Probe baut
+# den Fall im Temp-Ordner nach und sieht nach, was ueberlebt hat.
+$hits = @()
+if (-not $csc -or -not $refDir) {
+    $hits += "Compiler oder Referenzassemblies nicht gefunden - Speicher-Probe uebersprungen"
+} else {
+    $exe = Join-Path $env:TEMP 'WW_StorageProbe.exe'
+    $refs = @('mscorlib.dll','System.dll','System.Core.dll','System.Drawing.dll',
+              'System.Windows.Forms.dll','System.Web.Extensions.dll') |
+            ForEach-Object { "/r:$($refDir.FullName)\$_" }
+    $bauArgs = @($csc.FullName,'/nologo','/nostdlib+','/target:exe','/platform:x64',
+                 "/out:$exe",'/codepage:65001','/langversion:latest') + $refs +
+               @((Join-Path $root 'src\StorageScan.cs'), (Join-Path $root 'src\AppLog.cs'),
+                 (Join-Path $root 'src\Shell.cs'), (Join-Path $root 'src\NativeMethods.cs'),
+                 (Join-Path $root 'tests\StorageProbe.cs'))
+    $bauOut = & dotnet @bauArgs 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        $hits += "Probe liess sich nicht uebersetzen: " + (($bauOut | Select-Object -First 2) -join ' | ')
+    } else {
+        & $exe
+        if ($LASTEXITCODE -ne 0) { $hits += "mindestens eine Teilpruefung des Loeschwegs ist rot" }
+        Remove-Item $exe -ErrorAction SilentlyContinue
+    }
+}
+Test-Result "Aufraeumen laeuft nicht ueber Abzweigungen hinaus" ($hits.Count -eq 0) $hits
 
 Write-Host "`nFunktionsumfang" -ForegroundColor Cyan
 

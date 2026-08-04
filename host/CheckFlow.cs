@@ -34,7 +34,10 @@ namespace WartungsToolbox
 
         void StartCheck()
         {
-            if (FlowRunning || (_runner != null && _runner.Running)) return;
+            // ScanRunning gehoert mit in die Sperre: sonst kann der Nutzer waehrend eines
+            // laufenden Aufraeumens hierher wechseln, dort "Abbrechen" druecken - und das
+            // Abbrechen trifft ueber CancelScan den Suchlauf, den er gar nicht gemeint hat.
+            if (FlowRunning || ScanRunning || (_runner != null && _runner.Running)) return;
             _flowCancel = false;
             _filesState = Diagnostics.Unknown;
             _filesSummary = null;
@@ -81,7 +84,7 @@ namespace WartungsToolbox
 
         void StartFix()
         {
-            if (FlowRunning || (_runner != null && _runner.Running)) return;
+            if (FlowRunning || ScanRunning || (_runner != null && _runner.Running)) return;
             _flowCancel = false;
 
             AppLog.Info("Reparatur gestartet.");

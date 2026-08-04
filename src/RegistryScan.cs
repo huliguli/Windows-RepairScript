@@ -53,6 +53,30 @@ namespace WartungsToolbox
             }
         }
 
+        /// <summary>
+        /// Einordnung je Kategorie, in Alltagssprache: was ein Fund bedeutet und was das
+        /// Entfernen bringt. Die Texte stehen hier und nicht in der Oberflaeche, damit
+        /// Fund und Erklaerung an derselben Stelle gepflegt werden.
+        ///
+        /// Bewusst ohne Angstmache und ohne Versprechen. Kein Eintrag hier macht den PC
+        /// schneller; das zu behaupten ist das Erkennungsmerkmal unserioeser Programme.
+        /// </summary>
+        public static readonly Dictionary<string, string> KategorieHinweise = new Dictionary<string, string>
+        {
+            { "Programme, die es nicht mehr gibt",
+              "Diese Programme stehen noch in der Windows-Liste „Apps und Features“, obwohl weder ihr Ordner noch ihr Deinstallations-Programm vorhanden ist. Das Entfernen räumt die Liste auf." },
+            { "Startprogramme ins Leere",
+              "Windows versucht bei jeder Anmeldung, diese Programme zu starten. Weil die Dateien fehlen, geht das jedes Mal schief." },
+            { "Programm-Verweise ins Leere",
+              "Hier merkt sich Windows, wo ein Programm liegt, damit es sich über seinen Namen starten lässt. Die Datei fehlt." },
+            { "Verweise auf fehlende Programmteile",
+              "Windows notiert sich, welche Dateien mehrere Programme gemeinsam benutzen. Hier stehen Notizen zu Dateien, die es nicht mehr gibt. Sie stören nichts, sie stehen nur noch da." },
+            { "Öffnen-mit-Einträge ins Leere",
+              "Einträge zum Öffnen von Dateien, die auf ein fehlendes Programm zeigen. Sie sorgen dafür, dass im Menü „Öffnen mit“ etwas angeboten wird, das nicht funktioniert." },
+            { "Merkzettel zu alten Programmen",
+              "Reine Merkzettel: Windows hat sich die Namen von Programmen gemerkt, die es nicht mehr gibt. Das bremst nichts und belegt keinen nennenswerten Platz. Aufräumen ist hier Geschmackssache." },
+        };
+
         // Aufrufe, aus denen sich kein Dateipfad zuverlaessig ablesen laesst.
         static readonly string[] Unklar =
         {
@@ -60,38 +84,50 @@ namespace WartungsToolbox
             "explorer.exe", "control.exe", "mshta", "wscript", "cscript",
         };
 
+        // Zusaetzliche Startpunkte, ueber die sich ein Programm deinstallieren laesst.
+        // QuietUninstallString steht oft allein da, wenn die normale Fassung fehlt.
+        static readonly string[] Deinstallationswege = { "QuietUninstallString", "UninstallString" };
+
         public static List<Fund> Run(Action<string> fortschritt, Func<bool> abbruch)
         {
             var funde = new List<Fund>();
             void Melde(string t) { if (fortschritt != null) fortschritt(t); }
             bool Stop() { return abbruch != null && abbruch(); }
 
+            // Die Kennungen werden auf JEDEM Rueckweg vergeben, auch beim Abbruch. Vorher
+            // geschah das nur ganz am Ende: ein abgebrochener Lauf lieferte Funde ohne
+            // Kennung, und der naechste Zugriff darauf riss den Oberflaechen-Thread mit.
+            List<Fund> Fertig()
+            {
+                for (int i = 0; i < funde.Count; i++) funde[i].Id = "r" + i;
+                return funde;
+            }
+
             Melde("Deinstallations-Einträge");
             SucheDeinstallation(funde);
-            if (Stop()) return funde;
+            if (Stop()) return Fertig();
 
             Melde("Startprogramme");
             SucheAutostart(funde);
-            if (Stop()) return funde;
+            if (Stop()) return Fertig();
 
             Melde("Anwendungspfade");
             SucheAppPaths(funde);
-            if (Stop()) return funde;
+            if (Stop()) return Fertig();
 
             Melde("gemeinsam genutzte Programmteile");
             SucheSharedDlls(funde);
-            if (Stop()) return funde;
+            if (Stop()) return Fertig();
 
             Melde("Dateityp-Verknüpfungen");
             SucheDateitypen(funde);
-            if (Stop()) return funde;
+            if (Stop()) return Fertig();
 
             Melde("zuletzt geöffnete Programme");
             SucheMuiCache(funde);
 
-            for (int i = 0; i < funde.Count; i++) funde[i].Id = "r" + i;
             AppLog.Info("Registrierung geprueft: " + funde.Count + " tote Eintraege gefunden.");
-            return funde;
+            return Fertig();
         }
 
         // ---------------------------------------------------------------- Kategorien
@@ -119,26 +155,36 @@ namespace WartungsToolbox
                             string anzeige = e.GetValue("DisplayName") as string;
                             if (string.IsNullOrEmpty(anzeige)) continue;    // Systemeintrag ohne Namen: Finger weg
 
+                            // Erste und wichtigste Bedingung: der Weg zum Deinstallieren muss
+                            // nachweislich tot sein. Ohne sie war jeder dritte Fund falsch.
+                            if (!DeinstallationTot(e)) continue;
+
                             // Bevorzugt InstallLocation, sonst die Datei aus UninstallString.
                             string ort2 = e.GetValue("InstallLocation") as string;
-                            string ziel = null;
+                            string ziel;
                             if (!string.IsNullOrEmpty(ort2))
                             {
                                 string p = Saeubere(ort2);
-                                if (PruefbarerPfad(p) && !Directory.Exists(p)) ziel = p;
+                                if (!PruefbarerPfad(p)) continue;      // nicht beurteilbar
+                                if (Directory.Exists(p)) continue;     // Ordner da, Programm also auch
+                                ziel = p;
                             }
                             else
                             {
                                 string p = DateiAus(e.GetValue("UninstallString") as string);
-                                if (p != null && !File.Exists(p)) ziel = p;
+                                if (p == null || File.Exists(p)) continue;
+                                ziel = p;
                             }
-                            if (ziel == null) continue;
 
                             funde.Add(new Fund
                             {
                                 Kategorie = "Programme, die es nicht mehr gibt",
                                 Titel = anzeige,
-                                Grund = "Steht in der Liste der installierten Programme, der zugehörige Ordner fehlt aber.",
+                                // Der Grund benennt genau das, was geprueft wurde. Beides
+                                // muss fehlen, sonst waere der Eintrag hier gar nicht.
+                                Grund = "Steht noch in der Liste der installierten Programme. "
+                                      + "Weder der zugehörige Ordner noch das Programm zum "
+                                      + "Deinstallieren sind vorhanden.",
                                 Hive = ort.Name,
                                 Pfad = ort.Pfad + "\\" + unter,
                                 Ziel = ziel,
@@ -147,6 +193,44 @@ namespace WartungsToolbox
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// Fuehrt der Weg zum Deinstallieren nachweislich ins Leere?
+        ///
+        /// Das ist die Bedingung, an der die Kategorie haengt. Ein fehlender
+        /// Installationsordner allein sagt naemlich WENIG: viele Pakete tragen dort den
+        /// Ordner ein, in den sie sich zum Installieren entpackt haben - und der wird
+        /// danach planmaessig geloescht.
+        ///
+        /// Am 4. August 2026 auf einem echten Rechner nachgemessen: von neun Funden
+        /// waren ohne diese Bedingung drei falsch. Der teuerste war das AMD-Chipsatzpaket.
+        /// Sein InstallLocation zeigt auf den laengst entfernten Entpack-Ordner
+        /// C:\Chipset_Software, die Deinstallation laeuft aber einwandfrei ueber
+        /// MsiExec. Wer den Schluessel entfernt, nimmt dem Nutzer die einzige
+        /// Moeglichkeit, das Paket je wieder sauber loszuwerden. Ebenso bei zwei
+        /// Spielen, deren Deinstallation ueber den Launcher laeuft (Steam, Battle.net):
+        /// deren Programm liegt woanders und ist quicklebendig.
+        ///
+        /// Ergebnis ist true NUR, wenn ein Deinstallations-Weg eingetragen ist UND jeder
+        /// davon eine Datei nennt, die es nicht gibt. Alles Unklare gilt als lebendig.
+        /// </summary>
+        static bool DeinstallationTot(RegistryKey e)
+        {
+            bool einerGenannt = false;
+            foreach (string name in Deinstallationswege)
+            {
+                string befehl = e.GetValue(name) as string;
+                if (string.IsNullOrWhiteSpace(befehl)) continue;
+                einerGenannt = true;
+
+                // DateiAus liefert null bei msiexec, rundll32 und Konsorten, bei Pfaden
+                // auf nicht beurteilbaren Laufwerken und bei allem Unlesbaren. In all
+                // diesen Faellen laesst sich nichts nachweisen - also gilt der Weg als da.
+                string datei = DateiAus(befehl);
+                if (datei == null || File.Exists(datei)) return false;
+            }
+            return einerGenannt;
         }
 
         static void SucheAutostart(List<Fund> funde)
@@ -234,7 +318,8 @@ namespace WartungsToolbox
                     {
                         Kategorie = "Verweise auf fehlende Programmteile",
                         Titel = Path.GetFileName(p),
-                        Grund = "Ein Zähler für eine gemeinsam genutzte Datei, die es nicht mehr gibt.",
+                        Grund = "Windows notiert hier, wie viele Programme diese Datei gemeinsam benutzen. "
+                              + "Die Datei gibt es nicht mehr, die Notiz steht noch da.",
                         Hive = "HKLM",
                         Pfad = pfad,
                         Wert = name,
@@ -244,16 +329,25 @@ namespace WartungsToolbox
             }
         }
 
+        // Entfernt wird ausschliesslich dieser Zweig, nie der ganze Dateityp. Siehe unten.
+        const string ProgIdBefehl = @"\shell\open";
+
         static void SucheDateitypen(List<Fund> funde)
         {
             // Dateiendung -> ProgID -> shell\open\command. Nur melden, wenn die ProgID
             // existiert UND ihr Befehl auf eine fehlende Datei zeigt. Eine fehlende ProgID
             // allein ist KEIN Befund: Windows loest viele Endungen anders auf.
+            //
+            // Entfernt wird NUR der Zweig "shell\open", nicht der ganze Dateityp. Nachgewiesen
+            // ist allein, dass der Befehl zum Oeffnen ins Leere zeigt. Unter der ProgID
+            // haengen daneben Symbol, weitere Befehle (Drucken, Bearbeiten) und Erweiterungen
+            // des Explorers, die niemand geprueft hat und die funktionieren koennen. Die
+            // Loeschung darf nicht breiter sein als der Nachweis, auf dem sie beruht.
             using (RegistryKey hkcr = RegistryKey.OpenBaseKey(RegistryHive.ClassesRoot, RegistryView.Default))
             {
                 foreach (string progId in Namen(hkcr).Where(n => !n.StartsWith(".") && n.IndexOf('.') > 0).Take(4000))
                 {
-                    using (RegistryKey cmd = Oeffne(hkcr, progId + @"\shell\open\command"))
+                    using (RegistryKey cmd = Oeffne(hkcr, progId + ProgIdBefehl + @"\command"))
                     {
                         if (cmd == null) continue;
                         string p = DateiAus(cmd.GetValue("") as string);
@@ -262,9 +356,10 @@ namespace WartungsToolbox
                         {
                             Kategorie = "Öffnen-mit-Einträge ins Leere",
                             Titel = progId,
-                            Grund = "Ein Eintrag zum Öffnen von Dateien verweist auf ein Programm, das fehlt.",
+                            Grund = "Der Eintrag zum Öffnen solcher Dateien ruft ein Programm auf, das fehlt. "
+                                  + "Entfernt wird nur dieser Aufruf, der Dateityp selbst bleibt bestehen.",
                             Hive = "HKCR",
-                            Pfad = progId,
+                            Pfad = progId + ProgIdBefehl,
                             Ziel = p,
                         });
                     }
@@ -303,6 +398,62 @@ namespace WartungsToolbox
 
         // ---------------------------------------------------------------- Entfernen
 
+        // Die Bereiche, die diese Klasse durchsucht - und damit die einzigen, in denen sie
+        // etwas entfernen darf.
+        static readonly string[] ErlaubteWurzeln =
+        {
+            @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+            @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+            @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+            @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run",
+            @"SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce",
+            @"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths",
+            @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths",
+            @"SOFTWARE\Microsoft\Windows\CurrentVersion\SharedDLLs",
+            @"SOFTWARE\Classes\Local Settings\Software\Microsoft\Windows\Shell\MuiCache",
+        };
+
+        /// <summary>
+        /// Zweites Schloss unmittelbar vor dem Eingriff: Der Eintrag muss in einem der
+        /// Bereiche liegen, die diese Klasse selbst durchsucht.
+        ///
+        /// Die Auswahl kommt zwar aus dem gespeicherten Ergebnis des eigenen Laufs und nie
+        /// aus der Oberflaeche. Aber ein Loeschbefehl auf die Registrierung ist der Ort,
+        /// an dem ein spaeterer Fluechtigkeitsfehler am teuersten waere - und
+        /// DeleteSubKeyTree auf einen der Wurzelpfade wuerde in einem Zug alle
+        /// installierten Programme aus "Apps und Features" entfernen.
+        /// Deshalb wird die Zulaessigkeit hier noch einmal aus dem Eintrag selbst
+        /// hergeleitet, statt sie vorauszusetzen.
+        /// </summary>
+        internal static bool DarfEntferntWerden(Fund f)
+        {
+            if (f == null || string.IsNullOrWhiteSpace(f.Pfad)) return false;
+
+            // Dateityp-Eintraege: entfernt wird nur der nachgewiesene Befehl, nicht die
+            // ganze ProgID. Siehe SucheDateitypen.
+            if (f.Hive == "HKCR")
+                return f.Wert == null
+                    && f.Pfad.EndsWith(ProgIdBefehl, StringComparison.OrdinalIgnoreCase)
+                    && f.Pfad.Length > ProgIdBefehl.Length;
+
+            // Den LAENGSTEN passenden Bereich suchen, nicht den ersten. Sonst schlaegt die
+            // Praefix-Falle zu: "...\CurrentVersion\Run" faengt "...\CurrentVersion\RunOnce"
+            // ab, das Zeichen dahinter ist ein 'O' statt eines Trenners, und RunOnce-Eintraege
+            // liessen sich nie entfernen.
+            string treffer = null;
+            foreach (string w in ErlaubteWurzeln)
+            {
+                if (!f.Pfad.StartsWith(w, StringComparison.OrdinalIgnoreCase)) continue;
+                if (f.Pfad.Length != w.Length && f.Pfad[w.Length] != '\\') continue;  // nur zufaellig gleicher Anfang
+                if (treffer == null || w.Length > treffer.Length) treffer = w;
+            }
+            if (treffer == null) return false;
+
+            // Der Bereich selbst darf nur einen WERT verlieren, niemals sich selbst.
+            if (f.Pfad.Length == treffer.Length) return f.Wert != null;
+            return true;
+        }
+
         /// <summary>
         /// Sichert die betroffenen Schluessel in eine .reg-Datei und entfernt danach die
         /// ausgewaehlten Eintraege. Gibt den Pfad der Sicherung zurueck.
@@ -312,24 +463,36 @@ namespace WartungsToolbox
             entfernt = 0;
             fehlgeschlagen = 0;
 
-            string ordner = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "WindowsWartung", "registrierung-sicherung");
+            var erlaubt = new List<Fund>();
+            foreach (Fund f in auswahl ?? new List<Fund>())
+            {
+                if (DarfEntferntWerden(f)) erlaubt.Add(f);
+                else
+                {
+                    fehlgeschlagen++;
+                    AppLog.Warn("Registrierung: '" + (f == null ? "?" : f.Pfad)
+                                + "' liegt ausserhalb der durchsuchten Bereiche und wird nicht angefasst.");
+                }
+            }
+            if (erlaubt.Count == 0) return null;
+
+            string ordner = Sicherungsordner();
             Directory.CreateDirectory(ordner);
             string sicherung = Path.Combine(ordner,
                 "registrierung-vorher-" + DateTime.Now.ToString("yyyy-MM-dd-HHmm") + ".reg");
 
             // Erst sichern, dann anfassen. Ohne vollstaendige Sicherung wird NICHTS entfernt.
-            var schluessel = auswahl.Select(f => f.Hive + "\\" + f.Pfad)
+            var schluessel = erlaubt.Select(f => f.Hive + "\\" + f.Pfad)
                                     .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             if (!ExportiereSchluessel(schluessel, sicherung))
             {
                 AppLog.Error("Registrierung: Sicherung fehlgeschlagen - es wird nichts entfernt.");
                 throw new InvalidOperationException(
-                    "Die Sicherung der Registrierung ist fehlgeschlagen. Es wurde nichts verändert.");
+                    "Die Sicherungsdatei ließ sich nicht vollständig schreiben. Deshalb wurde " +
+                    "nichts entfernt: Ohne Sicherung fassen wir nichts an.");
             }
 
-            foreach (Fund f in auswahl)
+            foreach (Fund f in erlaubt)
             {
                 try
                 {
@@ -362,9 +525,27 @@ namespace WartungsToolbox
             return sicherung;
         }
 
-        /// <summary>Exportiert die Schluessel mit reg.exe in EINE .reg-Datei.</summary>
+        /// <summary>Ordner, in dem die .reg-Sicherungen liegen.</summary>
+        public static string Sicherungsordner()
+        {
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "WindowsWartung", "registrierung-sicherung");
+        }
+
+        /// <summary>
+        /// Exportiert die Schluessel mit reg.exe in EINE .reg-Datei.
+        ///
+        /// Alles oder nichts: Schon EIN misslungener Export laesst die ganze Sicherung
+        /// scheitern. Vorher genuegte ein einziger gelungener Export, damit die Sicherung
+        /// als vollstaendig galt - danach wurden auch die uebrigen Eintraege entfernt,
+        /// ohne dass sie irgendwo gesichert gewesen waeren. Die Zusage "ohne vollstaendige
+        /// Sicherung wird nichts entfernt" war damit keine.
+        /// </summary>
         static bool ExportiereSchluessel(List<string> schluessel, string ziel)
         {
+            if (schluessel == null || schluessel.Count == 0) return false;
+
             var gesamt = new StringBuilder();
             gesamt.AppendLine("Windows Registry Editor Version 5.00");
             gesamt.AppendLine();
@@ -373,10 +554,10 @@ namespace WartungsToolbox
             gesamt.AppendLine("; von vor dem Aufräumen wiederherstellen.");
             gesamt.AppendLine();
 
-            bool etwas = false;
             foreach (string s in schluessel)
             {
                 string tmp = Path.Combine(Path.GetTempPath(), "ww_reg_" + Guid.NewGuid().ToString("N") + ".reg");
+                bool ok = false;
                 try
                 {
                     Shell.Result r = Shell.Run("reg.exe", "export \"" + s + "\" \"" + tmp + "\" /y", 30000);
@@ -389,14 +570,20 @@ namespace WartungsToolbox
                             if (z.StartsWith("Windows Registry Editor")) continue;
                             gesamt.AppendLine(z);
                         }
-                        etwas = true;
+                        ok = true;
+                    }
+                    else
+                    {
+                        AppLog.Error("Sicherung von " + s + " fehlgeschlagen (ExitCode "
+                                     + r.ExitCode + (r.TimedOut ? ", Zeitlimit" : "") + ").");
                     }
                 }
-                catch (Exception ex) { AppLog.Warn("Export von " + s + " fehlgeschlagen: " + ex.Message); }
+                catch (Exception ex) { AppLog.Error("Sicherung von " + s + " fehlgeschlagen: " + ex.Message); }
                 finally { try { if (File.Exists(tmp)) File.Delete(tmp); } catch { } }
+
+                if (!ok) return false;
             }
 
-            if (!etwas) return false;
             try
             {
                 File.WriteAllText(ziel, gesamt.ToString(), Encoding.Unicode);
@@ -445,6 +632,11 @@ namespace WartungsToolbox
         {
             if (string.IsNullOrWhiteSpace(s)) return null;
             s = s.Trim().Trim('"').Trim();
+            // Manche Installationsprogramme schreiben den Pfad mit Schraegstrichen
+            // (gemessen an einem echten Eintrag: "E:/Valo/Riot Games/VALORANT/live").
+            // Ohne diese Zeile faellt so ein Eintrag nur zufaellig durch die Pruefung -
+            // und auf Zufall darf keine Loeschentscheidung stehen.
+            s = s.Replace('/', '\\');
             try { s = Environment.ExpandEnvironmentVariables(s); } catch { }
             return s.TrimEnd('\\', ' ');
         }
@@ -482,15 +674,26 @@ namespace WartungsToolbox
 
         /// <summary>
         /// Darf dieser Pfad ueberhaupt beurteilt werden? Nur absolute Pfade auf einem
-        /// Laufwerk, das gerade vorhanden ist. Sonst wuerde ein abgezogener USB-Stick oder
-        /// ein getrenntes Netzlaufwerk als "geloescht" gelten.
+        /// fest eingebauten Laufwerk, das gerade vorhanden ist.
+        ///
+        /// Warum ausdruecklich NUR fest eingebaut: Bei USB-Stick, Speicherkarte und
+        /// Netzlaufwerk sagt ein vorhandener Buchstabe gar nichts. Windows vergibt
+        /// Buchstaben in der Reihenfolge des Ansteckens - hinter E: kann heute ein
+        /// anderer Datentraeger liegen als an dem Tag, an dem der Eintrag geschrieben
+        /// wurde. Ein dort "fehlender" Ordner ist dann keine Aussage, sondern ein
+        /// Missverstaendnis, und der Nutzer verliert Eintraege zu Programmen, die nur
+        /// gerade nicht angesteckt sind.
         /// </summary>
         static bool PruefbarerPfad(string p)
         {
             if (string.IsNullOrWhiteSpace(p)) return false;
             if (p.Length < 4 || p[1] != ':' || p[2] != '\\') return false;   // kein C:\...
             if (p.IndexOfAny(Path.GetInvalidPathChars()) >= 0) return false;
-            try { if (!new DriveInfo(p.Substring(0, 1)).IsReady) return false; }
+            try
+            {
+                DriveInfo d = new DriveInfo(p.Substring(0, 1));
+                if (!d.IsReady || d.DriveType != DriveType.Fixed) return false;
+            }
             catch { return false; }
             return true;
         }

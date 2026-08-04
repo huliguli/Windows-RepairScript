@@ -30,16 +30,51 @@ namespace WartungsToolbox
     {
         public class Posten
         {
+            public string Schluessel;  // stabile Kennung; die Oberflaeche waehlt NUR darueber
             public string Titel;
             public string Erklaerung;
             public long Bytes;
             public string Pfad;
             public bool Aufraeumbar;   // kann die App das selbst gefahrlos entfernen?
+            public bool Unwiederbringlich;  // danach ist es wirklich weg (Papierkorb)
 
             public object ToJson()
             {
-                return new { titel = Titel, erklaerung = Erklaerung, bytes = Bytes,
-                             groesse = Menschlich(Bytes), pfad = Pfad, aufraeumbar = Aufraeumbar };
+                return new { schluessel = Schluessel, titel = Titel, erklaerung = Erklaerung,
+                             bytes = Bytes, groesse = Menschlich(Bytes), pfad = Pfad,
+                             aufraeumbar = Aufraeumbar, unwiederbringlich = Unwiederbringlich };
+            }
+        }
+
+        /// <summary>
+        /// Das Ergebnis eines Laufs. Bewusst ein eigener Typ statt eines anonymen Objekts:
+        /// Der Host muss die Liste behalten, um spaeter einen der grossen Brocken im
+        /// Explorer zeigen zu koennen - und die Reihenfolge in dieser Liste muss dabei
+        /// genau die sein, die auch in der Oberflaeche steht.
+        /// </summary>
+        public class Befund
+        {
+            public List<Posten> Aufraeumbar = new List<Posten>();
+            public List<Posten> Brocken = new List<Posten>();
+            public bool Abgebrochen;
+            public long FreiBytes;
+            public long GesamtBytes;
+
+            public object ToJson()
+            {
+                long summe = Aufraeumbar.Sum(p => p.Bytes);
+                return new
+                {
+                    type = "storageResult",
+                    abgebrochen = Abgebrochen,
+                    freiBytes = FreiBytes,
+                    frei = Menschlich(FreiBytes),
+                    gesamt = Menschlich(GesamtBytes),
+                    aufraeumbarBytes = summe,
+                    aufraeumbarText = Menschlich(summe),
+                    aufraeumbar = Aufraeumbar.Select(p => p.ToJson()).ToArray(),
+                    brocken = Brocken.Select(p => p.ToJson()).ToArray(),
+                };
             }
         }
 
@@ -55,7 +90,7 @@ namespace WartungsToolbox
         /// Fuehrt die Suche aus. fortschritt bekommt kurze Zwischenstaende fuer die Anzeige,
         /// abbruch wird regelmaessig abgefragt. Nur aus einem Hintergrund-Thread aufrufen.
         /// </summary>
-        public static object Run(Action<string> fortschritt, Func<bool> abbruch)
+        public static Befund Run(Action<string> fortschritt, Func<bool> abbruch)
         {
             var aufraeumbar = new List<Posten>();
             var brocken = new List<Posten>();
@@ -66,12 +101,18 @@ namespace WartungsToolbox
             // ---------- Teil 1: was die App selbst wegraeumen kann ----------
 
             Melde("Papierkorb");
+            long korb = 0;
+            foreach (string lw in PapierkorbLaufwerke())
+                korb += OrdnerGroesse(Path.Combine(lw, "$Recycle.Bin"), abbruch, 2);
             aufraeumbar.Add(new Posten
             {
+                Schluessel = "papierkorb",
                 Titel = "Papierkorb",
-                Erklaerung = "Gelöschte Dateien, die noch zurückgeholt werden könnten.",
-                Bytes = OrdnerGroesse(Path.Combine(Path.GetPathRoot(Environment.SystemDirectory), "$Recycle.Bin"), abbruch, 2),
+                Erklaerung = "Gelöschte Dateien von allen fest eingebauten Laufwerken, die sich noch "
+                           + "zurückholen ließen.",
+                Bytes = korb,
                 Aufraeumbar = true,
+                Unwiederbringlich = true,
             });
 
             if (Abbruch()) return Ergebnis(aufraeumbar, brocken, true);
@@ -81,6 +122,7 @@ namespace WartungsToolbox
                       + OrdnerGroesse(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Temp"), abbruch, 4);
             aufraeumbar.Add(new Posten
             {
+                Schluessel = "temp",
                 Titel = "Temporäre Dateien",
                 Erklaerung = "Zwischendateien, die Programme liegen gelassen haben.",
                 Bytes = temp,
@@ -92,6 +134,7 @@ namespace WartungsToolbox
             Melde("heruntergeladene Update-Dateien");
             aufraeumbar.Add(new Posten
             {
+                Schluessel = "updates",
                 Titel = "Heruntergeladene Update-Dateien",
                 Erklaerung = "Windows behält Update-Pakete nach der Installation noch eine Weile.",
                 Bytes = OrdnerGroesse(Path.Combine(
@@ -114,6 +157,7 @@ namespace WartungsToolbox
             catch { }
             aufraeumbar.Add(new Posten
             {
+                Schluessel = "vorschau",
                 Titel = "Vorschaubilder",
                 Erklaerung = "Kleine Vorschauen für Fotos und Dateien. Windows legt sie bei Bedarf neu an.",
                 Bytes = thumbs,
@@ -131,6 +175,7 @@ namespace WartungsToolbox
                 browser += OrdnerGroesse(p, abbruch, 3);
             aufraeumbar.Add(new Posten
             {
+                Schluessel = "browser",
                 Titel = "Zwischenspeicher der Browser",
                 Erklaerung = "Zwischengespeicherte Bilder und Dateien von Webseiten. Ihre Lesezeichen, "
                            + "Anmeldungen und Ihr Verlauf bleiben unberührt.",
@@ -151,6 +196,7 @@ namespace WartungsToolbox
             {
                 aufraeumbar.Add(new Posten
                 {
+                    Schluessel = "spiele",
                     Titel = "Zwischenspeicher der Spiele-Plattformen",
                     Erklaerung = "Vorberechnete Grafikdaten und Reste von Downloads (Steam, Epic, GOG, "
                                + "Battle.net). Die Spiele selbst bleiben installiert.",
@@ -250,14 +296,25 @@ namespace WartungsToolbox
                 }
             }
 
-            // Firefox: Profile liegen unter LocalAppData\Mozilla\Firefox\Profiles
+            // Firefox: unter LocalAppData liegt der Zwischenspeicher-Teil des Profils.
+            // Auch hier NUR die Zwischenspeicher-Ordner, nicht das Profil als Ganzes -
+            // sonst faellt alles mit, was Firefox oder eine Erweiterung dort sonst noch
+            // ablegt. (Lesezeichen und Anmeldungen liegen ohnehin unter Roaming.)
             string ff = Path.Combine(lokal, "Mozilla", "Firefox", "Profiles");
             if (Directory.Exists(ff))
             {
                 IEnumerable<string> profile;
                 try { profile = Directory.EnumerateDirectories(ff); }
                 catch { profile = new string[0]; }
-                foreach (string prof in profile) yield return prof;
+                foreach (string prof in profile)
+                {
+                    foreach (string name in new[] { "cache2", "startupCache", "thumbnails",
+                                                    "shader-cache", "jumpListCache", "OfflineCache" })
+                    {
+                        string p = Path.Combine(prof, name);
+                        if (Directory.Exists(p)) yield return p;
+                    }
+                }
             }
         }
 
@@ -294,6 +351,26 @@ namespace WartungsToolbox
                 if (Directory.Exists(p)) yield return p;
         }
 
+        /// <summary>
+        /// Die Laufwerke, deren Papierkorb gemessen UND geleert wird: nur fest eingebaute.
+        /// Ein USB-Stick oder eine Speicherkarte gehoert nicht dazu - dort liegt oft der
+        /// einzige Fotobestand, und der Nutzer denkt beim Wort "Papierkorb" nicht daran.
+        /// </summary>
+        static IEnumerable<string> PapierkorbLaufwerke()
+        {
+            DriveInfo[] alle;
+            try { alle = DriveInfo.GetDrives(); }
+            catch { yield break; }
+
+            foreach (DriveInfo d in alle)
+            {
+                bool ok = false;
+                try { ok = d.DriveType == DriveType.Fixed && d.IsReady; }
+                catch { }
+                if (ok) yield return d.Name;
+            }
+        }
+
         static string ErklaerungFuer(string ordner)
         {
             switch ((ordner ?? "").ToLowerInvariant())
@@ -311,30 +388,232 @@ namespace WartungsToolbox
             }
         }
 
-        static object Ergebnis(List<Posten> aufraeumbar, List<Posten> brocken, bool abgebrochen)
+        static Befund Ergebnis(List<Posten> aufraeumbar, List<Posten> brocken, bool abgebrochen)
         {
-            long frei = 0, gesamt = 0;
+            var b = new Befund { Abgebrochen = abgebrochen };
             try
             {
                 var d = new DriveInfo(Path.GetPathRoot(Environment.SystemDirectory));
-                if (d.IsReady) { frei = d.TotalFreeSpace; gesamt = d.TotalSize; }
+                if (d.IsReady) { b.FreiBytes = d.TotalFreeSpace; b.GesamtBytes = d.TotalSize; }
             }
             catch { }
 
-            long summeAufraeumbar = aufraeumbar.Sum(p => p.Bytes);
+            // Die Reihenfolge wird HIER festgelegt und nicht erst beim Verwandeln in JSON:
+            // die Oberflaeche spricht einen grossen Brocken ueber seine Position an, und die
+            // muss auf beiden Seiten dieselbe sein.
+            b.Aufraeumbar.AddRange(aufraeumbar.Where(p => p.Bytes > 0).OrderByDescending(p => p.Bytes));
+            b.Brocken.AddRange(brocken.OrderByDescending(p => p.Bytes));
+            return b;
+        }
+
+        // ---------------------------------------------------------------- Aufraeumen
+
+        /// <summary>
+        /// Raeumt die gewaehlten Kategorien weg und meldet je Kategorie, wie viel dabei
+        /// wirklich frei wurde.
+        ///
+        /// Zwei Festlegungen, die nicht verhandelbar sind:
+        ///
+        ///   * Die Oberflaeche schickt ausschliesslich KENNUNGEN, niemals Pfade. Welche
+        ///     Ordner dahinterstecken, entscheidet allein dieser Quelltext. Damit gibt es
+        ///     keinen Weg, ueber die Oberflaeche einen beliebigen Ordner loeschen zu lassen.
+        ///   * Der Downloads-Ordner ist KEINE Kategorie und wird nie geleert. Genau daran
+        ///     ist Razer Cortex gescheitert: das Programm hat Fotos und Videos geloescht,
+        ///     weil sie im Downloads-Ordner lagen. Was der Nutzer selbst dort abgelegt hat,
+        ///     kann kein Programm von Datenmuell unterscheiden.
+        ///
+        /// Gemeldet wird der tatsaechlich gewonnene Platz (Groesse vorher minus nachher),
+        /// nicht der erhoffte. Dateien, die gerade in Benutzung sind, bleiben liegen -
+        /// das ist normal und wird ehrlich als Differenz sichtbar.
+        /// </summary>
+        public static object Aufraeumen(IEnumerable<string> schluessel, Action<string> fortschritt,
+                                        Func<bool> abbruch)
+        {
+            var gewaehlt = new HashSet<string>(schluessel ?? new string[0], StringComparer.OrdinalIgnoreCase);
+            var berichte = new List<object>();
+            long gesamt = 0;
+
+            void Melde(string t) { if (fortschritt != null) fortschritt(t); }
+            bool Stop() { return abbruch != null && abbruch(); }
+
+            // Die Kennung geht mit an die Oberflaeche. Sie muss dort erkennen koennen, ob
+            // der Papierkorb dabei war - und zwar an der Kennung, nicht am deutschen Titel:
+            // ein Texteingriff darf keine Sicherheitszusage verschieben.
+            void Erledigt(string schluessel, string titel, long bytes)
+            {
+                gesamt += bytes;
+                berichte.Add(new { schluessel = schluessel, titel = titel, bytes = bytes,
+                                   groesse = Menschlich(bytes) });
+                AppLog.Info("Aufgeräumt: " + titel + " -> " + Menschlich(bytes));
+            }
+
+            if (gewaehlt.Contains("papierkorb") && !Stop())
+            {
+                Melde("Papierkorb");
+                // Laufwerksweise leeren, und zwar GENAU die Laufwerke, die vorher auch
+                // gemessen und angezeigt wurden.
+                //
+                // "Clear-RecycleBin -Force" ohne Laufwerksangabe leert die Papierkoerbe
+                // ALLER Laufwerke, auch angesteckter USB-Datentraeger. Gemessen und gezeigt
+                // wurde bisher nur das Systemlaufwerk: Wer 2 GB bestaetigt, haette 40 GB
+                // auf einer anderen Platte mitverloren, ohne sie je gesehen zu haben.
+                long vorher = 0, nachher = 0;
+                foreach (string lw in PapierkorbLaufwerke())
+                {
+                    if (Stop()) break;
+                    string bin = Path.Combine(lw, "$Recycle.Bin");
+                    vorher += OrdnerGroesse(bin, abbruch, 2);
+                    Shell.Ps("try { Clear-RecycleBin -DriveLetter '" + lw.Substring(0, 1) +
+                             "' -Force -EA Stop } catch { }", 120000);
+                    nachher += OrdnerGroesse(bin, abbruch, 2);
+                }
+                Erledigt("papierkorb", "Papierkorb", vorher > nachher ? vorher - nachher : 0);
+            }
+
+            if (gewaehlt.Contains("temp") && !Stop())
+            {
+                Melde("temporäre Dateien");
+                long frei = LeereOrdner(Path.GetTempPath(), abbruch)
+                          + LeereOrdner(Path.Combine(
+                                Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Temp"), abbruch);
+                Erledigt("temp", "Temporäre Dateien", frei);
+            }
+
+            if (gewaehlt.Contains("updates") && !Stop())
+            {
+                Melde("heruntergeladene Update-Dateien");
+                long frei = LeereOrdner(Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+                    "SoftwareDistribution", "Download"), abbruch);
+                Erledigt("updates", "Heruntergeladene Update-Dateien", frei);
+            }
+
+            if (gewaehlt.Contains("vorschau") && !Stop())
+            {
+                Melde("Vorschaubilder");
+                long frei = 0;
+                string cache = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "Microsoft", "Windows", "Explorer");
+                try
+                {
+                    foreach (string f in Directory.GetFiles(cache, "thumbcache_*"))
+                    {
+                        try
+                        {
+                            long g = new FileInfo(f).Length;
+                            File.Delete(f);
+                            frei += g;
+                        }
+                        catch { }   // Explorer haelt einen Teil davon offen: dann bleibt er liegen
+                    }
+                }
+                catch { }
+                Erledigt("vorschau", "Vorschaubilder", frei);
+            }
+
+            if (gewaehlt.Contains("browser") && !Stop())
+            {
+                Melde("Zwischenspeicher der Browser");
+                long frei = 0;
+                foreach (string p in BrowserCaches())
+                {
+                    if (Stop()) break;
+                    frei += LeereOrdner(p, abbruch);
+                }
+                Erledigt("browser", "Zwischenspeicher der Browser", frei);
+            }
+
+            if (gewaehlt.Contains("spiele") && !Stop())
+            {
+                Melde("Zwischenspeicher der Spiele-Plattformen");
+                long frei = 0;
+                foreach (string p in SpieleCaches())
+                {
+                    if (Stop()) break;
+                    frei += LeereOrdner(p, abbruch);
+                }
+                Erledigt("spiele", "Zwischenspeicher der Spiele-Plattformen", frei);
+            }
+
             return new
             {
-                type = "storageResult",
-                abgebrochen = abgebrochen,
-                freiBytes = frei,
-                frei = Menschlich(frei),
+                type = "storageCleaned",
+                abgebrochen = Stop(),
+                gesamtBytes = gesamt,
                 gesamt = Menschlich(gesamt),
-                aufraeumbarBytes = summeAufraeumbar,
-                aufraeumbarText = Menschlich(summeAufraeumbar),
-                aufraeumbar = aufraeumbar.Where(p => p.Bytes > 0)
-                                         .OrderByDescending(p => p.Bytes).Select(p => p.ToJson()).ToArray(),
-                brocken = brocken.OrderByDescending(p => p.Bytes).Select(p => p.ToJson()).ToArray(),
+                posten = berichte.ToArray(),
             };
+        }
+
+        /// <summary>
+        /// Leert einen Ordner, ohne ihn selbst zu entfernen. Gibt zurueck, wie viel Platz
+        /// dadurch tatsaechlich frei wurde.
+        ///
+        /// Abzweigungen (Junctions) werden nur als Verweis entfernt, niemals ihr Ziel -
+        /// sonst wuerde ein Verweis im Zwischenspeicher fremde Ordner mitreissen.
+        /// Alles, was sich nicht loeschen laesst (Datei in Benutzung), bleibt still liegen.
+        /// </summary>
+        internal static long LeereOrdner(string wurzel, Func<bool> abbruch)
+        {
+            if (string.IsNullOrEmpty(wurzel) || !Directory.Exists(wurzel)) return 0;
+
+            long vorher = OrdnerGroesse(wurzel, abbruch, 12);
+            try
+            {
+                var di = new DirectoryInfo(wurzel);
+                if (Ueberspringen(di.Attributes)) return 0;
+                LeereInhalt(di, abbruch, 0);
+            }
+            catch { }
+
+            long nachher = OrdnerGroesse(wurzel, abbruch, 12);
+            return vorher > nachher ? vorher - nachher : 0;
+        }
+
+        /// <summary>
+        /// Leert einen Ordner rekursiv und haelt sich dabei auf JEDER Ebene an
+        /// Ueberspringen(). Der Ordner selbst bleibt stehen; alles darunter faellt.
+        ///
+        /// Warum nicht einfach Directory.Delete(pfad, true): Das raeumt den ganzen Baum
+        /// ohne Ruecksicht auf die Attribute. Ein Cloud-Platzhalter tief im Baum waere
+        /// damit geloescht - und weil ein Platzhalter die Datei in der Wolke vertritt,
+        /// waere sie auf allen Geraeten des Nutzers weg. Die Zusage, Platzhalter nicht
+        /// anzufassen, galt vorher nur fuer die oberste Ebene.
+        /// </summary>
+        static void LeereInhalt(DirectoryInfo ordner, Func<bool> abbruch, int tiefe)
+        {
+            if (tiefe > 24) return;   // Reissleine gegen ungewoehnlich tiefe Baeume
+
+            foreach (FileInfo f in ordner.EnumerateFiles())
+            {
+                if (abbruch != null && abbruch()) return;
+                try
+                {
+                    if (Ueberspringen(f.Attributes)) continue;
+                    if ((f.Attributes & FileAttributes.ReadOnly) != 0)
+                        f.Attributes &= ~FileAttributes.ReadOnly;
+                    f.Delete();
+                }
+                catch { }   // in Benutzung oder geschuetzt: liegen lassen
+            }
+
+            foreach (DirectoryInfo u in ordner.EnumerateDirectories())
+            {
+                if (abbruch != null && abbruch()) return;
+                try
+                {
+                    // Abzweigung: nur den Verweis entfernen, nie hineingehen.
+                    if ((u.Attributes & FileAttributes.ReparsePoint) != 0) { u.Delete(false); continue; }
+                    if ((u.Attributes & FileAttributes.Offline) != 0) continue;
+
+                    LeereInhalt(u, abbruch, tiefe + 1);
+                    // Erst wenn wirklich nichts mehr drin ist, faellt auch der Ordner.
+                    // Steht noch etwas darin, war es geschuetzt und soll bleiben.
+                    try { u.Delete(false); } catch { }
+                }
+                catch { }
+            }
         }
 
         /// <summary>

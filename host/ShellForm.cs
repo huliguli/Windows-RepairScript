@@ -98,7 +98,34 @@ namespace WartungsToolbox
 
             Load += OnLoad;
             Shown += delegate { ForceForeground(); };
+            FormClosing += OnClosingWhileBusy;
             FormClosed += delegate { try { if (_tray != null) { _tray.Visible = false; _tray.Dispose(); } } catch { } };
+        }
+
+        /// <summary>
+        /// Waehrend etwas ENTFERNT wird, bleibt das Fenster stehen.
+        ///
+        /// Der Arbeits-Thread laeuft im Hintergrund und stirbt beim Prozessende sofort.
+        /// Ginge das Fenster mitten im Entfernen zu, bliebe die Loeschschleife auf halbem
+        /// Weg stehen, und der Nutzer erfuehre nie, wo seine Sicherungsdatei liegt. Die
+        /// Oberflaeche verspricht an dieser Stelle ausdruecklich, dass sich der Vorgang
+        /// nicht mehr anhalten laesst - das X in der Titelleiste darf dieses Versprechen
+        /// nicht unterlaufen. Es dauert nur Sekunden.
+        /// </summary>
+        void OnClosingWhileBusy(object sender, FormClosingEventArgs e)
+        {
+            if (e.CloseReason != CloseReason.UserClosing) return;
+            if (!ScanEntferntGerade) return;
+
+            e.Cancel = true;
+            try
+            {
+                MessageBox.Show(this,
+                    "Es wird gerade aufgeräumt. Bitte warten Sie einen Moment, bis der Vorgang " +
+                    "abgeschlossen ist. Danach lässt sich das Fenster wie gewohnt schließen.",
+                    "Windows-Wartung", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch { }
         }
 
         // Windows-Benachrichtigung (nur wenn das Fenster im Hintergrund/minimiert ist)
@@ -929,11 +956,18 @@ namespace WartungsToolbox
             else if (type == "startFix") StartFix();
             else if (type == "openLog") AppLog.Open();
             else if (type == "restartNow") { _pendingPost = "restart"; _pendingDelay = 60; ScheduleShutdown(); _pendingPost = "none"; }
+            // --- Speicher- und Registrierungs-Suche ----------------------------
+            else if (type == "storageScan") StartStorageScan();
+            else if (type == "storageClean") StorageClean(m);
+            else if (type == "openBrocken") OpenBrocken(ToInt(m, "index"));
+            else if (type == "registryScan") StartRegistryScan();
+            else if (type == "registryClean") RegistryClean(m);
+            else if (type == "openRegBackup") OpenRegBackup();
             // --------------------------------------------------------------------
-            // Stoppt beides: den Pruef-/Reparaturablauf und eine Einzelaktion aus dem
-            // Werkzeugkasten. Die laufen in verschiedenen Threads, ein Aufruf allein
-            // liesse den jeweils anderen weiterlaufen.
-            else if (type == "cancel") { if (_runner != null) _runner.Cancel(); CancelFlow(); }
+            // Stoppt alles drei: den Pruef-/Reparaturablauf, eine Einzelaktion aus dem
+            // Werkzeugkasten und einen Suchlauf. Die laufen in verschiedenen Threads,
+            // ein Aufruf allein liesse die jeweils anderen weiterlaufen.
+            else if (type == "cancel") { if (_runner != null) _runner.Cancel(); CancelFlow(); CancelScan(); }
             else if (type == "cancelShutdown") CancelShutdown();
             else if (type == "ready") OnReady();
             else if (type == "openUpdate") OpenUpdate();

@@ -3,8 +3,10 @@ bin/
 obj/
 dist/
 
-# Dev-Screenshots
+# Dev-Screenshots. Belegaufnahmen zeigen echte Pfade, Programmnamen und Laufwerke
+# des jeweiligen Rechners - die gehoeren nicht in ein oeffentliches Repository.
 ui/shot_*.png
+docs/shot-*.png
 
 # Code-Signing – Zertifikate/Schlüssel niemals einchecken!
 cert/

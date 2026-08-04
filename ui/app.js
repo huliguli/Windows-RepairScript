@@ -38,6 +38,9 @@ const S = {
   catalog: null,        // vom Host
   checks: [],           // letzter Befund
   screen: 'start',
+  sub: null,            // geoeffnete Nebenansicht
+  storage: null,        // letztes Ergebnis "wo steckt der Platz?"
+  registry: null,       // letztes Ergebnis der Registrierungs-Pruefung
   cat: null,            // gewaehlte Werkzeug-Kategorie
   mode: null,           // 'check' | 'fix'
   steps: [],
@@ -376,6 +379,14 @@ function resultCard(c){
       '<div class="rs">' + esc(c.summary) + '</div>' +
       (c.advice ? '<div class="radv">' + esc(c.advice) + '</div>' : '') +
     '</span>';
+  // Beim Speicherplatz bleibt der Rat sonst abstrakt. Von hier aus geht es dorthin,
+  // wo steht, WAS den Platz belegt.
+  if(c.key === 'space' && (c.state === 'warn' || c.state === 'bad')){
+    const wo = el('button','btn btn-ghost','Wo steckt der Platz?');
+    wo.style.marginTop = '10px';
+    wo.onclick = () => go('storage');
+    card.querySelector('.rbody').appendChild(wo);
+  }
   if(c.detail){
     const d = el('details','disc');
     d.style.marginTop = '0';
@@ -635,6 +646,8 @@ function promptModal(title, body, vorgabe, onOk){
    Nebenansichten
    ===================================================================== */
 const SUBS = {
+  storage:   { title:'Wo steckt der Platz?', lead:'Wir sehen nach, was Ihren Speicher belegt: was sich gefahrlos wegräumen lässt und was Ihnen selbst gehört. Zuerst wird nur geschaut. Gelöscht wird nichts, was Sie nicht ausdrücklich auswählen.' },
+  registry:  { title:'Einträge, die ins Leere zeigen', lead:'Windows führt eine Liste, in der Programme hinterlegen, wo ihre Dateien liegen. Wird ein Programm entfernt, bleibt der Eintrag manchmal stehen und zeigt auf nichts mehr. Hier sehen Sie diese Einträge.' },
   history:   { title:'Verlauf',              lead:'Was in der Vergangenheit ausgeführt wurde.' },
   restore:   { title:'Sicherungspunkte',     lead:'Ein Sicherungspunkt merkt sich den Zustand von Windows, Programmen und Einstellungen. Damit lässt sich der PC auf einen früheren Stand zurücksetzen. Ihre persönlichen Dateien bleiben dabei unberührt.' },
   schedule:  { title:'Automatische Wartung', lead:'Der PC kann sich regelmäßig selbst warten, ganz von allein im Hintergrund.' },
@@ -653,6 +666,8 @@ function openSub(key){
   $('#sub-foot').innerHTML = '';
   show('sub');
 
+  if(key === 'storage'){  S.storage = null;  scanLaeuft('Wird durchgesehen'); send({type:'storageScan'}); }
+  if(key === 'registry'){ S.registry = null; scanLaeuft('Wird durchgesehen'); send({type:'registryScan'}); }
   if(key === 'history')  send({type:'historyList'});
   if(key === 'restore')  send({type:'restoreList'});
   if(key === 'power')    send({type:'powerList'});
@@ -807,6 +822,13 @@ function detailModal(c){
   });
   const ok = el('button','btn btn-primary btn-md','Schließen');
   ok.onclick = m.close;
+  // „Machen Sie Platz frei“ war bisher ein Rat ohne Weg. Von hier aus geht es
+  // direkt dorthin, wo steht, WO der Platz steckt.
+  if(c.key === 'space'){
+    const wo = el('button','btn btn-ghost','Wo steckt der Platz?');
+    wo.onclick = () => { m.close(); go('storage'); };
+    m.btns.appendChild(wo);
+  }
   m.btns.appendChild(ok);
   ok.focus();
 }
@@ -856,7 +878,7 @@ function onHost(m){
       S.catalog = m;
       S.version = m.version || '';
       // Belegaufnahme: gewuenschte Ansicht direkt oeffnen
-      ['tools','history','restore','schedule','autostart','apps','power','settings']
+      ['tools','history','restore','schedule','autostart','apps','power','settings','storage','registry']
         .forEach(k => { if(HASH.indexOf(k) >= 0) go(k); });
       // Nur fuer Belegaufnahmen: die (rein lesende) Pruefung von selbst starten.
       // Der Adresszusatz laesst sich ausschliesslich ueber --view von der Befehlszeile
@@ -939,6 +961,74 @@ function onHost(m){
         $('#btn-cancel').onclick = () => { $('#btn-cancel').textContent = 'Abbrechen'; go('tools'); };
       }
       if(SET.notify) toast(m.title, m.message, m.kind);
+      break;
+
+    // --- Speicher- und Registrierungs-Suche ---
+    case 'scanProgress': {
+      const st = $('#scan-status');
+      if(st) st.textContent = m.text + ' …';
+      break;
+    }
+
+    case 'storageResult':
+      if(S.sub === 'storage') renderStorage(m);
+      break;
+
+    case 'storageCleaned': {
+      const zeilen = (m.posten || []).map(p => p.titel + ': ' + p.groesse).join('\n');
+      // Die Zusicherung „Ihre Dokumente wurden nicht angerührt“ darf NICHT fallen, wenn
+      // der Papierkorb dabei war: dort liegen genau diese Dateien. Wer sich darauf
+      // verlässt, sucht später gar nicht erst im Papierkorb nach.
+      const korbDabei = (m.posten || []).some(p => p.schluessel === 'papierkorb');
+      infoModal('Aufgeräumt',
+        (m.gesamtBytes > 0
+          ? 'Es sind ' + m.gesamt + ' frei geworden.\n\n' + zeilen
+          : 'Es ist nichts frei geworden. Vermutlich waren die Dateien gerade in Benutzung; ' +
+            'nach einem Neustart klappt es meist.\n\n' + zeilen) +
+        (korbDabei
+          ? '\n\nDer Papierkorb wurde geleert. Was darin lag, lässt sich nicht mehr ' +
+            'zurückholen. Ihre übrigen Dokumente, Fotos und Programme wurden nicht angerührt.'
+          : '\n\nIhre Dokumente, Fotos und Programme wurden nicht angerührt.'));
+      break;
+    }
+
+    case 'registryResult':
+      if(S.sub === 'registry') renderRegistry(m);
+      break;
+
+    case 'registryCleaned': {
+      const dlg = buildModal({
+        title: m.entfernt === 0 ? 'Es wurde nichts entfernt'
+             : m.entfernt === 1 ? 'Ein Eintrag wurde entfernt'
+                                : m.entfernt + ' Einträge wurden entfernt',
+        body: (m.fehlgeschlagen > 0
+                ? m.fehlgeschlagen + ' Eintrag/Einträge ließen sich nicht entfernen und wurden ' +
+                  'unverändert gelassen.\n\n' : '') +
+              (m.sicherungspunkt
+                ? 'Vorher wurde ein Sicherungspunkt von Windows angelegt.\n\n'
+                : 'Ein Sicherungspunkt ließ sich nicht anlegen (vermutlich ist der Systemschutz ' +
+                  'ausgeschaltet). Die Sicherungsdatei unten wurde trotzdem geschrieben.\n\n') +
+              (m.sicherung
+                ? 'Die Sicherung liegt hier:\n' + m.sicherung + '\n\nEin Doppelklick auf diese ' +
+                  'Datei holt die Einträge zurück.'
+                : 'Es wurde nichts verändert.'),
+        icon: 'save' });
+      const zu = el('button','btn btn-ghost','Schließen');
+      zu.onclick = dlg.close;
+      dlg.btns.appendChild(zu);
+      if(m.sicherung){
+        const auf = el('button','btn btn-primary btn-md','Sicherung anzeigen');
+        auf.onclick = () => { dlg.close(); send({type:'openRegBackup'}); };
+        dlg.btns.appendChild(auf);
+        auf.focus();
+      } else zu.focus();
+      break;
+    }
+
+    case 'scanError':
+      infoModal('Das hat nicht geklappt', m.message, 'warn');
+      if(S.screen === 'sub' && $('#scan-status'))
+        $('#sub-body').innerHTML = '<div class="empty">Es liegt kein Ergebnis vor.</div>';
       break;
 
     // --- Nebenansichten ---
@@ -1240,6 +1330,287 @@ function renderSchedule(m){
   };
 }
 const DAY = {MON:'Montag',TUE:'Dienstag',WED:'Mittwoch',THU:'Donnerstag',FRI:'Freitag',SAT:'Samstag',SUN:'Sonntag'};
+
+/* Größen in Alltagsschreibweise. Die Einzelposten bringt der Host schon fertig mit;
+   für Summen, die erst hier entstehen, wird dieselbe Staffelung nachgebildet. */
+function groesse(bytes){
+  const b = Number(bytes) || 0;
+  if(b >= 1073741824) return (b / 1073741824).toFixed(1).replace('.', ',') + ' GB';
+  if(b >= 1048576)    return Math.round(b / 1048576) + ' MB';
+  if(b >= 1024)       return Math.round(b / 1024) + ' KB';
+  return b + ' Byte';
+}
+
+/* Wartezustand der beiden Suchläufe. Ein Suchlauf ohne Ausweg wäre eine Sackgasse:
+   auf einem vollen Rechner kann das Durchsehen der eigenen Ordner dauern.
+
+   Beim Entfernen aus der Registrierung gibt es bewusst KEIN Abbrechen: dort laufen
+   Sicherungspunkt und Sicherungsdatei, und ein Knopf, der mittendrin nichts mehr
+   ausrichtet, wäre ein Versprechen, das die App nicht halten kann. */
+function scanLaeuft(text, unterzeile, abbrechbar){
+  const b = $('#sub-body');
+  b.innerHTML = '';
+  const p = el('div','panel');
+  p.innerHTML = '<div class="panel-h"><div class="panel-t">' + esc(text) + ' …</div>' +
+    '<div class="panel-d">' + esc(unterzeile || 'Dabei wird nichts verändert. Wir schauen nur nach.') + '</div></div>';
+  const row = el('div','row');
+  row.innerHTML = '<span class="row-b"><span class="row-s" id="scan-status">Einen Moment bitte …</span></span>';
+  if(abbrechbar !== false){
+    const ab = el('button','btn btn-ghost','Abbrechen');
+    ab.onclick = () => { send({type:'cancel'}); go('tools'); };
+    row.appendChild(ab);
+  }
+  p.appendChild(row);
+  b.appendChild(p);
+  $('#sub-foot').innerHTML = '';
+}
+
+/* =====================================================================
+   Wo steckt der Platz?
+
+   Zwei Listen mit klar verschiedener Bedeutung, und das muss man sehen:
+   oben, was die App selbst gefahrlos wegräumen kann, unten, was IHNEN
+   gehört und was wir deshalb nicht anfassen.
+   ===================================================================== */
+function renderStorage(m){
+  S.storage = m;
+  const b = $('#sub-body');
+  b.innerHTML = '';
+
+  const belegt = el('div','panel');
+  belegt.innerHTML = '<div class="panel-h"><div class="panel-t">Ihr Windows-Laufwerk</div>' +
+    '<div class="panel-d">' + esc(m.frei) + ' von ' + esc(m.gesamt) + ' sind noch frei.</div></div>';
+  b.appendChild(belegt);
+
+  /* ---- Teil 1: aufräumbar ---- */
+  const posten = (m.aufraeumbar || []).filter(p => p.aufraeumbar);
+
+  // Der Papierkorb wird getrennt ausgewiesen. Er steckte vorher in derselben Summe und
+  // unter demselben Satz „legt Windows neu an“ - und genau dort liegen die gelöschten
+  // Dokumente und Fotos, die derselbe Satz für nicht betroffen erklärte.
+  const nachwachsend = posten.filter(p => !p.unwiederbringlich);
+  const korb = posten.filter(p => p.unwiederbringlich);
+  const summe = nachwachsend.reduce((s,p) => s + (p.bytes || 0), 0);
+
+  const weg = el('div','panel');
+  weg.innerHTML = '<div class="panel-h"><div class="panel-t">Das können wir für Sie wegräumen</div>' +
+    '<div class="panel-d">Zusammen ' + esc(groesse(summe)) + '. Das alles legt Windows bei Bedarf ' +
+    'neu an. Ihre Dokumente, Fotos und Programme sind nicht dabei.' +
+    (korb.length
+      ? '<br><br>Der Papierkorb steht gesondert darunter und zählt hier nicht mit: Er enthält ' +
+        'gelöschte Dateien, die noch zurückzuholen wären. Was Sie dort wegräumen, ist danach weg.'
+      : '') +
+    '</div></div>';
+  if(!posten.length){
+    weg.appendChild(el('div','empty','Es liegt nichts herum, das wir wegräumen könnten.'));
+  } else {
+    nachwachsend.concat(korb).forEach(p => {
+      const row = el('label','row');
+      row.innerHTML =
+        '<span class="row-b"><span class="row-t">' + esc(p.titel) +
+          (p.unwiederbringlich ? '<span class="tag warn">endgültig</span>' : '') + '</span>' +
+        '<span class="row-s">' + esc(p.erklaerung) + '</span></span>' +
+        '<span class="row-m">' + esc(p.groesse) + '</span>' +
+        '<span class="switch"><input type="checkbox" data-key="' + esc(p.schluessel) + '"' +
+        // Der Papierkorb ist NICHT vorangehakt: was darin liegt, ist danach wirklich weg.
+        // Alles andere legt Windows von allein neu an.
+        (p.unwiederbringlich ? '' : ' checked') +
+        ' aria-label="' + esc(p.titel) + ' aufräumen" /><i></i></span>';
+      weg.appendChild(row);
+    });
+  }
+  b.appendChild(weg);
+
+  if(posten.length){
+    const bar = el('div','next');
+    bar.innerHTML = '<span class="next-b"><span class="next-t">Ausgewähltes aufräumen</span>' +
+      '<span class="next-s">Dateien, die gerade in Benutzung sind, bleiben liegen. Wir sagen Ihnen ' +
+      'hinterher, wie viel wirklich frei geworden ist.</span></span>';
+    const go2 = el('button','btn btn-primary btn-md','Jetzt aufräumen');
+    go2.onclick = () => starteAufraeumen(b, posten);
+    bar.appendChild(go2);
+    b.appendChild(bar);
+  }
+
+  /* ---- Teil 2: die großen Brocken, die uns nicht gehören ---- */
+  const brocken = m.brocken || [];
+  if(brocken.length){
+    const gross = el('div','panel');
+    gross.innerHTML = '<div class="panel-h"><div class="panel-t">Die größten Brocken in Ihren Ordnern</div>' +
+      '<div class="panel-d">Das hier gehört Ihnen, deshalb fassen wir es nicht an. Wenn Sie Platz ' +
+      'brauchen, schauen Sie am besten selbst nach, was davon Sie noch benötigen.</div></div>';
+    brocken.forEach((p, i) => {
+      const row = el('div','row');
+      row.innerHTML =
+        '<span class="row-b"><span class="row-t">' + esc(p.titel) + '</span>' +
+        '<span class="row-s">' + esc(p.erklaerung) + '</span></span>' +
+        '<span class="row-m">' + esc(p.groesse) + '</span>';
+      const zeig = el('button','btn btn-ghost', svg('folder') + 'Anzeigen');
+      zeig.setAttribute('aria-label','„' + p.titel + '“ im Explorer anzeigen');
+      zeig.onclick = () => send({type:'openBrocken', index:i});
+      row.appendChild(zeig);
+      gross.appendChild(row);
+    });
+    b.appendChild(gross);
+  }
+
+  $('#sub-foot').innerHTML = svg('info') +
+    '<span>Der Ordner „Downloads“ steht bewusst nicht in der oberen Liste: dort legen viele ' +
+    'Menschen Dateien ab, die sie behalten möchten.</span>';
+}
+
+function starteAufraeumen(b, posten){
+  if(!S.admin){ needAdmin(); return; }
+  const sel = Array.prototype.slice.call(b.querySelectorAll('input[data-key]:checked'));
+  if(!sel.length){ toast('Nichts ausgewählt','Wählen Sie zuerst aus, was wir wegräumen sollen.','warn'); return; }
+  const keys = sel.map(x => x.dataset.key);
+  const zeilen = keys.map(k => {
+    const p = posten.find(x => x.schluessel === k) || {};
+    return '· ' + p.titel + ' (' + p.groesse + ')';
+  }).join('\n');
+  const endgueltig = keys.some(k => (posten.find(x => x.schluessel === k) || {}).unwiederbringlich);
+
+  confirmModal('Das hier wegräumen?',
+    zeilen + (endgueltig
+      ? '\n\nDer Papierkorb ist dabei. Was darin liegt, ist danach endgültig weg und lässt sich ' +
+        'nicht mehr zurückholen. Schauen Sie vorher kurz nach, ob noch etwas Wichtiges darin ist.'
+      : '\n\nAll das legt Windows bei Bedarf von allein neu an.'),
+    'Jetzt aufräumen', () => {
+      scanLaeuft('Wird aufgeräumt', 'Wir räumen die ausgewählten Punkte weg und messen danach neu.');
+      send({type:'storageClean', keys:keys});
+    }, endgueltig);
+}
+
+/* =====================================================================
+   Einträge, die ins Leere zeigen
+
+   Haltung: Diese Ansicht verspricht NICHTS. Kein „macht Ihren PC schneller“,
+   keine Punktzahl, keine roten Zahlen. Sie zeigt, was gefunden wurde, warum
+   es als tot gilt und wo die Sicherung liegt - und überlässt die Entscheidung
+   dem Nutzer.
+   ===================================================================== */
+function renderRegistry(m){
+  S.registry = m;
+  const funde = m.funde || [];
+  const b = $('#sub-body');
+  b.innerHTML = '';
+
+  const kopf = el('div','panel');
+  kopf.innerHTML = '<div class="panel-h"><div class="panel-t">' +
+    (funde.length === 0 ? 'Es wurde nichts gefunden'
+      : funde.length === 1 ? 'Ein Eintrag zeigt ins Leere'
+      : funde.length + ' Einträge zeigen ins Leere') + '</div>' +
+    '<div class="panel-d">Gemeldet wird nur, was sich nachweisen lässt: Der Eintrag nennt eine Datei, ' +
+    'und die gibt es nicht mehr. Vermutungen bleiben außen vor.<br><br>' +
+    'Ehrlich gesagt: Ihr PC wird davon nicht schneller. Diese Einträge kosten so gut wie keinen ' +
+    'Platz und bremsen nichts. Was das Aufräumen bringt, ist Ordnung.</div></div>';
+  b.appendChild(kopf);
+
+  if(!funde.length){
+    b.appendChild(el('div','empty','Alles in Ordnung. Es gibt hier nichts zu tun.'));
+    $('#sub-foot').innerHTML = '';
+    return;
+  }
+
+  // Nach Kategorie gruppieren, darin nach der fehlenden Datei: ein Programm hinterlässt
+  // oft mehrere Einträge zur selben Datei. Als getrennte Zeilen sähe das nach mehr aus,
+  // als es ist - genau die Zahlenschinderei, die wir nicht wollen.
+  const kats = {};
+  funde.forEach(f => {
+    const k = kats[f.kategorie] || (kats[f.kategorie] = {});
+    const g = k[f.ziel] || (k[f.ziel] = { titel:f.titel, grund:f.grund, ziel:f.ziel, ids:[], titel2:[] });
+    g.ids.push(f.id);
+    // Jeder Name wird mitgeführt. Sonst verschwindet der zweite Eintrag einer Gruppe
+    // still: der Nutzer entfernt ihn mit, ohne ihn je gelesen zu haben.
+    if(g.titel2.indexOf(f.titel) < 0) g.titel2.push(f.titel);
+  });
+
+  Object.keys(kats).forEach(kat => {
+    const gruppen = Object.keys(kats[kat]).map(z => kats[kat][z]);
+    const p = el('div','panel');
+    p.innerHTML = '<div class="panel-h"><div class="panel-t">' + esc(kat) +
+      ' <span class="pill unknown">' + gruppen.length + '</span></div>' +
+      '<div class="panel-d">' + esc((m.hinweise && m.hinweise[kat]) || '') + '</div></div>';
+
+    const alle = el('div','row');
+    alle.innerHTML = '<span class="row-b"><span class="row-s">Alle in dieser Gruppe auswählen</span></span>';
+    const knopf = el('button','btn btn-ghost','Alle auswählen');
+    // Der Knopf richtet sich nach seiner eigenen Beschriftung, nicht nach dem Zustand
+    // der Kästchen. Sonst kehrte er sich um, sobald der Nutzer eine einzelne Zeile von
+    // Hand abwählte: „Auswahl aufheben“ hakte dann alles an, auch die eben abgewählte
+    // Zeile - und das auf dem Weg, der Einträge entfernt.
+    let angehakt = false;
+    knopf.onclick = () => {
+      angehakt = !angehakt;
+      Array.prototype.slice.call(p.querySelectorAll('input[data-ids]'))
+        .forEach(x => { x.checked = angehakt; });
+      knopf.textContent = angehakt ? 'Auswahl aufheben' : 'Alle auswählen';
+    };
+    alle.appendChild(knopf);
+    p.appendChild(alle);
+
+    gruppen.forEach(g => {
+      const row = el('label','row');
+      row.innerHTML =
+        '<span class="row-b"><span class="row-t">' + esc(g.titel2.join(', ')) +
+          (g.ids.length > 1 ? '<span class="tag rec">' + g.ids.length + ' Einträge</span>' : '') + '</span>' +
+        '<span class="row-s">' + esc(g.grund) + '</span>' +
+        '<span class="row-s">Zeigt auf: ' + esc(g.ziel) + '</span></span>' +
+        '<span class="switch"><input type="checkbox" data-ids="' + esc(g.ids.join(',')) + '"' +
+        // Nichts ist vorangehakt. Wer in der Registrierung etwas entfernt, soll das
+        // bewusst tun - nicht, weil ein Programm es ihm vorausgewählt hat.
+        ' aria-label="' + esc(g.titel) + ' entfernen" /><i></i></span>';
+      p.appendChild(row);
+    });
+    b.appendChild(p);
+  });
+
+  const bar = el('div','next');
+  bar.innerHTML = '<span class="next-b"><span class="next-t">Ausgewählte Einträge entfernen</span>' +
+    '<span class="next-s">Vorher schreiben wir eine Sicherungsdatei. Damit lässt sich jeder ' +
+    'einzelne Eintrag mit einem Doppelklick zurückholen. Zusätzlich versuchen wir, einen ' +
+    'Sicherungspunkt von Windows anzulegen.</span></span>';
+  const go2 = el('button','btn btn-danger','Entfernen');
+  go2.onclick = () => starteRegistryClean(b);
+  bar.appendChild(go2);
+  b.appendChild(bar);
+
+  $('#sub-foot').innerHTML = svg('info') +
+    '<span>Es wird nichts entfernt, was nur gerade nicht erreichbar ist: Einträge auf USB-Sticks, ' +
+    'Speicherkarten und Netzlaufwerken bleiben unangetastet.</span>';
+}
+
+function starteRegistryClean(b){
+  if(!S.admin){ needAdmin(); return; }
+  const sel = Array.prototype.slice.call(b.querySelectorAll('input[data-ids]:checked'));
+  if(!sel.length){ toast('Nichts ausgewählt','Wählen Sie zuerst aus, was entfernt werden soll.','warn'); return; }
+
+  const ids = [];
+  sel.forEach(x => x.dataset.ids.split(',').filter(Boolean).forEach(i => ids.push(i)));
+  if(!ids.length){ toast('Nichts ausgewählt','Zu dieser Auswahl liegt kein Eintrag vor.','warn'); return; }
+
+  const namen = sel.slice(0, 12)
+    .map(x => '· ' + x.closest('.row').querySelector('.row-t').textContent.replace(/\d+ Einträge$/,'').trim())
+    .join('\n');
+  const rest = sel.length > 12 ? '\n· … und ' + (sel.length - 12) + ' weitere' : '';
+  // Eine Zeile kann für mehrere Einträge stehen. Dann muss die Sicherheitsfrage die
+  // echte Zahl nennen, sonst bestätigt der Nutzer mehr, als vor ihm steht.
+  const anzahl = ids.length !== sel.length
+    ? '\n\nDas sind zusammen ' + ids.length + ' Einträge.' : '';
+
+  confirmModal('Diese Einträge entfernen?',
+    namen + rest + anzahl +
+    '\n\nVorher schreiben wir eine Sicherungsdatei mit genau diesen Einträgen. Lässt sie ' +
+    'sich nicht vollständig schreiben, wird nichts verändert. Zusätzlich versuchen wir, ' +
+    'einen Sicherungspunkt von Windows anzulegen; ob das geklappt hat, sagen wir Ihnen ' +
+    'hinterher.',
+    'Entfernen', () => {
+      scanLaeuft('Einträge werden entfernt',
+        'Erst der Sicherungspunkt, dann die Sicherungsdatei, dann die Einträge. ' +
+        'Das dauert einen Moment und lässt sich nicht mehr anhalten.', false);
+      send({type:'registryClean', ids:ids});
+    }, true);
+}
 
 /* ---------- Fenstersteuerung ---------- */
 $$('.wc').forEach(b => b.onclick = () => send({type:'win', action:b.dataset.win}));

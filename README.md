@@ -55,13 +55,47 @@ Dazu: **Sicherungspunkte** anlegen und zurücksetzen, **automatische Wartung** n
 **Verlauf**, **Startprogramme** an- und abschalten, **vorinstallierte Apps** entfernen
 (nur bekannte, unbedenkliche), **Energieplan** wählen.
 
+### Wo steckt der Platz?
+
+Beantwortet die Frage, die nach „Ihr Speicher wird knapp“ als Nächstes kommt. Oben, was das
+Programm selbst gefahrlos wegräumen kann, jede Kategorie einzeln mit ihrer Größe:
+Papierkorb, temporäre Dateien, heruntergeladene Update-Dateien, Vorschaubilder,
+Zwischenspeicher der Browser und der Spiele-Plattformen. Unten die größten Ordner und
+Dateien in den eigenen Bereichen, die das Programm **nicht** anfasst.
+
+Der Papierkorb ist nie vorangehakt, weil sein Inhalt danach endgültig weg ist. Der Ordner
+`Downloads` wird gar nicht erst zum Aufräumen angeboten: dort landen Dateien, die man
+behalten möchte. Gemeldet wird der tatsächlich gewonnene Platz, nicht der erhoffte.
+
+### Einträge, die ins Leere zeigen
+
+Sucht Registrierungs-Einträge, die eine Datei nennen, die es nicht mehr gibt. Der Zuschnitt
+ist bewusst eng, weil eine falsche Vermutung hier Programme kaputt macht:
+
+- Gemeldet wird **nur Nachweisbares**. Kategorien wie „unbenutzte Dateiendungen“ bleiben
+  außen vor, dort wäre „verwaist“ geraten.
+- Ein Programm gilt erst als verschwunden, wenn **auch der Weg zum Deinstallieren** ins
+  Leere führt. Ein fehlender Installationsordner allein genügt nicht: viele Pakete tragen
+  dort den Ordner ein, in den sie sich zum Installieren entpackt haben.
+- Aufrufe über `msiexec`, `rundll32` und Konsorten werden übersprungen, ebenso alles auf
+  Wechseldatenträgern und Netzlaufwerken.
+- Vor dem Entfernen: **Sicherungspunkt** und zusätzlich eine `.reg`-Sicherungsdatei, mit
+  der sich jeder Eintrag per Doppelklick zurückholen lässt. Scheitert die Sicherung, wird
+  nichts verändert.
+- **Nichts ist vorausgewählt**, und die Ansicht verspricht kein höheres Tempo.
+
 ## Grundsätze
 
 - **Alltagssprache.** Jede Kachel heißt nach ihrer Aufgabe, nicht nach ihrem Werkzeug. Der
   Fachname steht klein darunter. Ein Prüfskript wacht darüber, dass das so bleibt.
 - **Kein Punktestand.** Eine nicht nachrechenbare Zahl ist die Masche unseriöser
   „PC-Reiniger“. Hier steht der Zustand je Bereich in Worten, mit dem echten Messwert.
-- **Keine Registry-Reinigung.** Microsoft unterstützt sie ausdrücklich nicht.
+- **Keine Versprechen, die niemand einlösen kann.** Das Programm behauptet nirgends, den PC
+  schneller zu machen. Wo eine Aufräum-Funktion nur Ordnung schafft, steht das auch so da.
+- **Nur Nachweisbares.** Das gilt besonders für die Registrierung: gemeldet wird
+  ausschließlich, was sich belegen lässt, nie eine Vermutung. Nichts ist dort
+  vorausgewählt, und vor dem Entfernen steht eine Sicherung, die sich per Doppelklick
+  zurückspielen lässt.
 - **Rückgängig vor Rückfrage.** Vor jedem Eingriff wird ein Sicherungspunkt angelegt, auch
   bei den riskanten Aktionen. Bestätigungsdialoge gibt es nur, wo etwas unumkehrbar ist.
 - **Keine erfundenen Diagnosen.** Gedeutet werden nur offiziell dokumentierte Fehlercodes
@@ -72,6 +106,7 @@ Dazu: **Sicherungspunkte** anlegen und zurücksetzen, **automatische Wartung** n
 ```
 host/        C#-Host: Fenster, WebView2, Nachrichtenbrücke, Update
 host/CheckFlow.cs   der Hauptweg (prüfen und beheben)
+host/ScanFlow.cs    die beiden Suchläufe (Speicherplatz, Registrierung)
 ui/          Oberfläche in HTML/CSS/JS
 src/         Aktionskatalog, Prüfungen, Befehls-Runner, Protokoll
 tests/       Prüfskript für Sprache, Optik und Sicherheitszusagen
@@ -108,8 +143,10 @@ C# 5 und lehnt jede höhere Sprachversion mit `CS1617` ab.
 .\bin\WindowsWartung.exe --shot bild.png --view light,tools --shotwait 4000
 ```
 
-`--view` versteht `light`, `dark`, eine Ansicht (`tools`, `history`, `settings` …) und
-`check` für einen automatisch gestarteten Prüflauf. Kommagetrennt kombinierbar.
+`--view` versteht `light`, `dark`, eine Ansicht (`tools`, `history`, `settings`, `storage`,
+`registry` …) und `check` für einen automatisch gestarteten Prüflauf. Kommagetrennt
+kombinierbar. Die beiden Suchläufe starten beim Öffnen ihrer Ansicht von selbst, deshalb
+dort `--shotwait` großzügig setzen.
 
 ## Hinweise
 
