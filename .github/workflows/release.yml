@@ -56,7 +56,7 @@ jobs:
           }
           Write-Host "Version ok: $ver (Tag $env:GITHUB_REF_NAME)"
 
-      - name: Signieren (optional, wenn Zertifikat hinterlegt)
+      - name: Programmdatei signieren
         shell: powershell
         env:
           PFX_B64: ${{ secrets.CODESIGN_PFX_BASE64 }}
@@ -64,17 +64,22 @@ jobs:
         run: |
           if (-not $env:PFX_B64) { Write-Host "Kein Signatur-Zertifikat hinterlegt - ueberspringe."; exit 0 }
           [IO.File]::WriteAllBytes("cert.pfx", [Convert]::FromBase64String($env:PFX_B64))
-          try {
-            ./sign.ps1 -File bin\WindowsWartung.exe -Pfx cert.pfx -Password $env:PFX_PW
-            if ($LASTEXITCODE -ne 0) { throw "signtool meldete ExitCode $LASTEXITCODE" }
-          } finally {
-            Remove-Item cert.pfx -Force -ErrorAction SilentlyContinue
-          }
+          ./sign.ps1 -File bin\WindowsWartung.exe -Pfx cert.pfx -Password $env:PFX_PW
+          # cert.pfx wird NICHT hier geloescht - der Installer wird gleich damit signiert.
+          # Das Aufraeumen erledigt der eigene Schritt am Ende, der immer laeuft.
+          #
           # Ohne diese Kontrolle war eine fehlgeschlagene Signatur unsichtbar: der Schritt
           # endete mit dem Erfolg des Aufraeumens und das Release ging unsigniert raus.
           $sig = Get-AuthenticodeSignature bin\WindowsWartung.exe
           Write-Host "Signaturstatus: $($sig.Status) - $($sig.SignerCertificate.Subject)"
           if ($sig.Status -eq 'NotSigned') { Write-Error "Signatur fehlt, obwohl ein Zertifikat hinterlegt ist."; exit 1 }
+          # Die Herausgeber-Bindung der App haengt am Namen im Zertifikat. Aendert der sich
+          # unbemerkt, lehnen alle installierten Fassungen jedes weitere Update ab.
+          $erwartet = 'CN=Jonas (Windows-Wartung)'
+          if ($sig.SignerCertificate.Subject -ne $erwartet) {
+            Write-Error "Herausgeber weicht ab: '$($sig.SignerCertificate.Subject)' statt '$erwartet'. Installierte Fassungen wuerden dieses Update ablehnen."
+            exit 1
+          }
 
       - name: Paket schnüren (ZIP)
         shell: powershell
@@ -95,10 +100,31 @@ jobs:
           $ver = (Get-Item bin\WindowsWartung.exe).VersionInfo.FileVersion
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$ver" installer\WindowsWartung.iss
           if ($LASTEXITCODE -ne 0) { Write-Error "Inno Setup meldete ExitCode $LASTEXITCODE"; exit 1 }
-          # Der Installer ist der empfohlene Weg - also bekommt auch er eine Pruefsumme,
-          # damit sich ein Download ueberpruefen laesst.
+
+      # Der Installer ist der empfohlene Weg fuer Endnutzer - er wird deshalb ebenfalls
+      # signiert, und zwar NACH dem Bauen (Inno erzeugt die Datei erst hier).
+      - name: Installer signieren
+        shell: powershell
+        run: |
+          if (-not (Test-Path cert.pfx)) { Write-Host "Kein Zertifikat - ueberspringe."; exit 0 }
+          ./sign.ps1 -File dist\WindowsWartung-Setup.exe -Pfx cert.pfx -Password $env:PFX_PW
+          $sig = Get-AuthenticodeSignature dist\WindowsWartung-Setup.exe
+          Write-Host "Installer-Signatur: $($sig.Status) - $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -eq 'NotSigned') { Write-Error "Installer blieb unsigniert."; exit 1 }
+        env:
+          PFX_PW: ${{ secrets.CODESIGN_PASSWORD }}
+
+      # Erst jetzt die Pruefsumme: sie muss die SIGNIERTE Datei beschreiben.
+      - name: Pruefsumme des Installers
+        shell: powershell
+        run: |
           (Get-FileHash dist\WindowsWartung-Setup.exe -Algorithm SHA256).Hash |
             Set-Content -NoNewline dist\WindowsWartung-Setup.exe.sha256
+
+      - name: Zertifikat vom Bau-Server entfernen
+        if: always()
+        shell: powershell
+        run: Remove-Item cert.pfx -Force -ErrorAction SilentlyContinue
 
       - name: Build-Artefakt hochladen (manuelle Läufe)
         if: github.event_name == 'workflow_dispatch'

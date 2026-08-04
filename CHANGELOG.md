@@ -1,5 +1,25 @@
 # Changelog
 
+## [7.0.3] - 2026-08-04
+
+Erste signierte Ausgabe.
+
+### Neu
+
+- **Programm und Installer sind signiert.** Beides trägt jetzt eine Authenticode-Signatur
+  mit Zeitstempel. Das macht nachträgliche Veränderungen erkennbar: Windows meldet eine
+  beschädigte Datei, statt sie stillschweigend auszuführen.
+- **Damit greift die Herkunftsprüfung aus 7.0.2 wirklich.** Eine neue Fassung wird nur noch
+  angenommen, wenn sie denselben Herausgeber trägt. Getestet: gleiche Herkunft wird
+  angenommen, eine unsignierte und eine fremd signierte Fassung werden abgelehnt.
+
+### Gut zu wissen
+
+Das Zertifikat ist selbst ausgestellt, nicht von einer anerkannten Stelle gekauft. Beim
+ersten Start zeigt Windows deshalb weiterhin den Hinweis „Der Computer wurde geschützt“;
+über *Weitere Informationen → Trotzdem ausführen* startet das Programm. Was die Signatur
+trotzdem bringt: Sie erkennt Manipulationen, und sie schützt die Selbstaktualisierung.
+
 ## [7.0.2] - 2026-08-04
 
 Sicherheit rund um die Selbstaktualisierung.
