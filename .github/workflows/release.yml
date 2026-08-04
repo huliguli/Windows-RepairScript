@@ -126,16 +126,31 @@ jobs:
           }
           # Ein abgebrochener Lauf hinterlaesst einen Entwurf; ohne Aufraeumen scheitert
           # der Neustart des Workflows an "release already exists".
-          gh release view $tag --json isDraft 2>$null | Out-Null
-          if ($LASTEXITCODE -eq 0) {
+          #
+          # WICHTIG: GitHub setzt in PowerShell-Schritten ErrorActionPreference=Stop.
+          # "gh release view" schreibt bei fehlendem Release "release not found" auf
+          # stderr, und das beendet den Schritt sofort - obwohl genau dieser Fall der
+          # Normalzustand ist. Deshalb die Abfrage in Continue kapseln und nur den
+          # ExitCode auswerten.
+          $prevEap = $ErrorActionPreference
+          $ErrorActionPreference = 'Continue'
+          gh release view $tag 2>&1 | Out-Null
+          $exists = ($LASTEXITCODE -eq 0)
+          $ErrorActionPreference = $prevEap
+          if ($exists) {
             Write-Host "Vorhandenes Release/Entwurf $tag wird entfernt (Wiederholungslauf)."
             gh release delete $tag --yes --cleanup-tag=false
+            if ($LASTEXITCODE -ne 0) { Write-Error "Aufraeumen fehlgeschlagen."; exit 1 }
           }
           ./tools/release-notes.ps1 -Tag $tag -OutFile "release-notes.md"
           gh release create $tag --draft --title "Windows-Wartung $tag" --notes-file "release-notes.md"
           if ($LASTEXITCODE -ne 0) { exit 1 }
-          gh release upload $tag @assets
-          if ($LASTEXITCODE -ne 0) { exit 1 }
+          # Jede Datei einzeln anhaengen: eindeutiger als Array-Splatting und der
+          # Fehlschlag laesst sich der konkreten Datei zuordnen.
+          foreach ($f in $assets) {
+            gh release upload $tag $f
+            if ($LASTEXITCODE -ne 0) { Write-Error "Anhaengen fehlgeschlagen: $f"; exit 1 }
+          }
           gh release edit $tag --draft=false --latest
           if ($LASTEXITCODE -ne 0) { exit 1 }
           Write-Host "Release $tag veroeffentlicht (alle Dateien angehaengt)."
