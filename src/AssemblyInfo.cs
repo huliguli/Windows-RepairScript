@@ -5,5 +5,5 @@ using System.Reflection;
 [assembly: AssemblyDescription("Wartung und Reparatur für Windows, in einfachen Worten")]
 [assembly: AssemblyCompany("Jonas")]
 [assembly: AssemblyCopyright("© 2026 Jonas")]
-[assembly: AssemblyVersion("7.0.1.0")]
-[assembly: AssemblyFileVersion("7.0.1.0")]
+[assembly: AssemblyVersion("7.0.2.0")]
+[assembly: AssemblyFileVersion("7.0.2.0")]

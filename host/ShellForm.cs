@@ -41,6 +41,8 @@ namespace WartungsToolbox
         string _updateTag;
         string _updateAsset;
         string _updateHashUrl;
+        string _updateSetup;       // Installer des Releases (falls per Installer installiert)
+        string _updateSetupHashUrl;
 
         [DllImport("user32.dll")] static extern bool ReleaseCapture();
         [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
@@ -312,7 +314,16 @@ namespace WartungsToolbox
                     string name = data.ContainsKey("name") ? Convert.ToString(data["name"]) : "";
                     if (string.IsNullOrEmpty(tag)) return;
 
-                    // ZIP-Asset fuer das In-App-Update suchen
+                    // Dateien des Releases nach Namen zuordnen.
+                    //
+                    // Frueher galt "die letzte Datei auf .sha256" als Pruefsumme. Seit das
+                    // Release AUCH eine Pruefsumme fuer den Installer mitbringt, sind das
+                    // zwei Kandidaten, und welcher gewinnt, haengt allein an der Reihenfolge
+                    // der API. Heute passt es zufaellig (alphabetisch steht die ZIP-Summe
+                    // hinten); dreht sich das, wuerde das ZIP gegen die Installer-Summe
+                    // geprueft und das Update als "beschaedigt" abgelehnt.
+                    // Deshalb: die Pruefsumme heisst IMMER "<Datei>.sha256".
+                    var dateien = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                     object assetsObj;
                     if (data.TryGetValue("assets", out assetsObj) && assetsObj is object[])
                     {
@@ -320,12 +331,28 @@ namespace WartungsToolbox
                         {
                             Dictionary<string, object> ad = ao as Dictionary<string, object>;
                             if (ad == null) continue;
-                            string au = ad.ContainsKey("browser_download_url") ? Convert.ToString(ad["browser_download_url"]) : "";
-                            if (au.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-                                _updateAsset = au;
-                            else if (au.EndsWith(".sha256", StringComparison.OrdinalIgnoreCase))
-                                _updateHashUrl = au;
+                            string dateiName = ad.ContainsKey("name") ? Convert.ToString(ad["name"]) : "";
+                            string dateiUrl = ad.ContainsKey("browser_download_url") ? Convert.ToString(ad["browser_download_url"]) : "";
+                            if (dateiName.Length > 0 && dateiUrl.Length > 0) dateien[dateiName] = dateiUrl;
                         }
+                    }
+
+                    string zipName = dateien.Keys.FirstOrDefault(
+                        n => n.EndsWith(".zip", StringComparison.OrdinalIgnoreCase));
+                    if (zipName != null)
+                    {
+                        _updateAsset = dateien[zipName];
+                        string h;
+                        _updateHashUrl = dateien.TryGetValue(zipName + ".sha256", out h) ? h : null;
+                    }
+
+                    string setupName = dateien.Keys.FirstOrDefault(
+                        n => n.EndsWith("-Setup.exe", StringComparison.OrdinalIgnoreCase));
+                    if (setupName != null)
+                    {
+                        _updateSetup = dateien[setupName];
+                        string h;
+                        _updateSetupHashUrl = dateien.TryGetValue(setupName + ".sha256", out h) ? h : null;
                     }
 
                     Version latest = ParseVer(tag);
@@ -383,6 +410,20 @@ namespace WartungsToolbox
                 {
                     try { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); } catch { }
                     CreateAdminOnlyDirectory(tmp);
+
+                    // Wurde die App ueber den Installer eingerichtet, wird auch ueber den
+                    // Installer aktualisiert. Ein blosser Dateitausch laesst sonst den
+                    // Eintrag unter "Apps und Features" auf der alten Version stehen, und
+                    // eine spaetere Deinstallation raeumt nicht mehr alles weg.
+                    string installOrt;
+                    if (UpdateTrust.IstPerInstallerInstalliert(out installOrt)
+                        && !string.IsNullOrEmpty(_updateSetup))
+                    {
+                        AppLog.Info("Aktualisierung ueber den Installer (" + installOrt + ").");
+                        UpdateViaInstaller(tmp);
+                        return;
+                    }
+
                     string zip = Path.Combine(tmp, "update.zip");
 
                     SetupTls();
@@ -400,37 +441,11 @@ namespace WartungsToolbox
                         return;
                     }
 
-                    // Echtheitspruefung. Frueher war sie fail-open: fehlte die .sha256 im
-                    // Release oder scheiterte ihr Abruf, wurde ohne jede Pruefung installiert.
-                    // Jetzt bricht jeder dieser Faelle ab.
-                    if (string.IsNullOrEmpty(_updateHashUrl))
-                    {
-                        AppLog.Warn("Update abgebrochen: keine Pruefsumme im Release hinterlegt.");
-                        UiPost(new { type = "updateError", message = "Zu diesem Update fehlt die Prüfsumme. Aus Sicherheitsgründen wurde es nicht installiert." });
-                        return;
-                    }
-                    string expected = null;
-                    try
-                    {
-                        using (WebClient hw = new WebClient())
-                        {
-                            hw.Headers.Add("User-Agent", UserAgent);
-                            expected = (hw.DownloadString(_updateHashUrl) ?? "").Trim();
-                        }
-                    }
-                    catch (Exception ex) { AppLog.Warn("Pruefsumme nicht abrufbar: " + ex.Message); }
-
-                    if (string.IsNullOrEmpty(expected))
-                    {
-                        UiPost(new { type = "updateError", message = "Die Prüfsumme konnte nicht geladen werden. Aus Sicherheitsgründen wurde das Update nicht installiert." });
-                        return;
-                    }
-                    if (!string.Equals(expected, Sha256File(zip), StringComparison.OrdinalIgnoreCase))
-                    {
-                        AppLog.Error("Update abgebrochen: Pruefsumme weicht ab.");
-                        UiPost(new { type = "updateError", message = "Die heruntergeladene Datei ist beschädigt. Aus Sicherheitsgründen wurde die Installation abgebrochen. Bitte versuchen Sie es später erneut." });
-                        return;
-                    }
+                    // Pruefsumme gegen den Download (Unversehrtheit). Frueher war das
+                    // fail-open: fehlte die .sha256 oder scheiterte ihr Abruf, wurde ohne
+                    // jede Pruefung installiert. Jetzt bricht jeder dieser Faelle ab.
+                    string pruef = PruefeZip(zip);
+                    if (pruef != null) { UiPost(new { type = "updateError", message = pruef }); return; }
 
                     UiPost(new { type = "updateStatus", phase = "extract" });
 
@@ -449,6 +464,127 @@ namespace WartungsToolbox
 
         const string UserAgent = "WindowsWartung-Updater";
         const long MaxUpdateBytes = 200L * 1024 * 1024;   // Reissleine gegen endlose Antworten
+
+        /// <summary>
+        /// Aktualisierung ueber den Installer des Releases. Laeuft still durch und ersetzt
+        /// die Installation sauber, inklusive Eintrag unter "Apps und Features".
+        /// </summary>
+        void UpdateViaInstaller(string tmp)
+        {
+            SetupTls();
+            UiPost(new { type = "updateStatus", phase = "download" });
+
+            string setup = Path.Combine(tmp, "setup.exe");
+            string fehler = DownloadWithProgress(_updateSetup, setup);
+            if (fehler != null)
+            {
+                AppLog.Warn("Installer-Download fehlgeschlagen: " + fehler);
+                UiPost(new { type = "updateError", message = fehler });
+                return;
+            }
+
+            string pruef = PruefeDatei(setup, _updateSetupHashUrl);
+            if (pruef != null) { UiPost(new { type = "updateError", message = pruef }); return; }
+
+            UiPost(new { type = "updateStatus", phase = "restart" });
+            WriteMarker(_updateTag);
+            AppLog.Info("Installer wird still ausgefuehrt.");
+
+            try
+            {
+                // /VERYSILENT: keine Oberflaeche. /NORESTART: der Installer startet den PC nicht neu.
+                // Der Installer wartet, bis diese Instanz beendet ist - deshalb erst starten,
+                // dann beenden.
+                ProcessStartInfo psi = new ProcessStartInfo(setup,
+                    "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOCANCEL")
+                {
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                };
+                Process.Start(psi);
+                BeginInvoke((Action)delegate { Application.Exit(); });
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("Installer liess sich nicht starten", ex);
+                UiPost(new { type = "updateError", message = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Prueft eine heruntergeladene Datei: erst die Pruefsumme (Unversehrtheit), dann
+        /// den Herausgeber (Herkunft). Gibt null zurueck, wenn beides in Ordnung ist.
+        /// Fail-closed: fehlt die Pruefsumme oder laesst sie sich nicht laden, wird abgebrochen.
+        /// </summary>
+        string PruefeDatei(string datei, string hashUrl)
+        {
+            if (string.IsNullOrEmpty(hashUrl))
+            {
+                AppLog.Warn("Update abgebrochen: keine Pruefsumme im Release hinterlegt.");
+                return "Zu diesem Update fehlt die Prüfsumme. Aus Sicherheitsgründen wurde es nicht installiert.";
+            }
+
+            string erwartet = null;
+            try
+            {
+                using (WebClient hw = new WebClient())
+                {
+                    hw.Headers.Add("User-Agent", UserAgent);
+                    erwartet = (hw.DownloadString(hashUrl) ?? "").Trim();
+                }
+            }
+            catch (Exception ex) { AppLog.Warn("Pruefsumme nicht abrufbar: " + ex.Message); }
+
+            if (string.IsNullOrEmpty(erwartet))
+                return "Die Prüfsumme konnte nicht geladen werden. Aus Sicherheitsgründen wurde das Update nicht installiert.";
+
+            if (!string.Equals(erwartet, Sha256File(datei), StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Error("Update abgebrochen: Pruefsumme weicht ab.");
+                return "Die heruntergeladene Datei ist beschädigt. Aus Sicherheitsgründen wurde die " +
+                       "Installation abgebrochen. Bitte versuchen Sie es später erneut.";
+            }
+
+            // Die Pruefsumme liegt im selben Release wie die Datei - sie belegt nur, dass der
+            // Download heil ankam. Die Herkunft belegt erst die Signatur, gebunden an den
+            // bereits installierten Herausgeber.
+            return UpdateTrust.PruefeHerausgeber(datei);
+        }
+
+        /// <summary>
+        /// Nur die Pruefsumme des ZIP. Die Signatur sitzt an der EXE IM Paket und wird
+        /// deshalb erst nach dem Entpacken geprueft (siehe FinishUpdate).
+        /// </summary>
+        string PruefeZip(string zip)
+        {
+            if (string.IsNullOrEmpty(_updateHashUrl))
+            {
+                AppLog.Warn("Update abgebrochen: keine Pruefsumme im Release hinterlegt.");
+                return "Zu diesem Update fehlt die Prüfsumme. Aus Sicherheitsgründen wurde es nicht installiert.";
+            }
+
+            string erwartet = null;
+            try
+            {
+                using (WebClient hw = new WebClient())
+                {
+                    hw.Headers.Add("User-Agent", UserAgent);
+                    erwartet = (hw.DownloadString(_updateHashUrl) ?? "").Trim();
+                }
+            }
+            catch (Exception ex) { AppLog.Warn("Pruefsumme nicht abrufbar: " + ex.Message); }
+
+            if (string.IsNullOrEmpty(erwartet))
+                return "Die Prüfsumme konnte nicht geladen werden. Aus Sicherheitsgründen wurde das Update nicht installiert.";
+
+            if (!string.Equals(erwartet, Sha256File(zip), StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Error("Update abgebrochen: Pruefsumme weicht ab.");
+                return "Die heruntergeladene Datei ist beschädigt. Aus Sicherheitsgründen wurde die " +
+                       "Installation abgebrochen. Bitte versuchen Sie es später erneut.";
+            }
+            return null;
+        }
 
         static void SetupTls()
         {
@@ -572,9 +708,20 @@ namespace WartungsToolbox
                 if (Directory.Exists(newDir)) Directory.Delete(newDir, true);
                 ZipFile.ExtractToDirectory(zip, newDir);
 
-                if (!File.Exists(Path.Combine(newDir, "WindowsWartung.exe")))
+                string neueExe = Path.Combine(newDir, "WindowsWartung.exe");
+                if (!File.Exists(neueExe))
                 {
                     Post(new { type = "updateError", message = "Paket enthält keine WindowsWartung.exe." });
+                    return;
+                }
+
+                // Herkunft pruefen, BEVOR getauscht wird: die neue Fassung muss vom selben
+                // Herausgeber stammen wie die laufende. Die Pruefsumme allein sagt darueber
+                // nichts, weil sie im selben Release liegt wie die Datei.
+                string herkunft = UpdateTrust.PruefeHerausgeber(neueExe);
+                if (herkunft != null)
+                {
+                    Post(new { type = "updateError", message = herkunft });
                     return;
                 }
 

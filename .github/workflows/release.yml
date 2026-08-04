@@ -24,12 +24,12 @@ jobs:
 
     steps:
       - name: Repository auschecken
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # Der Bau nutzt den Roslyn-Compiler aus dem SDK (der eingebaute Framework-Compiler
       # kann nur C# 5). Version festgenagelt, damit ein Release reproduzierbar bleibt.
       - name: .NET SDK bereitstellen
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
 
@@ -102,7 +102,7 @@ jobs:
 
       - name: Build-Artefakt hochladen (manuelle Läufe)
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: WindowsWartung
           path: |

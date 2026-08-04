@@ -243,6 +243,79 @@ $shellText2 = [IO.File]::ReadAllText((Join-Path $root 'host\ShellForm.cs'), [Tex
 if ($shellText2 -match 'restore\s*&&\s*a\.IsRepair') { $hits += "host/ShellForm.cs prueft wieder nur IsRepair statt WantsRestorePoint" }
 Test-Result "Riskante Aktionen bekommen einen Sicherungspunkt" ($hits.Count -eq 0) $hits
 
+# Kein Passwort im Quelltext. Ein fest verdrahteter Vorgabewert fuer die PFX stand
+# hier zusammen mit dem Hinweis, wo die Datei liegt.
+$hits = @()
+foreach ($f in (Get-ChildItem $root -Filter *.ps1 -Recurse |
+                Where-Object { $_.FullName -notmatch '\\(bin|dist|cert)\\' })) {
+    $i = 0
+    foreach ($line in [IO.File]::ReadAllLines($f.FullName, [Text.Encoding]::UTF8)) {
+        $i++
+        if ($line -match '(?i)\$(Cert)?Password[^=]*=\s*"[^"$]+"') {
+            $hits += "$($f.Name):$i  $($line.Trim())"
+        }
+    }
+}
+Test-Result "Kein fest verdrahtetes Zertifikat-Passwort" ($hits.Count -eq 0) $hits
+
+# Die Pruefsumme muss ueber den Dateinamen zugeordnet werden. Seit das Release zwei
+# .sha256-Dateien enthaelt (ZIP und Installer), entscheidet sonst die Reihenfolge der
+# API darueber, wogegen geprueft wird - heute zufaellig richtig, morgen vielleicht nicht.
+$hits = @()
+if ($shellText3 -match 'EndsWith\("\.sha256"') {
+    $hits += "Der Updater ordnet die Pruefsumme wieder ueber die Endung statt ueber den Dateinamen zu"
+}
+if ($shellText2 -notmatch '\+ "\.sha256"') {
+    $hits += "Der Updater bildet den Pruefsummen-Namen nicht mehr aus dem Dateinamen"
+}
+Test-Result "Pruefsumme wird eindeutig zugeordnet" ($hits.Count -eq 0) $hits
+
+# Die Herkunft wird an den installierten Herausgeber gebunden, bevor getauscht wird.
+$hits = @()
+if ($shellText2 -notmatch 'UpdateTrust\.PruefeHerausgeber') {
+    $hits += "Das Update prueft den Herausgeber nicht mehr"
+}
+Test-Result "Update ist an den Herausgeber gebunden" ($hits.Count -eq 0) $hits
+
+# Die Bindung ist nicht nur vorhanden, sie funktioniert auch: TrustProbe.cs uebersetzt
+# src/UpdateTrust.cs und prueft es gegen echte signierte Dateien (die WebView2-DLLs
+# aus libs/ sind von Microsoft eingebettet signiert und liegen im Repository).
+$hits = @()
+$dotnet = Get-Command dotnet -ErrorAction SilentlyContinue
+if (-not $dotnet) {
+    $hits += "dotnet nicht gefunden - die Signatur-Probe konnte NICHT laufen"
+} else {
+    $sdkRoot = Join-Path (Split-Path -Parent $dotnet.Source) 'sdk'
+    $csc = Get-ChildItem (Join-Path $sdkRoot '*\Roslyn\bincore\csc.dll') -ErrorAction SilentlyContinue |
+           Sort-Object { [version]($_.FullName -replace '.*\\sdk\\([0-9.]+)\\.*','$1') } | Select-Object -Last 1
+    $refDir = @(
+        (Join-Path $sdkRoot '..\packs\Microsoft.NETFramework.ReferenceAssemblies.net48\*\build\.NETFramework\v4.8'),
+        "${env:ProgramFiles(x86)}\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.8"
+    ) | ForEach-Object { Get-Item $_ -ErrorAction SilentlyContinue } |
+        Where-Object { $_ -and (Test-Path (Join-Path $_.FullName 'mscorlib.dll')) } | Select-Object -First 1
+
+    if (-not $csc -or -not $refDir) {
+        $hits += "Compiler oder Referenzassemblies nicht gefunden - Signatur-Probe uebersprungen"
+    } else {
+        $exe = Join-Path $env:TEMP 'WW_TrustProbe.exe'
+        $refs = @('mscorlib.dll','System.dll','System.Core.dll','System.Windows.Forms.dll') |
+                ForEach-Object { "/r:$($refDir.FullName)\$_" }
+        $bauArgs = @($csc.FullName,'/nologo','/nostdlib+','/target:exe','/platform:x64',
+                     "/out:$exe",'/codepage:65001','/langversion:latest') + $refs +
+                   @((Join-Path $root 'src\UpdateTrust.cs'), (Join-Path $root 'src\AppLog.cs'),
+                     (Join-Path $root 'tests\TrustProbe.cs'))
+        $bauOut = & dotnet @bauArgs 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            $hits += "Probe liess sich nicht uebersetzen: " + (($bauOut | Select-Object -First 2) -join ' | ')
+        } else {
+            & $exe $root
+            if ($LASTEXITCODE -ne 0) { $hits += "mindestens eine Teilpruefung der Signatur-Bindung ist rot" }
+            Remove-Item $exe -ErrorAction SilentlyContinue
+        }
+    }
+}
+Test-Result "Signatur-Bindung funktioniert gegen echte Dateien" ($hits.Count -eq 0) $hits
+
 Write-Host "`nFunktionsumfang" -ForegroundColor Cyan
 
 # Jeder Befehl, den der Host versteht, muss von der Oberflaeche auch ausloesbar sein.

@@ -10,7 +10,8 @@
 # /langversion oberhalb von 5 mit CS1617 ab. Deshalb ist das SDK Pflicht.
 #
 # Schalter -Release bindet das Admin-Manifest ein (UAC). Ohne -Release: Dev-Build ohne Manifest.
-param([switch]$Release, [switch]$Sign, [string]$CertPassword = "wartung")
+# CertPassword ohne Vorgabe: sign.ps1 fragt sonst nach bzw. nimmt WW_CERT_PASSWORD.
+param([switch]$Release, [switch]$Sign, [string]$CertPassword)
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -86,7 +87,7 @@ try {
         'src\ActionCatalog.cs','src\MaintenanceAction.cs','src\CommandRunner.cs',
         'src\NativeMethods.cs','src\History.cs','src\RestorePoints.cs','src\PowerPlans.cs',
         'src\AppxCleaner.cs','src\Explain.cs','src\Scheduler.cs','src\AutoRunner.cs',
-        'src\AppLog.cs','src\Shell.cs','src\Diagnostics.cs','src\AssemblyInfo.cs'
+        'src\AppLog.cs','src\Shell.cs','src\UpdateTrust.cs','src\Diagnostics.cs','src\AssemblyInfo.cs'
     )
 
     $argList = @(
@@ -118,7 +119,9 @@ Copy-Item (Join-Path $root 'ui\*') $uiDst -Recurse -Force -Exclude 'shot_*.png'
 if ($Sign) {
     $pfx = Join-Path $root 'cert\WindowsWartung.pfx'
     if (Test-Path $pfx) {
-        & (Join-Path $root 'sign.ps1') -File (Join-Path $bin 'WindowsWartung.exe') -Pfx $pfx -Password $CertPassword
+        $signArgs = @{ File = (Join-Path $bin 'WindowsWartung.exe'); Pfx = $pfx }
+        if ($CertPassword) { $signArgs['Password'] = $CertPassword }
+        & (Join-Path $root 'sign.ps1') @signArgs
     } else {
         "Hinweis: -Sign gesetzt, aber cert\WindowsWartung.pfx fehlt -> Signatur uebersprungen (tools\make-cert.ps1)."
     }

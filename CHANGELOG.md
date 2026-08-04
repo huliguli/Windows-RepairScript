@@ -1,5 +1,44 @@
 # Changelog
 
+## [7.0.2] - 2026-08-04
+
+Sicherheit rund um die Selbstaktualisierung.
+
+### Sicherer
+
+- **Die neue Fassung muss vom selben Herausgeber stammen.** Bisher belegte nur eine
+  Prüfsumme, dass der Download heil ankam. Die liegt aber im selben Release wie die
+  Datei und sagt deshalb nichts über die Herkunft. Jetzt wird zusätzlich die Signatur
+  geprüft und an den Herausgeber der installierten Fassung gebunden. Ist die installierte
+  Fassung nicht signiert, entfällt die Bindung, damit eine Aktualisierung überhaupt
+  möglich bleibt.
+- **Wer über den Installer installiert hat, wird über den Installer aktualisiert.**
+  Vorher wurden nur die Dateien getauscht. Der Eintrag unter „Apps und Features“ blieb
+  dabei auf der alten Version stehen, und eine spätere Deinstallation hätte Reste
+  übersehen. Erkannt wird das am Installationsort in der Registrierung.
+- **Kein Passwort mehr im Quelltext.** Die Skripte zum Signieren und zum Erzeugen des
+  Zertifikats hatten ein fest eingetragenes Standardpasswort. Es kommt jetzt aus dem
+  Aufruf, aus der Umgebungsvariablen `WW_CERT_PASSWORD` oder aus einer Abfrage.
+
+### Behoben
+
+- **Die Prüfsumme wird eindeutig zugeordnet.** Seit dem Release auch eine Prüfsumme für
+  den Installer beiliegt, gab es zwei Kandidaten, und welcher genommen wurde, entschied
+  allein die Reihenfolge der Antwort von GitHub. Das ging bisher zufällig gut. Kippt die
+  Reihenfolge, hätte die App das Paket gegen die falsche Prüfsumme geprüft und die
+  Aktualisierung als beschädigt abgelehnt. Jetzt zählt der Dateiname.
+
+### Unter der Haube
+
+- Die Signatur-Prüfung ist selbst getestet: ein kleines Prüfprogramm übersetzt sie und
+  lässt sie gegen echte signierte Dateien laufen. Dabei kam heraus, dass eine Bindung an
+  den Fingerabdruck des Zertifikats ein Fehler gewesen wäre: er ändert sich, sobald ein
+  Zertifikat erneuert wird, und hätte ab diesem Tag jede weitere Aktualisierung abgelehnt.
+  Gebunden wird deshalb am Herausgebernamen.
+- Zwei weitere Prüfungen: kein fest eingetragenes Passwort in den Skripten, und die
+  Prüfsumme muss über den Dateinamen zugeordnet werden.
+- Die Bausteine der Abläufe in GitHub sind auf den aktuellen Stand gehoben.
+
 ## [7.0.1] - 2026-08-04
 
 Nachtrag zu 7.0: Beim großen Umbau der Oberfläche waren acht Funktionen unter den Tisch
@@ -17,15 +56,15 @@ gefallen. Sie sind wieder da, an passenderer Stelle als vorher.
   erreicht, und zeigt den Weg dorthin.
 - **Gerätetreiber sichern.** Kopiert alle nachinstallierten Treiber in einen Ordner Ihrer
   Wahl, praktisch vor einer Neuinstallation.
-- **Windows-Wartung mit dem PC starten.** Der Schalter in den Startprogrammen ist zurueck.
-- **Autostart-Ordner öffnen**, getrennt für Ihr Konto und für alle am PC, mit Erklaerung.
+- **Windows-Wartung mit dem PC starten.** Der Schalter in den Startprogrammen ist zurück.
+- **Autostart-Ordner öffnen**, getrennt für Ihr Konto und für alle am PC, mit Erklärung.
 - **Verlauf leeren.**
 - **Im Browser öffnen**, wenn eine Aktualisierung nicht durchläuft.
 
 ### Behoben
 
 - **Abbrechen wirkt wieder.** Bei einer einzelnen Aktion aus dem Werkzeugkasten tat der Knopf
-  nichts: er stoppte nur den Prüfablauf, nicht den tatsaechlich laufenden Befehl. Jetzt gibt
+  nichts: er stoppte nur den Prüfablauf, nicht den tatsächlich laufenden Befehl. Jetzt gibt
   es einen Abbruch, der beides beendet.
 - Das Pluszeichen zum Vormerken fehlte im Symbolsatz und blieb als leerer Kreis stehen.
 

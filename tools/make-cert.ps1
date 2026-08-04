@@ -1,12 +1,26 @@
 # Erzeugt ein selbst-signiertes Code-Signing-Zertifikat und exportiert es als PFX nach cert\.
 # -Trust legt es zusaetzlich in die Vertrauensspeicher des aktuellen Benutzers (ohne Adminrechte),
 # damit signierte Dateien auf DIESEM Rechner als gueltig gelten.
+#
+# Das Passwort hat KEINEN Vorgabewert: sonst steht der Schluessel zum privaten
+# Zertifikat im Quelltext, direkt neben dem Hinweis, wo die PFX liegt.
+# Reihenfolge: Parameter, sonst WW_CERT_PASSWORD, sonst Abfrage.
 param(
     [string]$Subject  = "CN=Jonas (Windows-Wartung)",
-    [string]$Password = "wartung",
+    [string]$Password,
     [switch]$Trust
 )
 $ErrorActionPreference = 'Stop'
+
+if (-not $Password) { $Password = $env:WW_CERT_PASSWORD }
+if (-not $Password -and [Environment]::UserInteractive) {
+    $sicher = Read-Host -AsSecureString "Passwort fuer die neue PFX vergeben"
+    $Password = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+        [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sicher))
+}
+if (-not $Password) {
+    throw "Kein Passwort angegeben. -Password uebergeben oder WW_CERT_PASSWORD setzen."
+}
 $root    = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $certDir = Join-Path $root 'cert'
 New-Item -ItemType Directory -Force -Path $certDir | Out-Null
