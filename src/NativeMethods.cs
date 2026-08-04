@@ -19,6 +19,13 @@ namespace WartungsToolbox
         [DllImport("user32.dll")]
         public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
+        // Fuer den Zweitstart: bestehendes Fenster wiederherstellen und nach vorn holen.
+        [DllImport("user32.dll")]
+        public static extern bool ShowWindow(IntPtr hWnd, int cmd);
+        [DllImport("user32.dll")]
+        public static extern bool SetForegroundWindow(IntPtr hWnd);
+        public const int SW_RESTORE = 9;
+
         // Synchron mit Timeout: Rueckgabe + lpdwResult zeigen, ob der Empfaenger die
         // Nachricht WIRKLICH verarbeitet hat (Handshake). PostMessage allein meldet
         // auch dann Erfolg, wenn die Nachricht verworfen wird (UIPI) oder eine alte

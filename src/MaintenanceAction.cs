@@ -23,12 +23,32 @@ namespace WartungsToolbox
 
     class MaintenanceAction
     {
-        public string Title;
-        public string Desc;
-        public string Glyph;      // Segoe MDL2 Assets
+        public int Id;            // Listenindex, von Catalog.All() vergeben
+        public string Title;      // Alltagssprache - das, was der Nutzer liest
+        public string TechTitle;  // Fachname, nur klein im Detailbereich (null = keiner)
+        public string Desc;       // ein Satz Alltagssprache
+        public string Info;       // ausfuehrliche Erklaerung fuer das Fragezeichen
+        public string Icon;       // Name aus dem Symbolsatz der Oberflaeche
+        public string Glyph;      // Segoe MDL2 Assets (Altbestand)
         public string Category;
         public bool Danger;       // Sicherheitsabfrage vor Ausfuehrung
-        public bool IsRepair;     // optionaler Wiederherstellungspunkt davor
+        public bool IsRepair;     // reparierende Aktion (steuert auch die Einordnung im UI)
+        public bool NeedsRestore; // ausdruecklich einen Sicherungspunkt davor anlegen
+
+        /// <summary>
+        /// Bekommt diese Aktion einen Sicherungspunkt, wenn der Nutzer das Haekchen gesetzt hat?
+        ///
+        /// Frueher galt hier nur IsRepair. Dadurch liefen ausgerechnet die als riskant
+        /// markierten Aktionen (Netzwerk-Reset, Suchindex zuruecksetzen, CHKDSK, RAM-Diagnose,
+        /// Miniaturansichten) OHNE Sicherungspunkt - das Haekchen war dort eine leere Zusage.
+        /// Jetzt gilt: reparierend ODER riskant ODER ausdruecklich angefordert.
+        /// Abgesichert durch tests/run-tests.ps1.
+        /// </summary>
+        public bool WantsRestorePoint
+        {
+            get { return IsRepair || Danger || NeedsRestore; }
+        }
+
         public List<Step> Steps = new List<Step>();
     }
 

@@ -1,1412 +1,1044 @@
 "use strict";
+/* =====================================================================
+   Windows-Wartung - Oberflaeche
 
-/* ---------- SVG-Icons (Feather-Stil) ---------- */
-const ICONS = {
-  wrench:'<path d="M14.6 6.3a3.8 3.8 0 0 1-4.9 4.9L4.2 16.7V20h3.3l5.5-5.5a3.8 3.8 0 0 1 4.9-4.9l-2.7 2.7-2.3-.6-.6-2.3 2.9-3.1Z"/>',
-  refresh:'<path d="M21 3v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 9"/><path d="M3 21v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 15"/>',
-  rotate:'<path d="M3 3v6h6"/><path d="M3.5 13A9 9 0 1 0 6 5.3L3 9"/>',
-  shieldCheck:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="M9 12l2 2 4-4"/>',
-  shield:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/>',
-  search:'<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
-  trash:'<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>',
-  activity:'<path d="M22 12h-4l-3 9-6-18-3 9H2"/>',
-  alert:'<path d="M10.3 3.6 1.8 18a2 2 0 0 0 1.7 3h16.9a2 2 0 0 0 1.7-3L13.7 3.6a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
-  globe:'<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20Z"/>',
-  download:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>',
-  server:'<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01"/><path d="M7 16.5h.01"/>',
-  cpu:'<rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/>',
-  hdd:'<path d="M22 12H2"/><path d="M5.5 6h13l3.5 6v6a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-6Z"/><path d="M6.5 16h.01"/><path d="M10.5 16h.01"/>',
-  battery:'<rect x="2" y="7" width="16" height="10" rx="2"/><path d="M22 10v4"/><path d="M6 10.5v3"/>',
-  arrow:'<path d="M5 12h14"/><path d="M13 6l6 6-6 6"/>',
-  chevron:'<path d="M6 9l6 6 6-6"/>',
-  up:'<path d="M18 15l-6-6-6 6"/>',
-  down:'<path d="M6 9l6 6 6-6"/>',
-  plus:'<path d="M12 5v14"/><path d="M5 12h14"/>',
-  layers:'<path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/>',
-  power:'<path d="M12 3v9"/><path d="M6.4 6.4a8 8 0 1 0 11.2 0"/>',
-  dashboard:'<rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="5" rx="1"/><rect x="13" y="11" width="8" height="10" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/>',
-  help:'<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
-  rocket:'<path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.79-.78.8-2.07.09-2.91a2.18 2.18 0 0 0-3.09-.09Z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-3 2Z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M15 9v5s-3.03-.55-4-2c-1.08-1.62 0-5 0-5"/>',
-  gear:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>',
-  min:'<path d="M5 12h14"/>',
-  max:'<rect x="5" y="5" width="14" height="14" rx="2"/>',
-  close:'<path d="M6 6l12 12"/><path d="M18 6 6 18"/>',
-  check:'<path d="M22 11.1V12a10 10 0 1 1-5.9-9.1"/><path d="M22 4 12 14.1l-3-3"/>',
-  xcirc:'<circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6"/><path d="M9 9l6 6"/>',
-  warn:'<circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/>',
-  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>',
-  zap:'<path d="M13 2 4 14h7l-1 8 9-12h-7l1-6Z"/>',
-  history:'<path d="M3 3v6h6"/><path d="M3.5 13A9 9 0 1 0 6 5.3L3 9"/><path d="M12 8v5l3.5 2"/>',
-  calendar:'<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18"/><path d="M8 2v4"/><path d="M16 2v4"/>',
-  save:'<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/>',
-  package:'<path d="M16.5 9.4 7.5 4.21"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>',
-  tick:'<path d="M20 6 9 17l-5-5"/>',
-  printer:'<path d="M6 9V3h12v6"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8" rx="1"/>',
-  image:'<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/>',
-};
-function svg(name){return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'+(ICONS[name]||'')+'</svg>';}
+   Leitgedanke: EIN Hauptweg. Beim Oeffnen sieht der Nutzer, wie es seinem PC
+   geht, und genau eine grosse Schaltflaeche. Die 28 Einzelwerkzeuge bleiben
+   vollstaendig erhalten, liegen aber hinter "Alle Werkzeuge".
 
-/* ---------- Kategorien + Aktionen (Spiegel zum C#-Katalog) ---------- */
-const CATS = [
-  {name:'Übersicht',    icon:'dashboard'},
-  {name:'Reparieren',   icon:'wrench'},
-  {name:'Netzwerk',     icon:'globe'},
-  {name:'Aufräumen',    icon:'trash'},
-  {name:'Diagnose',     icon:'activity'},
-  {name:'Energie',      icon:'zap'},
-  {name:'Wiederherstellung', icon:'rotate'},
-  {name:'Geplant',      icon:'calendar'},
-  {name:'Verlauf',      icon:'history'},
-  {name:'Autostart',    icon:'rocket'},
-  {name:'Bloatware',    icon:'package'},
-  {name:'Einstellungen',icon:'gear'},
-];
-const DAYS = [['MON','Montag'],['TUE','Dienstag'],['WED','Mittwoch'],['THU','Donnerstag'],['FRI','Freitag'],['SAT','Samstag'],['SUN','Sonntag']];
-const DAY_NAMES = {MON:'Montag',TUE:'Dienstag',WED:'Mittwoch',THU:'Donnerstag',FRI:'Freitag',SAT:'Samstag',SUN:'Sonntag'};
-// Sonderaktionen mit eigener Eingabe (nicht id-/queue-basiert, eigener Handler).
-const SPECIALS = [
-  {cat:'Netzwerk', icon:'activity', title:'Netzwerk-Diagnose', special:'netdiag',
-   desc:'Ping und Route (tracert) zu einem Ziel deiner Wahl.'},
-  {cat:'Diagnose', icon:'save', title:'Treiber-Backup', special:'driverbackup',
-   desc:'Alle installierten Treiber in einen wählbaren Ordner exportieren.'},
-];
-const INFO_SPECIAL = {
-  netdiag:'Prüft, ob und wie gut dein PC ein bestimmtes Ziel im Internet erreicht. „Ping" misst die Antwortzeit, „tracert" zeigt den Weg dorthin Schritt für Schritt. Gut, um Verbindungsprobleme einzukreisen. Gib z. B. google.com oder 8.8.8.8 ein.',
-  driverbackup:'Sichert alle zusätzlich installierten Gerätetreiber (z. B. Drucker, Grafik, WLAN) in einen Ordner deiner Wahl. Praktisch vor einer Windows-Neuinstallation – die Treiber lassen sich später daraus wiederherstellen.'
-};
-const ACTIONS = [
-  {id:0,  cat:'Reparieren', icon:'wrench',      title:'Komplett-Reparatur', rec:true,  desc:'DISM ScanHealth + RestoreHealth, danach SFC. Der Rundum-Sorglos-Lauf.'},
-  {id:1,  cat:'Reparieren', icon:'refresh',     title:'DISM RestoreHealth',           desc:'Repariert den Komponentenspeicher über Windows Update.'},
-  {id:2,  cat:'Reparieren', icon:'shieldCheck', title:'SFC scannow',                  desc:'Prüft und repariert geschützte Systemdateien.'},
-  {id:3,  cat:'Reparieren', icon:'search',      title:'SFC nur prüfen',               desc:'Sucht beschädigte Systemdateien, ohne etwas zu ändern.'},
-  {id:4,  cat:'Reparieren', icon:'trash',       title:'WinSxS aufräumen',             desc:'Entfernt veraltete Komponenten – macht oft mehrere GB frei.'},
-  {id:5,  cat:'Reparieren', icon:'activity',    title:'Komponentenspeicher analysieren', desc:'Zeigt, ob sich ein WinSxS-Cleanup lohnt.'},
-  {id:6,  cat:'Reparieren', icon:'rotate',      title:'Windows-Update reparieren',    desc:'Setzt die Update-Komponenten zurück (SoftwareDistribution + catroot2).'},
-  {id:7,  cat:'Reparieren', icon:'alert',       title:'CHKDSK planen', danger:true,    desc:'Plant eine Datenträgerprüfung beim nächsten Neustart.'},
-  {id:20, cat:'Reparieren', icon:'printer',     title:'Drucker reparieren',           desc:'Leert hängende Druckaufträge und startet die Warteschlange neu.'},
-  {id:21, cat:'Reparieren', icon:'clock',       title:'Uhrzeit synchronisieren',      desc:'Gleicht die Systemzeit mit dem Zeitserver ab.'},
-  {id:22, cat:'Reparieren', icon:'search',      title:'Windows-Suche reparieren', danger:true, desc:'Setzt den Suchindex zurück – wird im Hintergrund neu aufgebaut.'},
+   Der Aktionskatalog kommt vom Host (C#) und wird NICHT hier gepflegt -
+   frueher standen die Texte doppelt und waren auseinandergelaufen.
 
-  {id:8,  cat:'Netzwerk', icon:'globe',   title:'Netzwerk-Reset (komplett)', danger:true, desc:'DNS, Winsock und IP-Stack zurücksetzen. Neustart empfohlen.'},
-  {id:9,  cat:'Netzwerk', icon:'globe',   title:'DNS-Cache leeren',              desc:'Löscht den DNS-Auflösungscache.'},
-  {id:10, cat:'Netzwerk', icon:'refresh', title:'IP-Adresse erneuern',           desc:'Gibt die IP frei und fordert eine neue an.'},
+   Anrede durchgehend "Sie".
+   ===================================================================== */
 
-  {id:11, cat:'Aufräumen', icon:'trash',    title:'Temp-Dateien löschen',        desc:'Leert Benutzer- und Windows-Temp-Ordner.'},
-  {id:12, cat:'Aufräumen', icon:'download', title:'Update-Cache leeren',          desc:'Löscht heruntergeladene Update-Dateien.'},
-  {id:13, cat:'Aufräumen', icon:'trash',    title:'Papierkorb leeren',            desc:'Leert den Papierkorb aller Laufwerke.'},
-  {id:14, cat:'Aufräumen', icon:'server',   title:'Datenträgerbereinigung',       desc:'Öffnet das Windows-Tool cleanmgr.'},
-  {id:26, cat:'Aufräumen', icon:'image',    title:'Miniaturansichten-Cache leeren', danger:true, desc:'Behebt falsche Vorschaubilder. Die Taskleiste startet kurz neu.'},
-  {id:27, cat:'Aufräumen', icon:'package',  title:'Store-Cache leeren',           desc:'Setzt den Microsoft-Store-Cache zurück (wsreset).'},
-
-  {id:15, cat:'Diagnose', icon:'cpu',     title:'System-Übersicht',             desc:'Modell, Windows-Version, RAM und Laufzeit auf einen Blick.'},
-  {id:16, cat:'Diagnose', icon:'hdd',     title:'Festplatten-Gesundheit',       desc:'SMART-Status und Typ aller Datenträger.'},
-  {id:17, cat:'Diagnose', icon:'battery', title:'Akkubericht erstellen',        desc:'Erzeugt einen powercfg-Akkubericht und öffnet ihn.'},
-  {id:18, cat:'Diagnose', icon:'shield',  title:'Defender-Schnellscan',         desc:'Startet einen schnellen Microsoft-Defender-Scan.'},
-  {id:19, cat:'Diagnose', icon:'cpu',     title:'RAM-Diagnose planen', danger:true, desc:'Öffnet die Windows-Speicherdiagnose (Neustart nötig).'},
-  {id:23, cat:'Diagnose', icon:'alert',   title:'Absturz-Historie',             desc:'Zeigt unerwartete Neustarts und Bluescreens der letzten Zeit.'},
-  {id:24, cat:'Diagnose', icon:'globe',   title:'Netzwerk-Übersicht',           desc:'IP-Adresse, Gateway und DNS aller aktiven Adapter.'},
-  {id:25, cat:'Diagnose', icon:'rocket',  title:'Startzeit-Analyse',            desc:'Wie lange die letzten Windows-Starts gedauert haben.'},
-];
-const byId = id => ACTIONS.find(a => a.id === id);
-
-// Kurze Laien-Einordnung oben in den Werkzeug-Kategorien (ehrlich, ohne Übertreibung)
-const CAT_NOTES = {
-  'Reparieren':'Werkzeuge für ein Windows, das Probleme macht – bei Abstürzen, Fehlermeldungen oder hängenden Updates. Persönliche Dateien werden dabei nicht angerührt. Im Zweifel ist die <b>Komplett-Reparatur</b> die richtige Wahl; sie darf ruhig mehrere Minuten dauern.',
-  'Netzwerk':'Hilfe bei Internet-Problemen. Sinnvolle Reihenfolge: erst <b>DNS-Cache leeren</b>, dann <b>IP-Adresse erneuern</b> – und erst wenn das nicht hilft, der <b>Netzwerk-Reset</b> (danach den PC neu starten). Die <b>Netzwerk-Diagnose</b> zeigt vorher, wo es hakt.',
-  'Aufräumen':'Schafft Speicherplatz und entfernt Datenmüll. Eigene Dokumente, Bilder und Programme bleiben unberührt – nur der <b>Papierkorb</b> wird, falls gewählt, endgültig geleert.',
-  'Diagnose':'Nur nachsehen, nichts verändern: Diese Aktionen prüfen den PC und berichten. Ideal als erster Schritt, wenn sich der PC komisch verhält – die Ergebnisse erscheinen unten in der Ausgabe.',
-};
-
-// Erklärungen in einfacher Sprache (für Personen ohne Vorwissen)
-const INFO = {
-  0:'Lässt Windows seine eigenen Dateien überprüfen und beschädigte automatisch ersetzen. Das gute Erste-Hilfe-Programm, wenn der PC spinnt, abstürzt oder sich komisch verhält. Dauert ein paar Minuten.',
-  1:'Repariert den „Bauplan" von Windows über das Internet. Hilft besonders, wenn Updates nicht installieren oder Windows beschädigt ist.',
-  2:'Prüft die wichtigen Windows-Systemdateien und repariert beschädigte. Ein Klassiker bei Fehlern und Abstürzen.',
-  3:'Schaut nur nach, ob Systemdateien beschädigt sind – ändert nichts. Gut, um erst mal zu sehen, ob alles in Ordnung ist.',
-  4:'Löscht alte, nicht mehr benötigte Reste von Windows-Updates. Schafft oft mehrere Gigabyte Platz, ohne dass etwas kaputtgeht.',
-  5:'Zeigt nur an, ob sich ein Aufräumen lohnt – verändert nichts.',
-  6:'Setzt die Update-Funktion von Windows zurück. Hilft, wenn Updates hängen bleiben oder mit Fehlern abbrechen.',
-  7:'Prüft die Festplatte auf Fehler – beim nächsten Neustart. Sinnvoll bei merkwürdigen Datei- oder Festplattenproblemen. Achtung: der nächste Start dauert dann deutlich länger.',
-  8:'Setzt die komplette Internet- und Netzwerkeinstellung zurück. Der Notnagel, wenn gar nichts mehr ins Internet kommt. Danach ist ein Neustart nötig.',
-  9:'Leert den Zwischenspeicher für Webadressen. Hilft, wenn einzelne Webseiten nicht laden, obwohl das Internet sonst geht.',
-  10:'Holt sich eine frische Netzwerk-Adresse vom Router. Hilft bei Verbindungsproblemen im Heimnetz.',
-  11:'Löscht temporäre Müll-Dateien, die Programme hinterlassen. Schafft Platz und schadet nichts.',
-  12:'Löscht bereits heruntergeladene Update-Dateien. Hilft, wenn Updates klemmen, und schafft Platz.',
-  13:'Leert den Papierkorb endgültig. Schafft Platz – die Dateien darin sind danach weg.',
-  14:'Öffnet das Windows-Aufräum-Tool, in dem du selbst auswählen kannst, was gelöscht wird.',
-  15:'Zeigt Infos zu deinem PC: Windows-Version, Arbeitsspeicher und wie lange er schon läuft.',
-  16:'Zeigt, ob deine Festplatten/SSDs gesund sind. Gut für einen schnellen Sicherheits-Check.',
-  17:'Erstellt einen Bericht über den Akku (bei Laptops) und öffnet ihn – zeigt z. B. den Verschleiß.',
-  18:'Lässt den Windows-Virenschutz schnell die wichtigsten Stellen auf Schädlinge prüfen.',
-  19:'Prüft den Arbeitsspeicher auf Fehler – beim nächsten Neustart. Sinnvoll bei häufigen Abstürzen oder Bluescreens.',
-  20:'Wenn der Drucker nicht mehr druckt, hängt oft ein alter Druckauftrag fest. Diese Aktion wirft alle wartenden Aufträge raus und startet das Drucksystem neu – danach klappt Drucken meist wieder.',
-  21:'Stellt die Uhr des PCs über das Internet richtig. Eine falsche Uhrzeit verursacht überraschend viele Probleme – z. B. Webseiten-Zertifikatsfehler oder fehlgeschlagene Anmeldungen.',
-  22:'Baut den Index der Windows-Suche neu auf. Hilft, wenn die Suche im Startmenü oder Explorer nichts oder Falsches findet. Der Neuaufbau läuft im Hintergrund und kann eine Weile dauern.',
-  23:'Zeigt, wann der PC zuletzt abgestürzt ist oder unerwartet ausging – und wann es ein normaler Neustart war. Gut, um Problemen auf die Spur zu kommen.',
-  24:'Zeigt die wichtigsten Netzwerk-Daten deines PCs: seine Adresse im Netz (IP), den Weg ins Internet (Gateway) und wer Webadressen auflöst (DNS). Praktisch für die Fehlersuche oder am Telefon mit dem Support.',
-  25:'Zeigt, wie lange die letzten Windows-Starts gedauert haben. Wird der Start immer langsamer, lohnt ein Blick in die Autostart-Verwaltung.',
-  26:'Windows speichert kleine Vorschaubilder für Fotos und Dateien. Ist dieser Speicher beschädigt, zeigen Ordner falsche oder keine Bilder – das behebt diese Aktion. Die Taskleiste verschwindet dabei für einen Moment, das ist normal.',
-  27:'Leert den Zwischenspeicher des Microsoft Store. Hilft, wenn der Store nicht öffnet, hängt oder Apps sich nicht installieren lassen. Es öffnet sich kurz ein schwarzes Fenster, danach der Store.'
-};
-
-/* ---------- Brücke zu C# (oder Mock im Browser) ---------- */
+/* ---------- Bruecke zum Host ---------- */
 const HOST = (window.chrome && window.chrome.webview) ? window.chrome.webview : null;
-function send(msg){ if(HOST){ HOST.postMessage(JSON.stringify(msg)); } else { mockHandle(msg); } }
-if(HOST){ HOST.addEventListener('message', e => { try{ onHost(JSON.parse(e.data)); }catch(_){} }); }
+function send(msg){ if(HOST) HOST.postMessage(JSON.stringify(msg)); }
+if(HOST) HOST.addEventListener('message', e => {
+  try{ onHost(JSON.parse(e.data)); }catch(err){ console.error(err); }
+});
 
-function onHost(m){
-  if(m.type==='log')   append(m.text, m.kind);
-  else if(m.type==='state') setRunning(m.running);
-  else if(m.type==='progress') setProgress(m.percent);
-  else if(m.type==='done')  onDone(m.title, m.kind, m.message);
-  else if(m.type==='shutdownScheduled') showShutdownBar(m.mode, m.delay);
-  else if(m.type==='shutdownCancelled') hideShutdownBar();
-  else if(m.type==='update'){ if(SET.autoUpdate) startAutoUpdate(m.version); else showUpdatePrompt(m.version); }
-  else if(m.type==='updateProgress') setUpdateProgress(m.percent);
-  else if(m.type==='updateStatus') setUpdatePhase(m.phase);
-  else if(m.type==='updateError') setUpdateError(m.message);
-  else if(m.type==='updated') toast('Aktualisiert','Erfolgreich auf '+m.version+' aktualisiert','good');
-  else if(m.type==='stats') updateStats(m);
-  else if(m.type==='autostart') renderAutostartList(m.items);
-  else if(m.type==='selfstart') renderSelfStart(m);
-  else if(m.type==='history') renderHistoryList(m.items);
-  else if(m.type==='restorePoints') renderRestoreList(m.items);
-  else if(m.type==='powerPlans') renderPowerList(m.items);
-  else if(m.type==='bloatPackages') renderBloatList(m.items);
-  else if(m.type==='schedule') renderScheduleStatus(m);
-  else if(m.type==='zoom'){ SET.zoom=m.factor||1; markZoomActive(); }
-  else if(m.type==='admin') setAdmin(m.on);
+/* ---------- Kleinkram ---------- */
+const $  = s => document.querySelector(s);
+const $$ = s => Array.prototype.slice.call(document.querySelectorAll(s));
+function esc(s){
+  return String(s==null?'':s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
-function setAdmin(on){
-  const b=$('#admin-badge'), t=$('#admin-text');
-  if(!b) return;
-  b.classList.toggle('warn', !on);
-  if(t) t.textContent = on ? 'Als Administrator' : 'Ohne Administratorrechte';
-  b.title = on ? '' : 'Ohne Adminrechte funktionieren Reparaturen nicht. App als Administrator starten.';
+function el(tag, cls, html){
+  const n = document.createElement(tag);
+  if(cls) n.className = cls;
+  if(html != null) n.innerHTML = html;
+  return n;
 }
 
-/* ---------- DOM ---------- */
-const $ = s => document.querySelector(s);
-const nav = $('#nav'), cards = $('#cards'), body = $('#console-body');
-const consoleEl = $('#console'), main = $('#main'), statusEl = $('#status'), statusText = $('#status-text');
-let active = 'Reparieren', running = false;
-let post = 'none', delay = 60;
-let queue = [];
-
-function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
-
-const ACCENTS = {
-  teal:    ['#2dd4bf','#38bdf8'],
-  blau:    ['#3b82f6','#22d3ee'],
-  violett: ['#8b5cf6','#a78bfa'],
-  gruen:   ['#22c55e','#4ade80'],
-  orange:  ['#fb923c','#fbbf24'],
+/* ---------- Zustand ---------- */
+const S = {
+  catalog: null,        // vom Host
+  checks: [],           // letzter Befund
+  screen: 'start',
+  cat: null,            // gewaehlte Werkzeug-Kategorie
+  mode: null,           // 'check' | 'fix'
+  steps: [],
+  stepIndex: 0,
+  stepTotal: 0,
+  result: null,
+  admin: true,
+  version: '',
 };
-function applyAccent(name){
-  const c = ACCENTS[name] || ACCENTS.teal;
-  document.documentElement.style.setProperty('--accent', c[0]);
-  document.documentElement.style.setProperty('--accent-2', c[1]);
-}
+
 const SET = {
-  accent:      localStorage.getItem('accent') || 'teal',
-  consoleOpen: localStorage.getItem('consoleOpen') !== 'false',
-  confirmAll:  localStorage.getItem('confirmAll') === 'true',
-  notify:      localStorage.getItem('notify') !== 'false',
-  autoUpdate:  localStorage.getItem('autoUpdate') === 'true',
-  zoom:        1,
+  theme:   localStorage.getItem('theme')   || 'system',   // system | light | dark
+  notify:  localStorage.getItem('notify')  !== 'false',
+  confirm: localStorage.getItem('confirm') === 'true',
+  autoUpdate: localStorage.getItem('autoUpdate') === 'true',
+  zoom: 1,
 };
-applyAccent(SET.accent);
 
-const ZOOMS = [['0.9','90 %'],['1','100 %'],['1.15','115 %'],['1.3','130 %'],['1.5','150 %'],['1.75','175 %']];
-function markZoomActive(){
-  document.querySelectorAll('.zoom-opt').forEach(x=>x.classList.toggle('active', Math.abs(parseFloat(x.dataset.z)-SET.zoom)<0.001));
+/* Adresszusatz nur fuer Belegaufnahmen (--view im Shot-Modus): erzwingt ein
+   Farbschema bzw. oeffnet direkt eine Ansicht. Im normalen Betrieb leer. */
+let HASH = [];
+try { HASH = decodeURIComponent((location.hash || '').slice(1)).split(',').filter(Boolean); }
+catch(_){ HASH = (location.hash || '').slice(1).split(',').filter(Boolean); }
+if(HASH.indexOf('light') >= 0) SET.theme = 'light';
+if(HASH.indexOf('dark')  >= 0) SET.theme = 'dark';
+
+/* ---------- Hell und dunkel ---------- */
+const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+function applyTheme(){
+  const dark = SET.theme === 'dark' || (SET.theme === 'system' && darkQuery.matches);
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
 }
+darkQuery.addEventListener('change', () => { if(SET.theme === 'system') applyTheme(); });
+applyTheme();
 
+/* ---------- Feste Symbole ---------- */
 $('#appmark').innerHTML = svg('wrench');
-$('#btn-collapse').innerHTML = svg('chevron');
-$('#queue-btn .qb-ico').innerHTML = svg('layers');
-$('#q-close').innerHTML = svg('close');
-$('#shutdown-bar .sb-ico').innerHTML = svg('power');
-$('#update-bar .ub-ico').innerHTML = svg('download');
-$('#ub-skip').innerHTML = svg('close');
-document.querySelector('.wc[data-win="min"]').innerHTML = svg('min');
-document.querySelector('.wc[data-win="max"]').innerHTML = svg('max');
-document.querySelector('.wc[data-win="close"]').innerHTML = svg('close');
+$('.wc[data-win="min"]').innerHTML = svg('min');
+$('.wc[data-win="max"]').innerHTML = svg('max');
+$('.wc[data-win="close"]').innerHTML = svg('close');
+$('#sb-ico').innerHTML = svg('power');
+$('#ub-ico').innerHTML = svg('download');
+$$('details.disc > summary > span[aria-hidden]').forEach(s => s.innerHTML = svg('chevron'));
 
-/* ---------- Navigation + Karten ---------- */
-function buildNav(){
-  nav.innerHTML='';
-  CATS.forEach(c=>{
-    const el=document.createElement('div');
-    el.className='nav-item'+(c.name===active?' active':'');
-    el.innerHTML=svg(c.icon)+'<span class="nav-label">'+c.name+'</span>';
-    el.onclick=()=>selectCat(c.name);
-    nav.appendChild(el);
-  });
+/* =====================================================================
+   Bildschirm-Wechsel
+   ===================================================================== */
+const SCREENS = { start:'#s-start', run:'#s-run', result:'#s-result', tools:'#s-tools', sub:'#s-sub' };
+function show(name){
+  S.screen = name;
+  Object.keys(SCREENS).forEach(k => $(SCREENS[k]).classList.toggle('on', k === name));
+  const box = $(SCREENS[name]);
+  const h = box.querySelector('h1');
+  if(h){ h.setAttribute('tabindex','-1'); h.focus({preventScroll:true}); }
+  // Nach dem Fokuswechsel wieder ganz nach oben. Das Setzen im selben Durchlauf
+  // reicht nicht: der Browser rollt danach noch zum fokussierten Knoten.
+  box.scrollTop = 0;
+  requestAnimationFrame(() => { box.scrollTop = 0; });
 }
-function selectCat(name){
-  active=name; buildNav();
-  cards.classList.remove('dashboard','settings','autostart','history','power','restore','sched','bloat');
-  const isDash = (name==='Übersicht');
-  send({type:'dashboard', active:isDash});
-  if(isDash){
-    $('#cat-title').textContent='Übersicht';
-    $('#cat-hint').textContent='Systemzustand auf einen Blick';
-    renderDashboard();
-    return;
-  }
-  if(name==='Autostart'){
-    $('#cat-title').textContent='Autostart';
-    $('#cat-hint').textContent='Programme, die beim Start mitlaufen';
-    cards.classList.add('autostart');
-    renderAutostart();
-    send({type:'autostartList'});
-    send({type:'selfStartGet'});
-    return;
-  }
-  if(name==='Einstellungen'){
-    $('#cat-title').textContent='Einstellungen';
-    $('#cat-hint').textContent='Aussehen & Verhalten';
-    cards.classList.add('settings');
-    renderSettings();
-    return;
-  }
-  if(name==='Verlauf'){
-    $('#cat-title').textContent='Verlauf';
-    $('#cat-hint').textContent='Die letzten Ausführungen';
-    cards.classList.add('history');
-    renderHistory();
-    send({type:'historyList'});
-    return;
-  }
-  if(name==='Wiederherstellung'){
-    $('#cat-title').textContent='Wiederherstellung';
-    $('#cat-hint').textContent='Systemzustand sichern & zurücksetzen';
-    cards.classList.add('restore');
-    renderRestore();
-    send({type:'restoreList'});
-    return;
-  }
-  if(name==='Energie'){
-    $('#cat-title').textContent='Energie';
-    $('#cat-hint').textContent='Energiesparplan wählen';
-    cards.classList.add('power');
-    renderPower();
-    send({type:'powerList'});
-    return;
-  }
-  if(name==='Geplant'){
-    $('#cat-title').textContent='Geplante Wartung';
-    $('#cat-hint').textContent='Automatisch im Hintergrund warten lassen';
-    cards.classList.add('sched');
-    renderSchedule();
-    send({type:'scheduleStatus'});
-    return;
-  }
-  if(name==='Bloatware'){
-    $('#cat-title').textContent='Bloatware';
-    $('#cat-hint').textContent='Vorinstallierte Apps entfernen';
-    cards.classList.add('bloat');
-    renderBloat();
-    send({type:'bloatList'});
-    return;
-  }
-  const list=ACTIONS.filter(a=>a.cat===name);
-  const specials=SPECIALS.filter(a=>a.cat===name);
-  $('#cat-title').textContent=name;
-  $('#cat-hint').textContent=(list.length+specials.length)+' Aktionen · klicken zum Ausführen';
-  cards.innerHTML='';
-  if(CAT_NOTES[name]){
-    const n=document.createElement('div');
-    n.className='rp-note cat-note';
-    n.innerHTML=svg('help')+'<div>'+CAT_NOTES[name]+'</div>';
-    cards.appendChild(n);
-  }
-  list.forEach((a,i)=>{
-    const el=document.createElement('div');
-    el.className='card'+(a.danger?' danger':'');
-    el.dataset.id=a.id;
-    el.style.animationDelay=(i*30)+'ms';
-    el.innerHTML=
-      '<button class="card-help" title="Was macht das?">'+svg('help')+'</button>'+
-      '<button class="card-add" title="Zur Warteschlange">'+svg('plus')+'</button>'+
-      '<div class="card-ico">'+svg(a.icon)+'</div>'+
-      '<div class="card-body">'+
-        '<div class="card-title">'+a.title+(a.rec?'<span class="tag">empfohlen</span>':'')+'</div>'+
-        '<div class="card-desc">'+a.desc+'</div>'+
-      '</div>';
-    el.onclick=()=>run(a);
-    el.querySelector('.card-add').onclick=(e)=>{ e.stopPropagation(); addToQueue(a.id); };
-    el.querySelector('.card-help').onclick=(e)=>{ e.stopPropagation(); infoModal(a); };
-    cards.appendChild(el);
-  });
-  specials.forEach((a,i)=>{
-    const el=document.createElement('div');
-    el.className='card special';
-    el.style.animationDelay=((list.length+i)*30)+'ms';
-    el.innerHTML=
-      '<button class="card-help" title="Was macht das?">'+svg('help')+'</button>'+
-      '<div class="card-ico">'+svg(a.icon)+'</div>'+
-      '<div class="card-body">'+
-        '<div class="card-title">'+a.title+'<span class="tag alt">Eingabe</span></div>'+
-        '<div class="card-desc">'+a.desc+'</div>'+
-      '</div>';
-    el.onclick=()=>runSpecial(a);
-    el.querySelector('.card-help').onclick=(e)=>{ e.stopPropagation(); infoModalText(a.title, a.icon, INFO_SPECIAL[a.special]||a.desc); };
-    cards.appendChild(el);
-  });
-  refreshAdded();
+$$('[data-go]').forEach(b => b.onclick = () => go(b.dataset.go));
+function go(where){
+  if(where === 'start'){ show('start'); renderStart(); return; }
+  if(where === 'tools'){ show('tools'); renderTools(); return; }
+  openSub(where);
 }
 
-/* ---------- Dashboard ---------- */
-const GC = 2 * Math.PI * 52;
-function gaugeBlock(id, label){
-  return '<div class="gauge"><svg viewBox="0 0 120 120">'+
-    '<circle class="g-track" cx="60" cy="60" r="52"/>'+
-    '<circle class="g-arc" id="g-'+id+'-arc" cx="60" cy="60" r="52"/></svg>'+
-    '<div class="gauge-center"><span class="gauge-val" id="g-'+id+'-val">0%</span></div>'+
-    '<div class="gauge-label">'+label+'</div></div>';
-}
-function renderDashboard(){
-  cards.classList.add('dashboard');
-  cards.innerHTML =
-    '<div class="dash">'+
-      '<div class="dash-gauges">'+ gaugeBlock('cpu','Prozessor') + gaugeBlock('ram','Arbeitsspeicher') + gaugeBlock('disk','Festplatte') +'</div>'+
-      '<div class="dash-row">'+
-        '<div class="dash-card">'+
-          '<div class="health-top">'+
-            '<div class="health-ring"><svg viewBox="0 0 120 120"><circle class="g-track" cx="60" cy="60" r="52"/><circle class="g-arc" id="g-hp-arc" cx="60" cy="60" r="52"/></svg>'+
-            '<div class="health-num"><span id="health-score">--</span><small>/100</small></div></div>'+
-            '<div><div class="health-title" id="health-title">Systemzustand</div><div class="health-sub" id="health-sub">wird ermittelt …</div></div>'+
-          '</div>'+
-          '<div class="recs" id="recs"></div>'+
-        '</div>'+
-        '<div class="dash-card">'+
-          '<div class="info-title">System</div>'+
-          '<div class="info-row"><span>Windows</span><b id="i-os">–</b></div>'+
-          '<div class="info-row"><span>Gerät</span><b id="i-model">–</b></div>'+
-          '<div class="info-row"><span>Arbeitsspeicher</span><b id="i-ram">–</b></div>'+
-          '<div id="i-drives"></div>'+
-          '<div class="info-row"><span>Eingeschaltet seit</span><b id="i-uptime">–</b></div>'+
-        '</div>'+
-      '</div>'+
-    '</div>';
-  // Ringe leer starten -> beim ersten Stats-Update füllen sie sich synchron zum Zahl-Count-up
-  ['cpu','ram','disk','hp'].forEach(function(id){
-    var a=$('#g-'+id+'-arc'); if(a){ a.style.strokeDasharray=GC; a.style.strokeDashoffset=GC; }
-  });
-}
-function gaugeColor(p){ return p<60 ? 'var(--green)' : (p<85 ? 'var(--yellow)' : 'var(--red)'); }
-function healthColor(s){ return s>=80 ? 'var(--green)' : (s>=50 ? 'var(--yellow)' : 'var(--red)'); }
-function setArc(arc, p, color){ p=Math.max(0,Math.min(100,p)); arc.style.strokeDasharray=GC; arc.style.strokeDashoffset=GC*(1-p/100); arc.style.stroke=color; }
+/* =====================================================================
+   Startbildschirm
+   ===================================================================== */
+const STATE_WORD = { ok:'in Ordnung', warn:'beachten', bad:'Problem', unknown:'keine Daten' };
 
-// OS-Einstellung „Bewegung reduzieren" (in WebView2/Chromium nativ verfügbar)
-const REDUCE = window.matchMedia('(prefers-reduced-motion: reduce)');
-// Dezenter Zahl-Count-up: interpoliert NUR textContent (kein Layout-Thrash), easeOutCubic.
-// Respektiert prefers-reduced-motion (Endwert sofort) und löst laufende Animationen sauber ab.
-// Bewusst ohne Animations-Library – ein paar Zeilen requestAnimationFrame genügen (offline, leichtgewichtig).
-function countUp(el, to, suffix){
-  if(!el) return;
-  suffix = suffix || '';
-  to = Math.round(to);
-  if(REDUCE.matches || typeof requestAnimationFrame!=='function'){
-    if(el._cuRaf){ cancelAnimationFrame(el._cuRaf); el._cuRaf=0; }
-    el.textContent = to + suffix; return;
-  }
-  const cur = parseInt(el.textContent, 10);
-  const from = isNaN(cur) ? 0 : cur;
-  if(from === to){ el.textContent = to + suffix; return; }
-  if(el._cuRaf) cancelAnimationFrame(el._cuRaf); // laufende Animation ablösen (kein Frame-Stau bei schnellen Updates)
-  const t0 = performance.now();
-  const ease = p => 1 - Math.pow(1-p, 3); // easeOutCubic – dezent, kein Overshoot
-  const step = now => {
-    const p = Math.min(1, (now - t0) / 600);
-    el.textContent = Math.round(from + (to - from) * ease(p)) + suffix;
-    el._cuRaf = p < 1 ? requestAnimationFrame(step) : 0;
-  };
-  el._cuRaf = requestAnimationFrame(step);
-}
-function setGauge(id, p){ const a=$('#g-'+id+'-arc'); if(a) setArc(a,p,gaugeColor(p)); const v=$('#g-'+id+'-val'); if(v) countUp(v, p, '%'); }
-function dTxt(sel,v){ const e=$(sel); if(e) e.textContent=v; }
-function updateStats(s){
-  if(!cards.classList.contains('dashboard')) return;
-  setGauge('cpu', s.cpu); setGauge('ram', s.ram); setGauge('disk', s.disk);
-  const hr=$('#g-hp-arc'); if(hr) setArc(hr, s.score, healthColor(s.score));
-  countUp($('#health-score'), s.score);
-  dTxt('#health-title', s.score>=80?'Alles in Ordnung':(s.score>=50?'Kleinere Hinweise':'Aufmerksamkeit nötig'));
-  dTxt('#health-sub', s.score>=80?'Dein PC ist gut in Schuss.':'Siehe Empfehlungen unten.');
-  const rc=$('#recs');
-  if(rc){
-    rc.innerHTML='';
-    (s.recs||[]).forEach(r=>{
-      const click = r.action>=0;
-      const el=document.createElement(click?'button':'div');
-      el.className='rec'+(click?' clickable':'');
-      el.innerHTML='<span class="rec-dot"></span><span>'+r.text+'</span>'+(click?'<span class="rec-go">'+svg('arrow')+'</span>':'');
-      if(click){ const a=byId(r.action); if(a) el.onclick=()=>run(a); }
-      rc.appendChild(el);
-    });
-  }
-  dTxt('#i-os', s.os); dTxt('#i-model', s.model);
-  dTxt('#i-ram', s.ramUsedGB+' / '+s.ramTotalGB+' GB ('+s.ram+'%)');
-  const dv=$('#i-drives');
-  if(dv){
-    dv.innerHTML='';
-    (s.drives||[]).forEach(d=>{
-      const row=document.createElement('div'); row.className='info-row';
-      const span=document.createElement('span'); span.textContent='Laufwerk '+d.name+(d.label?' · '+d.label:'');
-      const b=document.createElement('b'); b.textContent=d.freeGB+' GB frei / '+d.totalGB+' GB';
-      row.appendChild(span); row.appendChild(b); dv.appendChild(row);
-    });
-  }
-  dTxt('#i-uptime', s.uptime);
-}
+function renderStart(){
+  const ico = $('#start-ico');
+  const worst = overallOf(S.checks);
 
-/* ---------- Autostart ---------- */
-function renderAutostart(){
-  cards.innerHTML=
-    '<div class="as-top">'+
-      '<div class="set-card">'+
-        '<div class="set-row" style="padding:0;border:0">'+
-          '<div class="set-text"><div class="set-title">Windows-Wartung beim PC-Start starten</div>'+
-          '<div class="set-desc">Startet die App automatisch nach der Anmeldung – über die Aufgabenplanung mit Administratorrechten, ganz ohne Nachfrage-Fenster.</div></div>'+
-          '<span class="switch"><input type="checkbox" id="as-self" disabled/><i></i></span>'+
-        '</div>'+
-      '</div>'+
-      '<div class="set-card">'+
-        '<div class="set-title">Eigene Programme zum Autostart hinzufügen</div>'+
-        '<div class="set-desc" style="margin:3px 0 12px">So geht es: Rechtsklick auf das Programm (im Startmenü oder auf dem Desktop) → <b>Verknüpfung erstellen</b> – und diese Verknüpfung in den Autostart-Ordner verschieben. Beim nächsten PC-Start läuft das Programm automatisch mit. Zum Entfernen die Verknüpfung dort einfach löschen.</div>'+
-        '<div class="as-folder-btns">'+
-          '<button id="as-open-user" class="mb">Autostart-Ordner öffnen</button>'+
-          '<button id="as-open-common" class="mb">Ordner für alle Benutzer öffnen</button>'+
-        '</div>'+
-      '</div>'+
-      '<div class="as-group" style="margin:4px 4px 0">Vorhandene Einträge</div>'+
-    '</div>'+
-    '<div id="as-list"><div class="as-loading">Autostart wird geladen …</div></div>';
-  $('#as-self').onchange=e=>{
-    e.target.disabled=true; // bis der Host den neuen Status bestätigt
-    send({type:'selfStartSet', on:e.target.checked});
-  };
-  $('#as-open-user').onclick=()=>send({type:'openStartupFolder', scope:'user'});
-  $('#as-open-common').onclick=()=>send({type:'openStartupFolder', scope:'common'});
-}
-function renderSelfStart(m){
-  const i=$('#as-self'); if(!i) return;
-  i.checked=!!m.on;
-  i.disabled=false;
-  if(m.changed===false) toast('Nicht geändert','Der Autostart-Eintrag konnte nicht angepasst werden.','bad');
-  else if(m.changed===true) toast(m.on?'Autostart aktiv':'Autostart entfernt', m.on?'Windows-Wartung startet künftig mit dem PC.':'Windows-Wartung startet nicht mehr automatisch.','good');
-}
-function renderAutostartList(items){
-  if(!cards.classList.contains('autostart')) return;
-  const list=$('#as-list'); if(!list) return;
-  if(!items || !items.length){ list.innerHTML='<div class="as-loading">Keine Autostart-Einträge gefunden.</div>'; return; }
-  const groups={}; items.forEach(it=>{ (groups[it.locName]=groups[it.locName]||[]).push(it); });
-  let html='<div class="as-wrap">';
-  Object.keys(groups).forEach(g=>{
-    html+='<div class="as-group">'+esc(g)+'</div>';
-    groups[g].forEach(it=>{
-      html+='<div class="as-item'+(it.enabled?'':' off')+'">'+
-        '<div class="as-info"><div class="as-name">'+esc(it.name)+'</div><div class="as-cmd">'+esc(it.cmd||'')+'</div></div>'+
-        '<span class="switch"><input type="checkbox" data-loc="'+esc(it.loc)+'" data-key="'+esc(it.key)+'"'+(it.enabled?' checked':'')+'/><i></i></span>'+
-      '</div>';
-    });
-  });
-  html+='</div>';
-  list.innerHTML=html;
-  list.querySelectorAll('.as-item input').forEach(inp=>{
-    inp.onchange=()=>{
-      inp.closest('.as-item').classList.toggle('off', !inp.checked);
-      send({type:'autostartSet', loc:inp.dataset.loc, key:inp.dataset.key, enable:inp.checked});
-    };
-  });
-}
-
-/* ---------- Verlauf ---------- */
-function renderHistory(){
-  cards.innerHTML='<div class="as-loading">Verlauf wird geladen …</div>';
-}
-function histResultLabel(kind){
-  if(kind==='good') return 'Erfolgreich';
-  if(kind==='bad')  return 'Fehlgeschlagen';
-  if(kind==='warn') return 'Mit Hinweisen';
-  return 'Ausgeführt';
-}
-function renderHistoryList(items){
-  if(!cards.classList.contains('history')) return;
-  if(!items || !items.length){
-    cards.innerHTML='<div class="hist-empty"><div class="hist-empty-ico">'+svg('clock')+'</div>'+
-      '<div>Noch keine Ausführungen aufgezeichnet.</div>'+
-      '<span>Sobald du eine Aktion startest, erscheint sie hier.</span></div>';
-    return;
-  }
-  let html='<div class="hist-head"><span class="hist-count">'+items.length+(items.length===1?' Eintrag':' Einträge')+'</span>'+
-    '<button id="hist-clear" class="link">Leeren</button></div><div class="hist-wrap">';
-  items.forEach(it=>{
-    const kind=(it.kind==='good'||it.kind==='bad'||it.kind==='warn')?it.kind:'norm';
-    const secs=(it.seconds!=null && it.seconds!=='')?(it.seconds+' s'):'';
-    html+='<div class="hist-item">'+
-      '<span class="hist-dot '+kind+'"></span>'+
-      '<div class="hist-info"><div class="hist-action">'+esc(it.action)+'</div>'+
-      '<div class="hist-msg">'+esc(histResultLabel(kind))+(it.message?' · '+esc(it.message):'')+'</div></div>'+
-      '<div class="hist-meta"><div class="hist-time">'+esc(it.time)+'</div>'+
-      (secs?'<div class="hist-dur">'+esc(secs)+'</div>':'')+'</div>'+
-    '</div>';
-  });
-  html+='</div>';
-  cards.innerHTML=html;
-  const cb=$('#hist-clear');
-  if(cb) cb.onclick=()=>confirmModal('Verlauf leeren','Alle Verlaufseinträge endgültig löschen?',()=>send({type:'historyClear'}));
-}
-
-/* ---------- Wiederherstellung ---------- */
-function renderRestore(){
-  cards.innerHTML=
-    '<div class="restore-wrap">'+
-      '<div class="rp-note">'+svg('alert')+'<div><b>Wiederherstellungspunkte</b> sichern Systemzustand, Treiber, Programme und Einstellungen. '+
-        'Eine Wiederherstellung startet den PC neu und setzt ihn auf einen früheren Stand zurück – <b>persönliche Dateien bleiben unberührt</b>.</div></div>'+
-      '<div class="set-card">'+
-        '<div class="set-title">Neuen Punkt anlegen</div>'+
-        '<div class="set-desc" style="margin:4px 0 12px">Sichert den aktuellen Zustand – ideal vor riskanten Änderungen.</div>'+
-        '<div class="rp-create">'+
-          '<input id="rp-desc" type="text" maxlength="60" placeholder="Beschreibung (optional)" />'+
-          '<button id="rp-create-btn" class="primary">Punkt anlegen</button>'+
-        '</div>'+
-      '</div>'+
-      '<div class="rp-list-head"><span class="hist-count">Vorhandene Punkte</span><button id="rp-refresh" class="link">Aktualisieren</button></div>'+
-      '<div id="rp-list"><div class="as-loading">Wiederherstellungspunkte werden geladen …</div></div>'+
-    '</div>';
-  $('#rp-create-btn').onclick=()=>{
-    if(running){ if(consoleEl.classList.contains('open')) append('Es läuft bereits eine Aktion – bitte warten.','warn'); return; }
-    send({type:'restoreCreate', desc:$('#rp-desc').value.trim()});
-  };
-  $('#rp-refresh').onclick=()=>{ const l=$('#rp-list'); if(l) l.innerHTML='<div class="as-loading">Wird geladen …</div>'; send({type:'restoreList'}); };
-}
-function rpTypeLabel(t){
-  t=parseInt(t,10);
-  if(t===0)  return 'Anwendung';
-  if(t===10) return 'Systemänderung';
-  if(t===12) return 'Einstellungen';
-  if(t===13) return 'Deinstallation';
-  return 'Punkt';
-}
-function renderRestoreList(items){
-  if(!cards.classList.contains('restore')) return;
-  const list=$('#rp-list'); if(!list) return;
-  if(!items || !items.length){
-    list.innerHTML='<div class="rp-empty">Keine Wiederherstellungspunkte vorhanden – der Systemschutz ist möglicherweise deaktiviert. Lege oben einen Punkt an, um ihn zu aktivieren.</div>';
-    return;
-  }
-  let html='<div class="rp-items">';
-  items.forEach(it=>{
-    html+='<div class="rp-item">'+
-      '<div class="rp-ico">'+svg('rotate')+'</div>'+
-      '<div class="rp-info"><div class="rp-desc-t">'+esc(it.desc||'(ohne Beschreibung)')+'</div>'+
-      '<div class="rp-meta">'+esc(it.time||'')+' · '+esc(rpTypeLabel(it.rtype))+' · Nr. '+esc(it.seq)+'</div></div>'+
-      '<button class="rp-revert" data-seq="'+esc(it.seq)+'" data-desc="'+esc(it.desc||'')+'">Zurücksetzen</button>'+
-    '</div>';
-  });
-  html+='</div>';
-  list.innerHTML=html;
-  list.querySelectorAll('.rp-revert').forEach(b=>{
-    b.onclick=()=>confirmRevert(parseInt(b.dataset.seq,10), b.dataset.desc||'(ohne Beschreibung)');
-  });
-}
-function confirmRevert(seq, desc){
-  if(isNaN(seq)||seq<=0) return;
-  // Wegen Tragweite: zweistufige Bestätigung
-  confirmModal('Wirklich wiederherstellen?',
-    'Windows wird auf „'+esc(desc)+'" zurückgesetzt und der PC startet sofort neu. Programme, Treiber und Einstellungen, die danach geändert wurden, gehen verloren. Persönliche Dateien bleiben erhalten.',
-    ()=>confirmModal('Letzte Sicherheitsfrage',
-      'Jetzt endgültig zurücksetzen und neu starten?',
-      ()=>send({type:'restoreRevert', seq:seq})));
-}
-
-/* ---------- Energie ---------- */
-function renderPower(){
-  cards.innerHTML=
-    '<div class="power-wrap">'+
-      '<div class="rp-note">'+svg('zap')+'<div>Der Energiesparplan steuert das Verhältnis von <b>Leistung</b> und <b>Stromverbrauch</b>. '+
-        '„Höchstleistung" ist schneller, braucht aber mehr Strom; „Energiesparmodus" schont den Akku.</div></div>'+
-      '<div id="power-list"><div class="as-loading">Energiepläne werden geladen …</div></div>'+
-    '</div>';
-}
-function renderPowerList(items){
-  if(!cards.classList.contains('power')) return;
-  const list=$('#power-list'); if(!list) return;
-  if(!items || !items.length){ list.innerHTML='<div class="rp-empty">Keine Energiepläne gefunden.</div>'; return; }
-  let html='<div class="power-items">';
-  items.forEach(p=>{
-    const on=!!p.active;
-    html+='<button class="power-item'+(on?' on':'')+'" data-guid="'+esc(p.guid)+'">'+
-      '<span class="power-radio"></span>'+
-      '<span class="power-name">'+esc(p.name)+'</span>'+
-      (on?'<span class="power-active">aktiv</span>':'')+
-    '</button>';
-  });
-  html+='</div>';
-  list.innerHTML=html;
-  list.querySelectorAll('.power-item').forEach(b=>{
-    b.onclick=()=>{
-      if(b.classList.contains('on')) return;
-      list.querySelectorAll('.power-item').forEach(x=>{ x.classList.remove('on'); const a=x.querySelector('.power-active'); if(a) a.remove(); });
-      b.classList.add('on');
-      send({type:'powerSet', guid:b.dataset.guid});
-    };
-  });
-}
-
-/* ---------- Bloatware ---------- */
-let bloatSel = new Set();
-function renderBloat(){
-  bloatSel = new Set();
-  cards.innerHTML=
-    '<div class="bloat-wrap">'+
-      '<div class="rp-note">'+svg('shield')+'<div>Entfernt <b>vorinstallierte Apps</b>, die viele nicht brauchen. Aus Sicherheit erscheinen <b>nur als unbedenklich bekannte</b> Apps – System, Store und Virenschutz sind geschützt. Entfernte Apps lassen sich jederzeit kostenlos über den <b>Microsoft Store</b> neu installieren.</div></div>'+
-      '<div id="bloat-body"><div class="as-loading">Installierte Apps werden geladen …</div></div>'+
-    '</div>';
-}
-function renderBloatList(items){
-  if(!cards.classList.contains('bloat')) return;
-  const body=$('#bloat-body'); if(!body) return;
-  bloatSel=new Set();
-  if(!items || !items.length){
-    body.innerHTML='<div class="rp-empty">Keine bekannte Bloatware gefunden – auf diesem PC ist nichts aus der sicheren Liste vorinstalliert.</div>';
-    return;
-  }
-  let html='<div class="bloat-bar">'+
-      '<label class="bloat-rp"><span class="switch"><input type="checkbox" id="bloat-rp" checked/><i></i></span><span>Vorher Wiederherstellungspunkt anlegen</span></label>'+
-      '<div class="bloat-bar-actions">'+
-        '<button id="bloat-all" class="link">Alle</button>'+
-        '<button id="bloat-none" class="link">Keine</button>'+
-        '<button id="bloat-remove" class="primary" disabled>Entfernen</button>'+
-      '</div>'+
-    '</div>';
-  const groups={}; items.forEach(it=>{ (groups[it.cat]=groups[it.cat]||[]).push(it); });
-  html+='<div class="bloat-items">';
-  Object.keys(groups).forEach(g=>{
-    html+='<div class="as-group">'+esc(g)+'</div>';
-    groups[g].forEach(it=>{
-      html+='<button class="bloat-item" data-full="'+esc(it.full)+'">'+
-        '<span class="bloat-box">'+svg('tick')+'</span>'+
-        '<div class="bloat-ico">'+svg('package')+'</div>'+
-        '<div class="bloat-info"><div class="bloat-name">'+esc(it.label)+'</div>'+
-        '<div class="bloat-meta">'+esc(it.name)+(it.pub?' · '+esc(it.pub):'')+'</div></div>'+
-      '</button>';
-    });
-  });
-  html+='</div>';
-  body.innerHTML=html;
-  body.querySelectorAll('.bloat-item').forEach(b=>{
-    b.onclick=()=>{
-      const f=b.dataset.full;
-      if(bloatSel.has(f)){ bloatSel.delete(f); b.classList.remove('sel'); }
-      else { bloatSel.add(f); b.classList.add('sel'); }
-      updateBloatRemove();
-    };
-  });
-  $('#bloat-all').onclick=()=>{ body.querySelectorAll('.bloat-item').forEach(b=>{ bloatSel.add(b.dataset.full); b.classList.add('sel'); }); updateBloatRemove(); };
-  $('#bloat-none').onclick=()=>{ bloatSel.clear(); body.querySelectorAll('.bloat-item').forEach(b=>b.classList.remove('sel')); updateBloatRemove(); };
-  $('#bloat-remove').onclick=()=>bloatRemoveFlow();
-  updateBloatRemove();
-}
-function updateBloatRemove(){
-  const btn=$('#bloat-remove'); if(!btn) return;
-  const n=bloatSel.size;
-  btn.disabled = running || n===0;
-  btn.textContent = n>0 ? ('Entfernen ('+n+')') : 'Entfernen';
-}
-function bloatRemoveFlow(){
-  if(running){ if(consoleEl.classList.contains('open')) append('Es läuft bereits eine Aktion – bitte warten.','warn'); return; }
-  const fulls=Array.from(bloatSel).filter(f=>/^[A-Za-z0-9._-]+$/.test(f));
-  if(!fulls.length) return;
-  const labels=[];
-  cards.querySelectorAll('.bloat-item.sel .bloat-name').forEach(e=>labels.push(e.textContent));
-  const rp = !!($('#bloat-rp') && $('#bloat-rp').checked);
-  const shown=labels.slice(0,8).map(l=>'• '+esc(l)).join('<br>');
-  const more=labels.length>8 ? '<br>… und '+(labels.length-8)+' weitere' : '';
-  // Wegen Tragweite: zweistufige Bestätigung (wie bei der Wiederherstellung).
-  confirmModal('Ausgewählte Apps entfernen?',
-    '<b>'+fulls.length+'</b> App(en) werden entfernt:<br><br>'+shown+more+'<br><br>'+
-    (rp?'Vorher wird ein Wiederherstellungspunkt angelegt. ':'')+
-    'Die Apps lassen sich später über den Microsoft Store wieder installieren.',
-    ()=>confirmModal('Letzte Sicherheitsfrage',
-      'Jetzt '+fulls.length+' App(en) endgültig entfernen?',
-      ()=>send({type:'bloatRemove', fulls:fulls, restore:rp})));
-}
-
-/* ---------- Geplante Wartung ---------- */
-// Spiegel zu Catalog.AutoCatalog() in C# (Schlüssel + Standard-Satz müssen übereinstimmen).
-const AUTO_TASKS = [
-  {key:'dism',     std:true,  title:'Windows reparieren (DISM)',  desc:'Repariert den Komponentenspeicher über Windows Update.'},
-  {key:'sfc',      std:true,  title:'Systemdateien prüfen (SFC)', desc:'Prüft und repariert geschützte Systemdateien.'},
-  {key:'temp',     std:true,  title:'Temp-Dateien löschen',       desc:'Leert Benutzer- und Windows-Temp-Ordner.'},
-  {key:'bin',      std:true,  title:'Papierkorb leeren',          desc:'Leert den Papierkorb aller Laufwerke.'},
-  {key:'winsxs',   std:false, title:'WinSxS aufräumen',           desc:'Entfernt veraltete Update-Komponenten (dauert länger).'},
-  {key:'updcache', std:false, title:'Update-Cache leeren',        desc:'Löscht heruntergeladene Update-Dateien.'},
-  {key:'dns',      std:false, title:'DNS-Cache leeren',           desc:'Löscht den DNS-Auflösungscache.'},
-  {key:'defender', std:false, title:'Defender-Schnellscan',       desc:'Kurzer Virenscan der wichtigsten Bereiche.'},
-];
-const AUTO_STD_KEYS = AUTO_TASKS.filter(t=>t.std).map(t=>t.key);
-let schedMode='daily';
-
-function schedUpdateCount(){
-  const n=AUTO_TASKS.filter(t=>{ const i=$('#at-'+t.key); return i&&i.checked; }).length;
-  const c=$('#sched-count'); if(c) c.textContent = n+(n===1?' Aufgabe':' Aufgaben')+' ausgewählt';
-  const s=$('#sched-save'); if(s) s.disabled = n===0;
-}
-function renderSchedule(){
-  schedMode='daily';
-  let taskRows='';
-  AUTO_TASKS.forEach(t=>{
-    taskRows+='<div class="set-row"><div class="set-text">'+
-      '<div class="set-title">'+t.title+(t.std?'<span class="std-tag">Standard</span>':'')+'</div>'+
-      '<div class="set-desc">'+t.desc+'</div></div>'+
-      toggleHTML('at-'+t.key, t.std)+'</div>';
-  });
-  let domOpts='';
-  for(let i=1;i<=31;i++) domOpts+='<option value="'+i+'">'+i+'.</option>';
-  cards.innerHTML=
-    '<div class="sched-wrap">'+
-      '<div class="rp-note">'+svg('calendar')+'<div>Die geplante Wartung läuft <b>automatisch im Hintergrund</b> (mit Administratorrechten) und meldet sich danach per Benachrichtigung. Unten lässt sich einstellen, <b>wann</b> sie läuft und <b>was</b> sie erledigt – ohne Änderung gilt der bewährte Standard. Ist die App zum Termin gerade geöffnet, läuft die Wartung sichtbar direkt in der App (bzw. sobald eine laufende Aktion fertig ist).</div></div>'+
-      '<div id="sched-status" class="sched-status"><div class="as-loading">Status wird geladen …</div></div>'+
-      '<div class="set-card">'+
-        '<div class="set-title" style="margin-bottom:14px">Wann? – Zeitplan</div>'+
-        '<div class="sched-form">'+
-          '<div class="sched-field"><label>Intervall</label>'+
-            '<div class="seg sched-seg" id="sched-mode">'+
-              '<button data-mode="daily" class="active">Täglich</button>'+
-              '<button data-mode="weekly">Wöchentlich</button>'+
-              '<button data-mode="monthly">Monatlich</button>'+
-            '</div>'+
-          '</div>'+
-          '<div class="sched-field hidden" id="sched-days-field"><label>An diesen Tagen</label>'+
-            '<div class="day-chips" id="sched-days">'+DAYS.map(d=>'<button type="button" class="day-chip'+(d[0]==='SUN'?' on':'')+'" data-day="'+d[0]+'" title="'+d[1]+'">'+d[1].slice(0,2)+'</button>').join('')+'</div>'+
-          '</div>'+
-          '<div class="sched-field hidden" id="sched-dom-field"><label>Tag des Monats</label>'+
-            '<select id="sched-dom" class="sched-select">'+domOpts+'</select>'+
-          '</div>'+
-          '<div class="sched-field"><label>Uhrzeit</label>'+
-            '<input id="sched-time" type="time" value="12:00" class="sched-time" />'+
-          '</div>'+
-        '</div>'+
-        '<div class="sched-dom-hint hidden" id="sched-dom-hint">Hinweis: In Monaten ohne diesen Tag (z. B. Februar) wird der Lauf übersprungen.</div>'+
-      '</div>'+
-      '<div class="set-card">'+
-        '<div class="set-title">Was? – Aufgaben des Wartungslaufs</div>'+
-        '<div class="set-desc" style="margin:3px 0 4px">Frei wählbar. Ohne Änderung läuft der bewährte Standard-Satz (Reparatur + Aufräumen).</div>'+
-        '<div id="sched-tasks">'+taskRows+'</div>'+
-        '<div class="sched-tasks-foot"><span class="sched-count" id="sched-count"></span><button id="sched-reset" class="link">Auf Standard zurücksetzen</button></div>'+
-      '</div>'+
-      '<div class="sched-save-row"><button id="sched-save" class="primary">Zeitplan speichern</button></div>'+
-    '</div>';
-  document.querySelectorAll('#sched-mode button').forEach(b=>{
-    b.onclick=()=>{
-      document.querySelectorAll('#sched-mode button').forEach(x=>x.classList.remove('active'));
-      b.classList.add('active'); schedMode=b.dataset.mode;
-      $('#sched-days-field').classList.toggle('hidden', schedMode!=='weekly');
-      $('#sched-dom-field').classList.toggle('hidden', schedMode!=='monthly');
-      domHint();
-    };
-  });
-  const domHint=()=>{
-    const v=parseInt($('#sched-dom').value,10)||1;
-    $('#sched-dom-hint').classList.toggle('hidden', !(schedMode==='monthly' && v>28));
-  };
-  $('#sched-dom').onchange=domHint;
-  cards.querySelectorAll('.day-chip').forEach(b=>{ b.onclick=()=>b.classList.toggle('on'); });
-  cards.querySelectorAll('#sched-tasks input').forEach(i=>{ i.onchange=schedUpdateCount; });
-  $('#sched-reset').onclick=()=>{
-    AUTO_TASKS.forEach(t=>{ const i=$('#at-'+t.key); if(i) i.checked=t.std; });
-    schedUpdateCount();
-  };
-  schedUpdateCount();
-  $('#sched-save').onclick=()=>{
-    const time=$('#sched-time').value||'12:00';
-    const parts=time.split(':');
-    const hh=parseInt(parts[0],10), mm=parseInt(parts[1],10);
-    if(isNaN(hh)||isNaN(mm)) return;
-    const msg={type:'scheduleCreate', mode:schedMode, hh:hh, mm:mm};
-    if(schedMode==='weekly'){
-      const days=Array.from(cards.querySelectorAll('.day-chip.on')).map(b=>b.dataset.day);
-      if(!days.length){ toast('Kein Wochentag','Bitte mindestens einen Wochentag auswählen.','warn'); return; }
-      msg.days=days;
+  if(!S.checks.length){
+    ico.className = 'vico'; ico.innerHTML = svg('shield');
+    $('#start-title').textContent = 'Ihr PC wurde noch nicht geprüft';
+    $('#start-lead').textContent =
+      'Die Prüfung schaut nach, ob mit Windows etwas nicht stimmt: beschädigte Dateien, ' +
+      'zu wenig freier Speicher, Probleme beim Start. Sie verändert dabei nichts an Ihren ' +
+      'Fotos, Dokumenten oder Programmen.';
+  } else {
+    const n = S.checks.filter(c => c.state === 'warn' || c.state === 'bad').length;
+    ico.className = 'vico ' + worst;
+    ico.innerHTML = svg(worst === 'ok' ? 'checkCircle' : 'alert');
+    if(worst === 'ok'){
+      $('#start-title').textContent = 'Auf den ersten Blick sieht alles gut aus';
+      $('#start-lead').textContent =
+        'Wir haben schnell nachgesehen und nichts Auffälliges gefunden. Die vollständige ' +
+        'Prüfung schaut zusätzlich die Dateien von Windows durch, das dauert ein paar Minuten.';
+    } else {
+      $('#start-title').textContent = n === 1
+        ? 'Eine Sache sollten Sie sich ansehen'
+        : n + ' Dinge sollten Sie sich ansehen';
+      $('#start-lead').textContent =
+        'Das ist ein schneller erster Blick. Die vollständige Prüfung sieht zusätzlich nach, ' +
+        'ob Dateien von Windows beschädigt sind, und kann vieles davon selbst beheben.';
     }
-    if(schedMode==='monthly') msg.dom=parseInt($('#sched-dom').value,10)||1;
-    const sel=AUTO_TASKS.filter(t=>{ const i=$('#at-'+t.key); return i&&i.checked; }).map(t=>t.key);
-    if(!sel.length){ toast('Keine Aufgabe','Bitte mindestens eine Aufgabe auswählen.','warn'); return; }
-    // Entspricht die Auswahl exakt dem Standard, wird sie NICHT gespeichert ->
-    // es gilt weiterhin der (ggf. künftig verbesserte) Standard-Satz.
-    const isStd = sel.length===AUTO_STD_KEYS.length && AUTO_STD_KEYS.every(k=>sel.indexOf(k)>=0);
-    if(!isStd) msg.actions=sel;
+  }
+
+  const box = $('#start-areas');
+  box.innerHTML = '';
+  if(!S.checks.length){
+    box.appendChild(el('p','hint','Der erste Blick auf Ihren PC wird geladen …'));
+  } else {
+    S.checks.forEach(c => box.appendChild(areaRow(c)));
+  }
+
+  $('#admin-line').innerHTML = S.admin
+    ? svg('shield') + '<span>Läuft mit Administratorrechten. Vor Änderungen legen wir einen Sicherungspunkt an.</span>'
+    : svg('alert') + '<span>Ohne Administratorrechte. Prüfen geht, Reparieren nicht. Bitte starten Sie das Programm über die rechte Maustaste als Administrator.</span>';
+}
+
+function areaRow(c){
+  const b = el('button','area');
+  b.type = 'button';
+  b.innerHTML =
+    '<span class="dot ' + c.state + '" aria-hidden="true"></span>' +
+    '<span class="area-b"><span class="area-t">' + esc(c.title) + '</span>' +
+    '<span class="area-s">' + esc(c.summary) + '</span></span>' +
+    '<span class="pill ' + c.state + '">' + STATE_WORD[c.state] + '</span>';
+  b.setAttribute('aria-label', c.title + ': ' + STATE_WORD[c.state] + '. ' + c.summary);
+  b.onclick = () => detailModal(c);
+  return b;
+}
+
+function overallOf(list){
+  let bad = false, warn = false, any = false;
+  list.forEach(c => {
+    if(c.state === 'unknown') return;
+    any = true;
+    if(c.state === 'bad') bad = true; else if(c.state === 'warn') warn = true;
+  });
+  if(!any) return 'unknown';
+  return bad ? 'bad' : (warn ? 'warn' : 'ok');
+}
+
+$('#btn-check').onclick = () => {
+  if(!S.admin){
+    infoModal('Administratorrechte fehlen',
+      'Zum Prüfen und Reparieren braucht das Programm Administratorrechte.\n\n' +
+      'Schließen Sie es bitte, klicken Sie das Symbol mit der rechten Maustaste an und ' +
+      'wählen Sie „Als Administrator ausführen“.', 'warn');
+    return;
+  }
+  startFlow('check');
+};
+
+/* =====================================================================
+   Ablauf
+   ===================================================================== */
+function startFlow(mode){
+  S.mode = mode;
+  S.steps = [];
+  S.stepIndex = 0;
+  $('#console-body').innerHTML = '';
+  $('#run-steps').innerHTML = '';
+  $('#run-pct').textContent = '';
+  setBar(-1);
+
+  $('#run-ico').className = 'vico';
+  $('#run-ico').innerHTML = svg(mode === 'fix' ? 'wrench' : 'shield');
+  $('#run-title').textContent = mode === 'fix' ? 'Ihr PC wird repariert' : 'Ihr PC wird geprüft';
+  $('#run-lead').textContent = mode === 'fix'
+    ? 'Wir beheben jetzt, was sich beheben lässt. Bitte lassen Sie den PC dabei eingeschaltet. ' +
+      'Ein Sicherungspunkt ist angelegt, damit sich alles rückgängig machen lässt.'
+    : 'Das dauert einen Moment. Sie können das Fenster ruhig zur Seite legen und weiterarbeiten. ' +
+      'Wir melden uns, wenn wir fertig sind.';
+  $('#run-foot').innerHTML = svg('info') +
+    '<span>' + (mode === 'fix'
+      ? 'Sie können abbrechen. Was bereits repariert wurde, bleibt erhalten.'
+      : 'Sie können jederzeit abbrechen. Die Prüfung verändert nichts an Ihrem PC.') + '</span>';
+
+  show('run');
+  send({ type: mode === 'fix' ? 'startFix' : 'startCheck' });
+}
+
+function setBar(pct){
+  const bar = $('#run-bar'), fill = bar.querySelector('i');
+  if(pct == null || pct < 0){
+    bar.classList.add('indeterminate');
+    bar.removeAttribute('aria-valuenow');
+    fill.style.width = '35%';
+    $('#run-pct').textContent = '';
+  } else {
+    bar.classList.remove('indeterminate');
+    bar.setAttribute('aria-valuenow', pct);
+    fill.style.width = Math.max(0, Math.min(100, pct)) + '%';
+    $('#run-pct').textContent = pct + ' %';
+  }
+}
+
+function renderSteps(){
+  const box = $('#run-steps');
+  box.innerHTML = '';
+  S.steps.forEach((s, i) => {
+    const n = i + 1;
+    const cls = n < S.stepIndex ? 'done' : (n === S.stepIndex ? 'now' : 'todo');
+    const row = el('div','step ' + cls);
+    row.innerHTML =
+      '<span class="snum">' + (cls === 'done' ? svg('check') : n) + '</span>' +
+      '<span class="step-t">' + esc(s) + '</span>' +
+      '<span class="step-m">' + (cls === 'done' ? 'erledigt' : (cls === 'now' ? 'läuft …' : 'wartet')) + '</span>';
+    box.appendChild(row);
+  });
+}
+
+$('#btn-cancel').onclick = () => {
+  confirmModal('Vorgang abbrechen?',
+    S.mode === 'fix'
+      ? 'Was bereits repariert wurde, bleibt erhalten. Den Rest können Sie später erneut starten.'
+      : 'Die Prüfung wird beendet. Ihrem PC passiert dabei nichts.',
+    'Abbrechen', () => { send({type:'cancelFlow'}); });
+};
+
+/* =====================================================================
+   Ergebnis
+   ===================================================================== */
+function renderResult(r){
+  S.result = r;
+  const ico = $('#res-ico');
+  ico.className = 'vico ' + r.overall;
+  ico.innerHTML = svg(r.overall === 'ok' ? 'checkCircle' : 'alert');
+
+  const fixedNow = r.mode === 'fix';
+  if(r.overall === 'ok'){
+    $('#res-title').textContent = fixedNow ? 'Fertig, Ihr PC ist in Ordnung' : 'Alles in Ordnung';
+    $('#res-lead').textContent = fixedNow
+      ? 'Wir haben behoben, was zu beheben war. Es ist nichts weiter zu tun.'
+      : 'Wir haben nachgesehen und nichts gefunden, das Sie stören müsste.';
+  } else if(r.problems === 1){
+    $('#res-title').textContent = 'Ein Punkt braucht Ihre Aufmerksamkeit';
+    $('#res-lead').textContent = fixedNow
+      ? 'Was wir selbst beheben konnten, haben wir behoben. Für einen Punkt brauchen wir kurz Ihre Hilfe.'
+      : 'Die Prüfung ist fertig. Ein Punkt ist aufgefallen.';
+  } else {
+    $('#res-title').textContent = r.problems + ' Punkte brauchen Ihre Aufmerksamkeit';
+    $('#res-lead').textContent = fixedNow
+      ? 'Was wir selbst beheben konnten, haben wir behoben. Um den Rest kümmern Sie sich am besten selbst.'
+      : 'Die Prüfung ist fertig. Diese Punkte sind aufgefallen.';
+  }
+
+  // Befunde ausführlich, Unauffälliges zusammengefasst. Sonst rutscht die
+  // Handlungsempfehlung unter den sichtbaren Bereich und wird übersehen.
+  const rank = { bad:0, warn:1 };
+  const issues = r.checks.filter(c => c.state === 'bad' || c.state === 'warn')
+                         .sort((a,b) => rank[a.state] - rank[b.state]);
+  const good    = r.checks.filter(c => c.state === 'ok');
+  const unknown = r.checks.filter(c => c.state === 'unknown');
+
+  const box = $('#res-list');
+  box.innerHTML = '';
+  issues.forEach(c => box.appendChild(resultCard(c)));
+
+  // Nicht Prüfbares wird getrennt ausgewiesen. Es unter "unauffällig" zu verbuchen
+  // wäre eine Behauptung, die wir nicht belegen können.
+  if(good.length)    box.appendChild(groupCard('ok', good,
+    good.length === 1 ? 'Ein weiterer Bereich ist unauffällig'
+                      : good.length + ' weitere Bereiche sind unauffällig'));
+  if(unknown.length) box.appendChild(groupCard('unknown', unknown,
+    unknown.length === 1 ? 'Ein Bereich ließ sich nicht prüfen'
+                         : unknown.length + ' Bereiche ließen sich nicht prüfen'));
+
+  // "Was Sie jetzt tun sollten" - genau EINE Empfehlung, mit hoechstens einer Hauptaktion.
+  const next = $('#res-next');
+  next.hidden = false;
+  next.innerHTML = '';
+  if(r.fixable && r.mode === 'check'){
+    next.appendChild(el('span','next-b',
+      '<div class="next-t">Was Sie jetzt tun sollten</div>' +
+      '<div class="next-s">Vieles davon können wir selbst beheben. Vorher legen wir einen ' +
+      'Sicherungspunkt an, damit sich alles rückgängig machen lässt.</div>'));
+    const b = el('button','btn btn-primary btn-md','Gefundene Probleme beheben');
+    b.onclick = () => startFlow('fix');
+    next.appendChild(b);
+  } else if(r.restart){
+    next.appendChild(el('span','next-b',
+      '<div class="next-t">Was Sie jetzt tun sollten</div>' +
+      '<div class="next-s">Starten Sie den PC einmal neu. Erst dann sind die Änderungen ' +
+      'vollständig abgeschlossen.</div>'));
+    const b = el('button','btn btn-primary btn-md','Jetzt neu starten');
+    b.onclick = () => confirmModal('PC neu starten?',
+      'Bitte speichern Sie vorher Ihre Arbeit. Der Neustart beginnt in 60 Sekunden, ' +
+      'Sie können ihn im Banner unten noch abbrechen.',
+      'Neu starten', () => send({type:'restartNow'}));
+    next.appendChild(b);
+    const l = el('button','btn btn-ghost','Später');
+    l.onclick = () => { next.hidden = true; };
+    next.appendChild(l);
+  } else if(r.overall === 'ok'){
+    next.appendChild(el('span','next-b',
+      '<div class="next-t">Sie müssen nichts weiter tun</div>' +
+      '<div class="next-s">Eine Prüfung alle paar Monate genügt. Unter „Automatische Wartung“ ' +
+      'können Sie das auch von allein laufen lassen.</div>'));
+  } else {
+    next.appendChild(el('span','next-b',
+      '<div class="next-t">Was Sie jetzt tun sollten</div>' +
+      '<div class="next-s">Die Hinweise oben sagen bei jedem Punkt, was zu tun ist. ' +
+      'Das meiste davon eilt nicht.</div>'));
+  }
+
+  $('#res-foot').innerHTML = svg('clock') +
+    '<span>Geprüft am ' + esc(r.when || '') + '</span>';
+  $('#console-body-2').innerHTML = $('#console-body').innerHTML;
+
+  show('result');
+}
+
+function groupCard(state, list, title){
+  const card = el('div','rcard ' + state);
+  card.innerHTML =
+    '<span class="rico">' + svg(state === 'ok' ? 'check' : 'info') + '</span>' +
+    '<span class="rbody"><span class="rt">' + esc(title) + '</span>' +
+    '<div class="rs">' + esc(list.map(c => c.title).join(' · ')) + '</div></span>';
+  const d = el('details','disc');
+  d.style.marginTop = '0';
+  d.innerHTML = '<summary>' + svg('chevron') + ' <b>Im Einzelnen ansehen</b></summary>' +
+    '<div class="disc-body">' + list.map(c =>
+      '<p><b>' + esc(c.title) + ':</b> ' + esc(c.summary) +
+      (c.detail ? '<br><span style="color:var(--text-3);white-space:pre-line">' + esc(c.detail) + '</span>' : '') +
+      '</p>').join('') + '</div>';
+  card.querySelector('.rbody').appendChild(d);
+  return card;
+}
+
+function resultCard(c){
+  const card = el('div','rcard ' + c.state);
+  card.innerHTML =
+    '<span class="rico">' + svg(c.state === 'ok' ? 'check' : (c.state === 'unknown' ? 'info' : 'alert')) + '</span>' +
+    '<span class="rbody">' +
+      '<span class="rt">' + esc(c.title) + '</span>' +
+      '<div class="rs">' + esc(c.summary) + '</div>' +
+      (c.advice ? '<div class="radv">' + esc(c.advice) + '</div>' : '') +
+    '</span>';
+  if(c.detail){
+    const d = el('details','disc');
+    d.style.marginTop = '0';
+    d.innerHTML = '<summary>' + svg('chevron') + ' <b>Einzelheiten</b></summary>' +
+                  '<div class="disc-body"><p style="white-space:pre-line">' + esc(c.detail) + '</p></div>';
+    card.querySelector('.rbody').appendChild(d);
+  }
+  return card;
+}
+
+$('#btn-save').onclick = () => send({type:'save'});
+
+/* =====================================================================
+   Werkzeugkasten
+   ===================================================================== */
+function renderTools(){
+  if(!S.catalog) return;
+  const tabs = $('#tool-tabs');
+  tabs.innerHTML = '';
+  const catIcons = { 'Reparieren':'wrench', 'Netzwerk':'globe', 'Aufräumen':'trash', 'Diagnose':'search' };
+  if(!S.cat) S.cat = S.catalog.categories[0];
+
+  S.catalog.categories.forEach(c => {
+    const b = el('button','tab', svg(catIcons[c] || 'list') + esc(c));
+    b.type = 'button';
+    b.setAttribute('role','tab');
+    b.setAttribute('aria-selected', String(c === S.cat));
+    b.onclick = () => { S.cat = c; renderTools(); };
+    tabs.appendChild(b);
+  });
+
+  const note = S.catalog.notes && S.catalog.notes[S.cat];
+  $('#tool-note').innerHTML = note
+    ? '<div class="catnote">' + svg('info') + '<div>' + esc(note) + '</div></div>' : '';
+
+  const cards = $('#tool-cards');
+  cards.innerHTML = '';
+  S.catalog.actions.filter(a => a.cat === S.cat).forEach(a => cards.appendChild(toolCard(a)));
+
+  $('#tools-foot').innerHTML = svg('info') +
+    '<span>Weitere Bereiche:</span>';
+}
+
+function toolCard(a){
+  const wrap = el('div','');
+  wrap.style.position = 'relative';
+
+  const b = el('button','card' + (a.danger ? ' danger' : ''));
+  b.type = 'button';
+  b.innerHTML =
+    '<span class="card-ico">' + svg(a.icon || 'wrench') + '</span>' +
+    '<span class="card-b">' +
+      '<span class="card-t">' + esc(a.title) +
+        (a.danger ? '<span class="tag warn">Nachfrage</span>' : '') + '</span>' +
+      '<span class="card-d">' + esc(a.desc) + '</span>' +
+      (a.tech ? '<span class="card-tech">' + esc(a.tech) + '</span>' : '') +
+    '</span>';
+  b.onclick = () => runAction(a);
+  wrap.appendChild(b);
+
+  const h = el('button','card-help', svg('help'));
+  h.type = 'button';
+  h.setAttribute('aria-label','Was macht „' + a.title + '“?');
+  h.onclick = (e) => { e.stopPropagation(); infoModal(a.title, a.info || a.desc, 'info', a.tech); };
+  wrap.appendChild(h);
+  return wrap;
+}
+
+function runAction(a){
+  if(!S.admin){
+    infoModal('Administratorrechte fehlen',
+      'Diese Aktion braucht Administratorrechte. Bitte schließen Sie das Programm und starten ' +
+      'Sie es über die rechte Maustaste als Administrator.', 'warn');
+    return;
+  }
+  const start = () => {
+    $('#console-body').innerHTML = '';
+    S.mode = 'action';
+    S.steps = [a.title];
+    S.stepIndex = 1;
+    S.stepTotal = 1;
+    $('#run-ico').className = 'vico';
+    $('#run-ico').innerHTML = svg(a.icon || 'wrench');
+    $('#run-title').textContent = a.title;
+    $('#run-lead').textContent = a.desc;
+    $('#run-foot').innerHTML = svg('info') + '<span>Sie können jederzeit abbrechen.</span>';
+    renderSteps();
+    setBar(-1);
+    $('#run-status').textContent = 'Läuft …';
+    show('run');
+    send({ type:'run', id:a.id, restore:true, post:'none', delay:60 });
+  };
+
+  if(a.danger || SET.confirm){
+    confirmModal(a.title,
+      (a.info || a.desc) + (a.restore ? '\n\nVorher legen wir einen Sicherungspunkt an, damit sich das rückgängig machen lässt.' : ''),
+      'Jetzt ausführen', start, a.danger);
+  } else start();
+}
+
+/* =====================================================================
+   Nebenansichten
+   ===================================================================== */
+const SUBS = {
+  history:   { title:'Verlauf',              lead:'Was in der Vergangenheit ausgeführt wurde.' },
+  restore:   { title:'Sicherungspunkte',     lead:'Ein Sicherungspunkt merkt sich den Zustand von Windows, Programmen und Einstellungen. Damit lässt sich der PC auf einen früheren Stand zurücksetzen. Ihre persönlichen Dateien bleiben dabei unberührt.' },
+  schedule:  { title:'Automatische Wartung', lead:'Der PC kann sich regelmäßig selbst warten, ganz von allein im Hintergrund.' },
+  autostart: { title:'Startprogramme',       lead:'Diese Programme starten automatisch mit, wenn Sie den PC einschalten. Je weniger es sind, desto schneller ist Ihr PC startklar. Ausschalten ist jederzeit umkehrbar.' },
+  apps:      { title:'Vorinstallierte Apps', lead:'Apps, die ab Werk auf dem PC waren und die viele nie benutzen. Aus Sicherheit bieten wir nur Apps an, deren Entfernen bekanntermaßen unbedenklich ist.' },
+  power:     { title:'Energie',              lead:'Der Energieplan steuert das Verhältnis von Leistung und Stromverbrauch. Mehr Leistung heißt mehr Strom und bei Laptops weniger Akkulaufzeit.' },
+  settings:  { title:'Einstellungen',        lead:'Aussehen und Verhalten des Programms.' },
+};
+function openSub(key){
+  const s = SUBS[key];
+  if(!s) return;
+  S.sub = key;
+  $('#sub-title').textContent = s.title;
+  $('#sub-lead').textContent = s.lead;
+  $('#sub-body').innerHTML = '<div class="empty">Wird geladen …</div>';
+  $('#sub-foot').innerHTML = '';
+  show('sub');
+
+  if(key === 'history')  send({type:'historyList'});
+  if(key === 'restore')  send({type:'restoreList'});
+  if(key === 'power')    send({type:'powerList'});
+  if(key === 'apps')     send({type:'bloatList'});
+  if(key === 'schedule') send({type:'scheduleStatus'});
+  if(key === 'autostart'){ send({type:'autostartList'}); send({type:'selfStartGet'}); }
+  if(key === 'settings') renderSettings();
+}
+
+function renderSettings(){
+  const body = $('#sub-body');
+  body.innerHTML = '';
+
+  const themes = [['system','Wie Windows','monitor'],['light','Hell','sun'],['dark','Dunkel','moon']];
+  const p1 = el('div','panel');
+  p1.innerHTML = '<div class="panel-h"><div class="panel-t">Aussehen</div>' +
+    '<div class="panel-d">Hell oder dunkel. „Wie Windows“ übernimmt Ihre Windows-Einstellung.</div></div>';
+  const row = el('div','row');
+  const seg = el('div','tabs');
+  seg.style.margin = '0';
+  themes.forEach(t => {
+    const b = el('button','tab', svg(t[2]) + t[1]);
+    b.type = 'button';
+    b.setAttribute('aria-selected', String(SET.theme === t[0]));
+    b.onclick = () => { SET.theme = t[0]; localStorage.setItem('theme', t[0]); applyTheme(); renderSettings(); };
+    seg.appendChild(b);
+  });
+  row.appendChild(seg);
+  p1.appendChild(row);
+  body.appendChild(p1);
+
+  const zooms = [[0.9,'90 %'],[1,'100 %'],[1.15,'115 %'],[1.3,'130 %'],[1.5,'150 %'],[1.75,'175 %']];
+  const p2 = el('div','panel');
+  p2.innerHTML = '<div class="panel-h"><div class="panel-t">Schriftgröße</div>' +
+    '<div class="panel-d">Alles größer anzeigen. Angenehm, wenn die Schrift sonst zu klein ist.</div></div>';
+  const row2 = el('div','row');
+  const seg2 = el('div','tabs');
+  seg2.style.margin = '0';
+  zooms.forEach(z => {
+    const b = el('button','tab', z[1]);
+    b.type = 'button';
+    b.setAttribute('aria-selected', String(Math.abs(z[0] - SET.zoom) < 0.001));
+    b.onclick = () => { SET.zoom = z[0]; send({type:'setZoom', factor:z[0]}); renderSettings(); };
+    seg2.appendChild(b);
+  });
+  row2.appendChild(seg2);
+  p2.appendChild(row2);
+  body.appendChild(p2);
+
+  const p3 = el('div','panel');
+  p3.innerHTML = '<div class="panel-h"><div class="panel-t">Verhalten</div></div>';
+  p3.appendChild(switchRow('Mitteilung, wenn etwas fertig ist',
+    'Windows zeigt eine kurze Meldung, wenn das Fenster gerade im Hintergrund ist.',
+    SET.notify, v => { SET.notify = v; localStorage.setItem('notify', v); send({type:'setNotify', on:v}); }));
+  p3.appendChild(switchRow('Immer vor dem Ausführen fragen',
+    'Auch bei harmlosen Aktionen erst eine Sicherheitsfrage stellen.',
+    SET.confirm, v => { SET.confirm = v; localStorage.setItem('confirm', v); }));
+  p3.appendChild(switchRow('Neue Fassungen selbst installieren',
+    'Findet das Programm beim Start eine neue Fassung, installiert es sie ohne Nachfrage und startet neu. Die Echtheit wird weiterhin geprüft.',
+    SET.autoUpdate, v => { SET.autoUpdate = v; localStorage.setItem('autoUpdate', v); }));
+  body.appendChild(p3);
+
+  const p4 = el('div','panel');
+  p4.innerHTML = '<div class="panel-h"><div class="panel-t">Über dieses Programm</div>' +
+    '<div class="panel-d">Fassung ' + esc(S.version || '–') + '</div></div>';
+  const r4 = el('div','row');
+  r4.innerHTML = '<span class="row-b"><span class="row-t">Fehlerprotokoll</span>' +
+    '<span class="row-s">Falls einmal etwas nicht klappt, steht hier, was passiert ist.</span></span>';
+  const ob = el('button','btn btn-ghost','Protokoll öffnen');
+  ob.onclick = () => send({type:'openLog'});
+  r4.appendChild(ob);
+  p4.appendChild(r4);
+  body.appendChild(p4);
+}
+
+function switchRow(title, desc, on, onChange){
+  const id = 'sw-' + Math.random().toString(36).slice(2,9);
+  const row = el('label','row');
+  row.setAttribute('for', id);
+  row.innerHTML =
+    '<span class="row-b"><span class="row-t">' + esc(title) + '</span>' +
+    '<span class="row-s">' + esc(desc) + '</span></span>' +
+    '<span class="switch"><input type="checkbox" id="' + id + '"' + (on ? ' checked' : '') + ' /><i></i></span>';
+  row.querySelector('input').onchange = e => onChange(e.target.checked);
+  return row;
+}
+
+/* =====================================================================
+   Dialoge - mit Escape, Fokusfalle und Rollen
+   Frueher fehlte all das ausgerechnet bei der Systemwiederherstellung.
+   ===================================================================== */
+let openDialog = null;
+
+function buildModal(opts){
+  const prev = document.activeElement;
+  const ov = el('div','modal-ov');
+  const box = el('div','modal');
+  box.setAttribute('role','dialog');
+  box.setAttribute('aria-modal','true');
+  box.setAttribute('aria-labelledby','dlg-t');
+
+  box.innerHTML =
+    (opts.icon ? '<div class="modal-ico ' + (opts.tone || '') + '">' + svg(opts.icon) + '</div>' : '') +
+    '<h2 id="dlg-t">' + esc(opts.title) + '</h2>' +
+    (opts.lead ? '<div class="lead">' + esc(opts.lead) + '</div>' : '') +
+    '<p>' + esc(opts.body) + '</p>' +
+    (opts.tech ? '<p class="card-tech" style="margin-top:12px">Fachlich: ' + esc(opts.tech) + '</p>' : '');
+
+  const btns = el('div','modal-btns');
+  box.appendChild(btns);
+  ov.appendChild(box);
+  document.body.appendChild(ov);
+
+  function close(){
+    ov.remove();
+    openDialog = null;
+    document.removeEventListener('keydown', keys, true);
+    try{ prev && prev.focus(); }catch(_){}
+  }
+  function keys(e){
+    if(e.key === 'Escape'){ e.preventDefault(); close(); return; }
+    if(e.key !== 'Tab') return;
+    // Fokusfalle: der Tabulator darf den Dialog nicht verlassen.
+    const f = box.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+    if(!f.length) return;
+    const first = f[0], last = f[f.length - 1];
+    if(e.shiftKey && document.activeElement === first){ e.preventDefault(); last.focus(); }
+    else if(!e.shiftKey && document.activeElement === last){ e.preventDefault(); first.focus(); }
+  }
+  ov.onclick = e => { if(e.target === ov) close(); };
+  document.addEventListener('keydown', keys, true);
+  openDialog = { close: close };
+  return { ov: ov, box: box, btns: btns, close: close };
+}
+
+function infoModal(title, body, tone, tech){
+  const m = buildModal({ title:title, body:body, icon: tone === 'warn' ? 'alert' : 'help',
+                         tone: tone === 'warn' ? 'warn' : '', lead:'In einfachen Worten', tech:tech });
+  const ok = el('button','btn btn-primary btn-md','Verstanden');
+  ok.onclick = m.close;
+  m.btns.appendChild(ok);
+  ok.focus();
+}
+
+function detailModal(c){
+  const m = buildModal({
+    title: c.title,
+    body: c.summary + (c.advice ? '\n\nWas Sie tun können:\n' + c.advice : '') +
+          (c.detail ? '\n\nEinzelheiten:\n' + c.detail : ''),
+    icon: c.state === 'ok' ? 'checkCircle' : (c.state === 'unknown' ? 'info' : 'alert'),
+    tone: c.state === 'bad' ? 'bad' : (c.state === 'warn' ? 'warn' : ''),
+  });
+  const ok = el('button','btn btn-primary btn-md','Schließen');
+  ok.onclick = m.close;
+  m.btns.appendChild(ok);
+  ok.focus();
+}
+
+function confirmModal(title, body, okLabel, onOk, dangerous){
+  const m = buildModal({ title:title, body:body, icon: dangerous ? 'alert' : 'help',
+                         tone: dangerous ? 'warn' : '' });
+  const cancel = el('button','btn btn-ghost','Abbrechen');
+  cancel.onclick = m.close;
+  const ok = el('button', dangerous ? 'btn btn-danger' : 'btn btn-primary btn-md', okLabel || 'Fortfahren');
+  ok.onclick = () => { m.close(); onOk(); };
+  m.btns.appendChild(cancel);
+  m.btns.appendChild(ok);
+  // Bei riskanten Aktionen liegt der Fokus auf dem sicheren Weg.
+  (dangerous ? cancel : ok).focus();
+}
+
+/* =====================================================================
+   Meldungen
+   ===================================================================== */
+function toast(title, msg, kind){
+  const t = el('div','toast ' + (kind || 'good'));
+  t.innerHTML =
+    '<span class="toast-ico">' + svg(kind === 'bad' ? 'xcirc' : (kind === 'warn' ? 'alert' : 'check')) + '</span>' +
+    '<span><span class="toast-t">' + esc(title) + '</span>' +
+    '<span class="toast-m">' + esc(msg) + '</span></span>';
+  t.onclick = () => t.remove();
+  $('#toasts').appendChild(t);
+  setTimeout(() => t.remove(), 6000);
+}
+
+function appendLine(text, kind){
+  const box = $('#console-body');
+  const ln = el('div','ln ' + (kind || 'norm'));
+  ln.textContent = text;
+  box.appendChild(ln);
+  box.scrollTop = box.scrollHeight;
+  while(box.childNodes.length > 2000) box.removeChild(box.firstChild);
+}
+
+/* =====================================================================
+   Nachrichten vom Host
+   ===================================================================== */
+function onHost(m){
+  switch(m.type){
+    case 'catalog':
+      S.catalog = m;
+      S.version = m.version || '';
+      // Belegaufnahme: gewuenschte Ansicht direkt oeffnen
+      ['tools','history','restore','schedule','autostart','apps','power','settings']
+        .forEach(k => { if(HASH.indexOf(k) >= 0) go(k); });
+      // Nur fuer Belegaufnahmen: die (rein lesende) Pruefung von selbst starten.
+      // Der Adresszusatz laesst sich ausschliesslich ueber --view von der Befehlszeile
+      // setzen, im normalen Betrieb ist er leer.
+      if(HASH.indexOf('check') >= 0) startFlow('check');
+      break;
+
+    case 'admin':
+      S.admin = !!m.on;
+      renderStart();
+      break;
+
+    case 'zoom':
+      SET.zoom = m.factor || 1;
+      break;
+
+    case 'lastChecks':
+      S.checks = m.checks || [];
+      if(S.screen === 'start') renderStart();
+      break;
+
+    case 'flowStart':
+      S.stepTotal = m.total || 0;
+      S.steps = [];
+      S.stepIndex = 0;
+      renderSteps();
+      break;
+
+    case 'flowStep':
+      S.stepIndex = m.index;
+      if(S.steps.length < m.index) S.steps.push(m.label);
+      else S.steps[m.index - 1] = m.label;
+      renderSteps();
+      setBar(-1);
+      $('#run-status').textContent = 'Schritt ' + m.index + ' von ' + S.stepTotal + ' · ' + m.label;
+      break;
+
+    case 'flowDetail':
+      if(S.screen === 'run') $('#run-status').textContent = m.text + ' …';
+      break;
+
+    case 'flowPercent':
+      setBar(m.percent);
+      break;
+
+    case 'flowResult':
+      renderResult(m);
+      S.checks = (m.checks || []).filter(c => c.key !== 'files');
+      break;
+
+    case 'flowCancelled':
+      toast('Abgebrochen', 'Der Vorgang wurde beendet. Ihrem PC ist nichts passiert.', 'warn');
+      go('start');
+      break;
+
+    case 'flowError':
+      infoModal('Das hat nicht geklappt', m.message, 'warn');
+      go('start');
+      break;
+
+    // --- Einzelaktionen aus dem Werkzeugkasten ---
+    case 'log':
+      appendLine(m.text, m.kind);
+      break;
+
+    case 'progress':
+      setBar(m.percent);
+      break;
+
+    case 'state':
+      if(!m.running && S.mode === 'action'){ S.stepIndex = 2; renderSteps(); }
+      break;
+
+    case 'done':
+      if(S.mode === 'action'){
+        S.stepIndex = 2; renderSteps(); setBar(100);
+        $('#run-status').textContent = m.message;
+        $('#run-foot').innerHTML = svg(m.kind === 'good' ? 'check' : 'alert') + '<span>' + esc(m.message) + '</span>';
+        $('#btn-cancel').textContent = 'Zurück';
+        $('#btn-cancel').onclick = () => { $('#btn-cancel').textContent = 'Abbrechen'; go('tools'); };
+      }
+      if(SET.notify) toast(m.title, m.message, m.kind);
+      break;
+
+    // --- Nebenansichten ---
+    case 'history':      renderHistory(m.items); break;
+    case 'restorePoints':renderRestore(m.items); break;
+    case 'powerPlans':   renderPower(m.items); break;
+    case 'bloatPackages':renderApps(m.items); break;
+    case 'autostart':    renderAutostart(m.items); break;
+    case 'schedule':     renderSchedule(m); break;
+
+    // --- Update ---
+    case 'update':
+      $('#ub-text').textContent = 'Es gibt eine neue Fassung (' + (m.version || '') + ').';
+      $('#update-bar').classList.add('show');
+      break;
+    case 'updateProgress':
+      $('#ub-text').textContent = m.percent >= 0
+        ? 'Neue Fassung wird geladen … ' + m.percent + ' %'
+        : 'Neue Fassung wird geladen …';
+      break;
+    case 'updateStatus':
+      $('#ub-text').textContent = m.phase === 'extract' ? 'Wird ausgepackt …'
+        : (m.phase === 'restart' ? 'Das Programm startet gleich neu …' : 'Wird geladen …');
+      break;
+    case 'updateError':
+      $('#update-bar').classList.remove('show');
+      infoModal('Die Aktualisierung hat nicht geklappt', m.message, 'warn');
+      break;
+    case 'updated':
+      toast('Aktualisiert', 'Das Programm läuft jetzt in der Fassung ' + m.version + '.', 'good');
+      break;
+
+    case 'shutdownScheduled':
+      $('#sb-text').textContent = 'Der PC wird in ' + m.delay + ' Sekunden ' +
+        (m.mode === 'restart' ? 'neu gestartet' : 'heruntergefahren') + '.';
+      $('#shutdown-bar').classList.add('show','alarm');
+      break;
+    case 'shutdownCancelled':
+      $('#shutdown-bar').classList.remove('show','alarm');
+      toast('Abgebrochen', 'Der PC bleibt an.', 'good');
+      break;
+  }
+}
+
+/* ---------- Nebenansichten rendern ---------- */
+function renderHistory(items){
+  const b = $('#sub-body');
+  if(!items || !items.length){
+    b.innerHTML = '<div class="empty">Hier ist noch nichts eingetragen.<br>' +
+      'Sobald Sie eine Prüfung oder ein Werkzeug starten, erscheint es hier.</div>';
+    return;
+  }
+  const words = { good:'Erfolgreich', bad:'Fehlgeschlagen', warn:'Mit Hinweisen' };
+  let h = '<div class="panel"><div class="panel-b">';
+  items.forEach(it => {
+    const k = ['good','bad','warn'].indexOf(it.kind) >= 0 ? it.kind : 'unknown';
+    h += '<div class="row"><span class="dot ' + (k === 'good' ? 'ok' : (k === 'bad' ? 'bad' : 'warn')) + '"></span>' +
+      '<span class="row-b"><span class="row-t">' + esc(it.action) + '</span>' +
+      '<span class="row-s">' + esc(words[k] || 'Ausgeführt') + (it.message ? ' · ' + esc(it.message) : '') + '</span></span>' +
+      '<span class="row-m">' + esc(it.time || '') + '</span></div>';
+  });
+  h += '</div></div>';
+  b.innerHTML = h;
+}
+
+function renderRestore(items){
+  const b = $('#sub-body');
+  let h = '<div class="panel"><div class="panel-h"><div class="panel-t">Neuen Sicherungspunkt anlegen</div>' +
+    '<div class="panel-d">Sichert den aktuellen Zustand. Sinnvoll, bevor Sie etwas Größeres ändern.</div></div>' +
+    '<div class="row"><span class="row-b"><input type="text" id="rp-desc" maxlength="60" ' +
+    'placeholder="Beschreibung (freiwillig)" style="width:100%" /></span>' +
+    '<button class="btn btn-primary btn-md" id="rp-new">Anlegen</button></div></div>';
+
+  if(!items || !items.length){
+    h += '<div class="empty">Es sind keine Sicherungspunkte vorhanden.<br>' +
+         'Möglicherweise ist der Systemschutz von Windows ausgeschaltet. Legen Sie oben einen Punkt an, um ihn einzuschalten.</div>';
+  } else {
+    h += '<div class="panel"><div class="panel-b">';
+    items.forEach(it => {
+      h += '<div class="row"><span class="row-b"><span class="row-t">' +
+        esc(it.desc || 'Ohne Beschreibung') + '</span>' +
+        '<span class="row-s">' + esc(it.time || '') + ' · ' + rpType(it.rtype) + '</span></span>' +
+        '<button class="btn btn-ghost" data-seq="' + esc(it.seq) + '">Hierhin zurück</button></div>';
+    });
+    h += '</div></div>';
+  }
+  b.innerHTML = h;
+  $('#rp-new').onclick = () => send({type:'restoreCreate', desc:($('#rp-desc').value || '').trim()});
+  b.querySelectorAll('[data-seq]').forEach(btn => {
+    btn.onclick = () => {
+      const seq = parseInt(btn.dataset.seq, 10);
+      confirmModal('Windows zurücksetzen?',
+        'Windows wird auf diesen früheren Stand zurückgesetzt und der PC startet dabei neu.\n\n' +
+        'Ihre persönlichen Dateien bleiben erhalten. Programme, Treiber und Einstellungen, die Sie ' +
+        'seitdem geändert haben, gehen verloren.',
+        'Weiter', () => confirmModal('Wirklich? Letzte Nachfrage',
+          'Bitte speichern Sie jetzt Ihre Arbeit. Der PC startet gleich neu.',
+          'Jetzt zurücksetzen', () => send({type:'restoreRevert', seq:seq}), true), true);
+    };
+  });
+}
+function rpType(t){
+  t = parseInt(t, 10);
+  if(t === 0)  return 'vor einer Programm-Installation';
+  if(t === 10) return 'vor einer Systemänderung';
+  if(t === 12) return 'vor einer Einstellungsänderung';
+  if(t === 13) return 'vor einer Deinstallation';
+  return 'angelegt';
+}
+
+function renderPower(items){
+  const b = $('#sub-body');
+  if(!items || !items.length){ b.innerHTML = '<div class="empty">Es wurden keine Energiepläne gefunden.</div>'; return; }
+  let h = '<div class="panel"><div class="panel-b">';
+  items.forEach(p => {
+    h += '<div class="row"><span class="row-b"><span class="row-t">' + esc(p.name) + '</span></span>' +
+      (p.active ? '<span class="pill ok">aktiv</span>'
+                : '<button class="btn btn-ghost" data-guid="' + esc(p.guid) + '">Auswählen</button>') + '</div>';
+  });
+  h += '</div></div>';
+  b.innerHTML = h;
+  b.querySelectorAll('[data-guid]').forEach(x => x.onclick = () => send({type:'powerSet', guid:x.dataset.guid}));
+}
+
+function renderAutostart(items){
+  const b = $('#sub-body');
+  if(!items || !items.length){ b.innerHTML = '<div class="empty">Es starten keine zusätzlichen Programme mit.</div>'; return; }
+  const groups = {};
+  items.forEach(it => { (groups[it.locName] = groups[it.locName] || []).push(it); });
+  const box = el('div','panel');
+  Object.keys(groups).forEach(g => {
+    box.appendChild(el('div','group', esc(g)));
+    groups[g].forEach(it => {
+      const row = el('label','row');
+      row.innerHTML =
+        '<span class="row-b"><span class="row-t">' + esc(it.name) + '</span>' +
+        '<span class="row-s">' + esc(it.cmd || '') + '</span></span>' +
+        '<span class="switch"><input type="checkbox"' + (it.enabled ? ' checked' : '') +
+        ' aria-label="' + esc(it.name) + ' beim Start mitladen" /><i></i></span>';
+      row.querySelector('input').onchange = e =>
+        send({type:'autostartSet', loc:it.loc, key:it.key, enable:e.target.checked});
+      box.appendChild(row);
+    });
+  });
+  b.innerHTML = '';
+  b.appendChild(box);
+}
+
+function renderApps(items){
+  const b = $('#sub-body');
+  if(!items || !items.length){
+    b.innerHTML = '<div class="empty">Es wurden keine entfernbaren vorinstallierten Apps gefunden.</div>';
+    return;
+  }
+  const groups = {};
+  items.forEach(it => { (groups[it.cat] = groups[it.cat] || []).push(it); });
+  const box = el('div','panel');
+  Object.keys(groups).forEach(g => {
+    box.appendChild(el('div','group', esc(g)));
+    groups[g].forEach(it => {
+      const row = el('label','row');
+      row.innerHTML =
+        '<span class="row-b"><span class="row-t">' + esc(it.label) + '</span></span>' +
+        '<span class="switch"><input type="checkbox" data-full="' + esc(it.full) + '"' +
+        ' aria-label="' + esc(it.label) + ' zum Entfernen auswählen" /><i></i></span>';
+      box.appendChild(row);
+    });
+  });
+  b.innerHTML = '';
+  b.appendChild(box);
+  const bar = el('div','next');
+  bar.innerHTML = '<span class="next-b"><span class="next-t">Ausgewählte Apps entfernen</span>' +
+    '<span class="next-s">Vorher legen wir einen Sicherungspunkt an. Sie können die Apps später ' +
+    'jederzeit kostenlos aus dem Microsoft Store neu installieren.</span></span>';
+  const go2 = el('button','btn btn-danger','Entfernen');
+  go2.onclick = () => {
+    const sel = Array.prototype.slice.call(b.querySelectorAll('input[data-full]:checked'));
+    if(!sel.length){ toast('Nichts ausgewählt','Wählen Sie zuerst mindestens eine App aus.','warn'); return; }
+    const names = sel.map(x => x.closest('.row').querySelector('.row-t').textContent);
+    confirmModal('Diese Apps entfernen?',
+      names.join('\n') + '\n\nSie können sie später jederzeit kostenlos aus dem Microsoft Store zurückholen.',
+      'Entfernen', () => send({type:'bloatRemove', restore:true, fulls:sel.map(x => x.dataset.full)}), true);
+  };
+  bar.appendChild(go2);
+  b.appendChild(bar);
+}
+
+function renderSchedule(m){
+  const b = $('#sub-body');
+  const tasks = (S.catalog && S.catalog.autoTasks) || [];
+  let h = '';
+  if(m.exists && m.config){
+    const c = m.config;
+    const when = c.mode === 'weekly'
+      ? 'Jeden ' + (c.days || []).map(d => DAY[d] || d).join(', ') + ' um ' + esc(c.time) + ' Uhr'
+      : (c.mode === 'monthly' ? 'Am ' + (parseInt(c.dom,10) || 1) + '. jedes Monats um ' + esc(c.time) + ' Uhr'
+                              : 'Jeden Tag um ' + esc(c.time) + ' Uhr');
+    h += '<div class="panel"><div class="row"><span class="pill ok">eingerichtet</span>' +
+      '<span class="row-b"><span class="row-t">' + esc(when) + '</span>' +
+      '<span class="row-s">Läuft still im Hintergrund und meldet sich, wenn sie fertig ist.</span></span>' +
+      '<button class="link danger" id="sc-del">Abschalten</button></div></div>';
+  } else {
+    h += '<div class="panel"><div class="row"><span class="pill unknown">nicht eingerichtet</span>' +
+      '<span class="row-b"><span class="row-s">Aktuell wartet sich der PC nicht von allein.</span></span></div></div>';
+  }
+
+  h += '<div class="panel"><div class="panel-h"><div class="panel-t">Wann soll gewartet werden?</div></div>' +
+    '<div class="row"><span class="row-b"><span class="row-t">Wie oft</span></span>' +
+    '<select id="sc-mode"><option value="daily">Jeden Tag</option>' +
+    '<option value="weekly">Einmal in der Woche</option>' +
+    '<option value="monthly">Einmal im Monat</option></select></div>' +
+    '<div class="row"><span class="row-b"><span class="row-t">Uhrzeit</span>' +
+    '<span class="row-s">Am besten eine Zeit, zu der der PC an ist, aber nicht gebraucht wird.</span></span>' +
+    '<input type="time" id="sc-time" value="12:00" /></div></div>';
+
+  h += '<div class="panel"><div class="panel-h"><div class="panel-t">Was soll erledigt werden?</div>' +
+    '<div class="panel-d">Ohne Änderung läuft der bewährte Standard.</div></div>';
+  tasks.forEach(t => {
+    h += '<label class="row"><span class="row-b"><span class="row-t">' + esc(t.title) + '</span>' +
+      '<span class="row-s">' + esc(t.desc) + '</span></span>' +
+      '<span class="switch"><input type="checkbox" data-key="' + esc(t.key) + '"' +
+      (t.std ? ' checked' : '') + ' aria-label="' + esc(t.title) + '" /><i></i></span></label>';
+  });
+  h += '</div><div class="next"><span class="next-b"><span class="next-t">Automatische Wartung einrichten</span>' +
+    '<span class="next-s">Sie können das jederzeit wieder abschalten.</span></span>' +
+    '<button class="btn btn-primary btn-md" id="sc-save">Einrichten</button></div>';
+
+  b.innerHTML = h;
+  const del = $('#sc-del');
+  if(del) del.onclick = () => confirmModal('Automatische Wartung abschalten?',
+    'Der PC wartet sich dann nicht mehr von allein. Sie können sie jederzeit wieder einrichten.',
+    'Abschalten', () => send({type:'scheduleDelete'}));
+  $('#sc-save').onclick = () => {
+    const mode = $('#sc-mode').value;
+    const parts = ($('#sc-time').value || '12:00').split(':');
+    const keys = Array.prototype.slice.call(b.querySelectorAll('input[data-key]:checked')).map(x => x.dataset.key);
+    if(!keys.length){ toast('Nichts ausgewählt','Wählen Sie mindestens eine Aufgabe aus.','warn'); return; }
+    const msg = {type:'scheduleCreate', mode:mode, hh:parseInt(parts[0],10), mm:parseInt(parts[1],10), actions:keys};
+    if(mode === 'weekly') msg.days = ['SAT'];
+    if(mode === 'monthly') msg.dom = 1;
     send(msg);
   };
 }
-function schedWhenLabel(c){
-  if(c.mode==='weekly'){
-    let names=[];
-    if(c.days && c.days.length) names=c.days.map(d=>DAY_NAMES[d]||d);
-    else if(c.day) names=[DAY_NAMES[c.day]||c.day]; // Config aus Versionen bis 6.2
-    return 'Jeden '+names.map(esc).join(', ')+' um '+esc(c.time)+' Uhr';
-  }
-  if(c.mode==='monthly') return 'Am '+(parseInt(c.dom,10)||1)+'. jedes Monats um '+esc(c.time)+' Uhr';
-  return 'Täglich um '+esc(c.time)+' Uhr';
-}
-function schedTasksLabel(c){
-  if(c.actions && c.actions.length){
-    const names=c.actions.map(k=>{ const t=AUTO_TASKS.find(x=>x.key===k); return t?t.title:null; }).filter(Boolean);
-    if(names.length) return names.join(' · ');
-  }
-  return 'Standard-Wartung: Reparatur (DISM + SFC) und Aufräumen (Temp + Papierkorb)';
-}
-function renderScheduleStatus(d){
-  const st=$('#sched-status'); if(!st) return;
-  if(d.justCreated===false) toast('Nicht gespeichert','Der Zeitplan konnte nicht angelegt werden.','bad');
-  else if(d.justCreated===true) toast('Geplant','Die automatische Wartung ist eingerichtet.','good');
-  if(d.exists && d.config){
-    const c=d.config;
-    st.innerHTML='<div class="sched-on"><span class="sched-badge">Aktiv</span>'+
-      '<div class="sched-on-body"><div class="sched-on-txt">'+schedWhenLabel(c)+'</div>'+
-      '<div class="sched-on-sub">'+esc(schedTasksLabel(c))+'</div></div>'+
-      '<button id="sched-del" class="link danger">Entfernen</button></div>';
-    $('#sched-del').onclick=()=>confirmModal('Geplante Wartung entfernen','Den automatischen Wartungstermin wirklich löschen?',()=>send({type:'scheduleDelete'}));
-  } else {
-    st.innerHTML='<div class="sched-off"><span class="sched-dot"></span>Aktuell ist keine automatische Wartung eingerichtet.</div>';
-  }
-}
+const DAY = {MON:'Montag',TUE:'Dienstag',WED:'Mittwoch',THU:'Donnerstag',FRI:'Freitag',SAT:'Samstag',SUN:'Sonntag'};
 
-/* ---------- Sonderaktionen (mit Eingabe) ---------- */
-function runSpecial(a){
-  if(running){ if(consoleEl.classList.contains('open')) append('Es läuft bereits eine Aktion – bitte warten oder stoppen.','warn'); return; }
-  if(a.special==='netdiag'){
-    promptModal('Netzwerk-Diagnose','Ziel eingeben – Webadresse oder IP (z. B. google.com oder 8.8.8.8):','google.com', val=>{
-      const t=(val||'').trim();
-      if(!t) return;
-      if(!/^[a-zA-Z0-9][a-zA-Z0-9.\-:]*$/.test(t)){ toast('Ungültiges Ziel','Nur Buchstaben, Zahlen, Punkt und Bindestrich erlaubt.','bad'); return; }
-      send({type:'netDiag', target:t});
-    });
-  } else if(a.special==='driverbackup'){
-    confirmModal('Treiber-Backup','Im nächsten Schritt wählst du einen Zielordner. Anschließend werden alle installierten Treiber dorthin exportiert. Das kann ein paar Minuten dauern. Fortfahren?', ()=>send({type:'driverBackup'}));
-  }
-}
-function promptModal(title, label, preset, onOk){
-  const ov=document.createElement('div'); ov.className='modal-ov';
-  ov.innerHTML=
-    '<div class="modal">'+
-      '<div class="modal-ico accent">'+svg('globe')+'</div>'+
-      '<h3>'+esc(title)+'</h3><p>'+esc(label)+'</p>'+
-      '<input class="modal-input" type="text" spellcheck="false" />'+
-      '<div class="modal-btns"><button class="mb cancel">Abbrechen</button><button class="mb ok">Starten</button></div>'+
-    '</div>';
-  document.body.appendChild(ov);
-  const inp=ov.querySelector('.modal-input');
-  inp.value=preset||'';
-  setTimeout(()=>{ try{ inp.focus(); inp.select(); }catch(_){} }, 60);
-  const go=()=>{ const v=inp.value; ov.remove(); onOk(v); };
-  ov.querySelector('.cancel').onclick=()=>ov.remove();
-  ov.querySelector('.ok').onclick=go;
-  inp.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); go(); } });
-  ov.onclick=e=>{ if(e.target===ov) ov.remove(); };
-}
-function infoModalText(title, icon, body){
-  const ov=document.createElement('div'); ov.className='modal-ov';
-  ov.innerHTML=
-    '<div class="modal info-modal">'+
-      '<div class="modal-ico accent">'+svg(icon)+'</div>'+
-      '<h3>'+esc(title)+'</h3>'+
-      '<div class="info-lead">In einfachen Worten</div>'+
-      '<p class="info-body">'+esc(body)+'</p>'+
-      '<div class="modal-btns"><button class="mb ok">Verstanden</button></div>'+
-    '</div>';
-  document.body.appendChild(ov);
-  ov.querySelector('.ok').onclick=()=>ov.remove();
-  ov.onclick=e=>{ if(e.target===ov) ov.remove(); };
-}
-
-/* ---------- Einstellungen ---------- */
-function toggleHTML(id, on){ return '<span class="switch"><input type="checkbox" id="'+id+'"'+(on?' checked':'')+'/><i></i></span>'; }
-function renderSettings(){
-  let sw='';
-  Object.keys(ACCENTS).forEach(k=>{
-    const c=ACCENTS[k];
-    sw+='<button class="swatch'+(SET.accent===k?' active':'')+'" data-acc="'+k+'" style="background:linear-gradient(135deg,'+c[0]+','+c[1]+')" title="'+k+'"></button>';
-  });
-  let zb='';
-  ZOOMS.forEach(z=>{ zb+='<button class="zoom-opt'+(Math.abs(parseFloat(z[0])-SET.zoom)<0.001?' active':'')+'" data-z="'+z[0]+'">'+z[1]+'</button>'; });
-  cards.innerHTML=
-    '<div class="settings-wrap">'+
-      '<div class="set-card">'+
-        '<div class="set-title">Größe der Oberfläche</div>'+
-        '<div class="set-desc" style="margin-bottom:14px">Alles größer anzeigen – angenehm bei Brille oder kleiner Schrift</div>'+
-        '<div class="zoom-opts">'+zb+'</div>'+
-      '</div>'+
-      '<div class="set-card">'+
-        '<div class="set-row"><div class="set-text"><div class="set-title">Windows-Benachrichtigungen</div><div class="set-desc">Mitteilung anzeigen, wenn eine Aktion fertig ist (während das Fenster im Hintergrund ist)</div></div>'+toggleHTML('s-notify', SET.notify)+'</div>'+
-        '<div class="set-row"><div class="set-text"><div class="set-title">Konsole beim Start öffnen</div><div class="set-desc">Den Ausgabe-Bereich direkt sichtbar anzeigen</div></div>'+toggleHTML('s-console', SET.consoleOpen)+'</div>'+
-        '<div class="set-row"><div class="set-text"><div class="set-title">Immer vor dem Ausführen fragen</div><div class="set-desc">Sicherheitsabfrage auch für harmlose Aktionen</div></div>'+toggleHTML('s-confirm', SET.confirmAll)+'</div>'+
-        '<div class="set-row"><div class="set-text"><div class="set-title">Updates automatisch installieren</div><div class="set-desc">Wird beim Start eine neue Version gefunden, installiert sie sich ohne Nachfrage (Prüfsummen-Kontrolle bleibt aktiv) und das Programm startet neu</div></div>'+toggleHTML('s-autoupdate', SET.autoUpdate)+'</div>'+
-      '</div>'+
-      '<div class="set-card">'+
-        '<div class="set-title">Akzentfarbe</div>'+
-        '<div class="set-desc" style="margin-bottom:14px">Farbe der Oberfläche</div>'+
-        '<div class="swatches">'+sw+'</div>'+
-      '</div>'+
-    '</div>';
-  cards.querySelectorAll('.zoom-opt').forEach(b=>{
-    b.onclick=()=>{ SET.zoom=parseFloat(b.dataset.z); send({type:'setZoom', factor:SET.zoom}); markZoomActive(); };
-  });
-  $('#s-notify').onchange=e=>{ SET.notify=e.target.checked; localStorage.setItem('notify', SET.notify); send({type:'setNotify', on:SET.notify}); };
-  $('#s-console').onchange=e=>{ SET.consoleOpen=e.target.checked; localStorage.setItem('consoleOpen', SET.consoleOpen); };
-  $('#s-confirm').onchange=e=>{ SET.confirmAll=e.target.checked; localStorage.setItem('confirmAll', SET.confirmAll); };
-  $('#s-autoupdate').onchange=e=>{ SET.autoUpdate=e.target.checked; localStorage.setItem('autoUpdate', SET.autoUpdate); };
-  cards.querySelectorAll('.swatch').forEach(b=>{
-    b.onclick=()=>{ SET.accent=b.dataset.acc; localStorage.setItem('accent', SET.accent); applyAccent(SET.accent); cards.querySelectorAll('.swatch').forEach(x=>x.classList.toggle('active', x===b)); };
-  });
-}
-
-/* ---------- Konsole ---------- */
-function append(text, kind){
-  const ln=document.createElement('div');
-  ln.className='ln '+(kind||'norm');
-  ln.textContent=text;
-  body.appendChild(ln);
-  body.scrollTop=body.scrollHeight;
-}
-function setRunning(r){
-  running=r;
-  $('#btn-stop').disabled=!r;
-  $('#q-run').disabled=r || queue.length===0;
-  updateBloatRemove();
-  if(r){ statusEl.classList.add('run'); statusText.textContent='läuft …'; }
-  else { statusEl.classList.remove('run'); statusText.textContent='bereit'; setProgress(-1); }
-}
-// Live-Fortschritt von DISM/SFC (oder -1 zum Ausblenden)
-function setProgress(pct){
-  const w=$('#console-progress'), b=$('#console-progress-bar');
-  if(pct==null || pct<0){ if(w) w.classList.remove('show'); if(b) b.style.width='0%'; if(running) statusText.textContent='läuft …'; return; }
-  if(pct>100) pct=100;
-  if(w) w.classList.add('show');
-  if(b) b.style.width=pct+'%';
-  if(running) statusText.textContent='läuft … '+pct+' %';
-}
-function setConsole(open){
-  consoleEl.classList.toggle('open', open);
-  main.classList.toggle('collapsed', !open);
-}
-$('#btn-collapse').onclick=()=>setConsole(false);
-$('#console-reopen').onclick=()=>setConsole(true);
-$('#btn-clear').onclick=()=>{ body.innerHTML=''; welcome(); };
-$('#btn-save').onclick=()=>send({type:'save'});
-$('#btn-stop').onclick=()=>send({type:'cancel'});
-
-/* ---------- Post-Aktion ---------- */
-document.querySelectorAll('#post-seg button').forEach(b=>{
-  b.onclick=()=>{
-    document.querySelectorAll('#post-seg button').forEach(x=>x.classList.remove('active'));
-    b.classList.add('active');
-    post=b.dataset.post;
-    $('#post-delay-row').classList.toggle('hidden', post==='none');
-    updateQueueAfter();
-  };
+/* ---------- Fenstersteuerung ---------- */
+$$('.wc').forEach(b => b.onclick = () => send({type:'win', action:b.dataset.win}));
+$$('.rz').forEach(z => z.onmousedown = e => { e.preventDefault(); send({type:'resize', dir:z.dataset.rz}); });
+document.addEventListener('mousedown', e => {
+  const drag = e.target.closest('[data-drag]');
+  if(drag && e.button === 0 && !e.target.closest('button')) send({type:'win', action:'drag'});
 });
-$('#post-delay-row').classList.add('hidden');
-$('#post-delay').onchange=()=>{ delay=clampDelay($('#post-delay').value); $('#post-delay').value=delay; updateQueueAfter(); };
-function clampDelay(v){ v=parseInt(v,10); if(isNaN(v)) return 60; return Math.max(5, Math.min(86400, v)); }
-function postLabel(){
-  if(post==='none') return 'Danach: <b>nichts</b>';
-  return 'Danach: <b>'+(post==='shutdown'?'Herunterfahren':'Neustart')+'</b> in '+delay+' Sek.';
-}
+document.addEventListener('contextmenu', e => e.preventDefault());
 
-/* ---------- Aktion direkt ausführen ---------- */
-function run(a){
-  if(running){ if(consoleEl.classList.contains('open')) append('Es läuft bereits eine Aktion – bitte warten oder stoppen.','warn'); return; }
-  const restore = $('#restore').checked;
-  const payload = ()=>send({type:'run', id:a.id, restore:restore, post:post, delay:delay});
-  if(a.danger) confirmModal(a.title, a.desc, payload);
-  else if(SET.confirmAll) confirmModal(a.title, 'Diese Aktion jetzt ausführen?', payload);
-  else payload();
-}
-function onDone(title, kind, message){
-  if(!consoleEl.classList.contains('open')) toast(title, message, kind);
-  // Nach dem Anlegen eines Punktes die Liste auffrischen
-  if(active==='Wiederherstellung') send({type:'restoreList'});
-  // Nach dem Entfernen die Bloatware-Liste neu laden (zeigt verbleibende Apps)
-  if(active==='Bloatware') send({type:'bloatList'});
-}
+$('#sb-cancel').onclick = () => send({type:'cancelShutdown'});
+$('#ub-get').onclick = () => send({type:'startUpdate'});
+$('#ub-skip').onclick = () => $('#update-bar').classList.remove('show');
 
-/* ---------- Warteschlange ---------- */
-function addToQueue(id){
-  queue.push(id);
-  renderQueue();
-  pulseBadge();
-}
-function removeFromQueue(i){ queue.splice(i,1); renderQueue(); }
-function moveQueue(i, dir){
-  const j=i+dir;
-  if(j<0||j>=queue.length) return;
-  const t=queue[i]; queue[i]=queue[j]; queue[j]=t;
-  renderQueue();
-}
-function renderQueue(){
-  const count=queue.length;
-  const badge=$('#queue-count');
-  badge.textContent=count;
-  badge.classList.toggle('has', count>0);
-  $('#q-run').disabled = running || count===0;
-  $('#q-list').classList.toggle('hidden', count===0);
-  $('#q-empty').classList.toggle('hidden', count>0);
-
-  const list=$('#q-list'); list.innerHTML='';
-  queue.forEach((id,i)=>{
-    const a=byId(id);
-    const el=document.createElement('div');
-    el.className='q-item'+(a.danger?' danger':'');
-    el.innerHTML=
-      '<span class="q-num">'+(i+1)+'</span>'+
-      '<div class="q-ico">'+svg(a.icon)+'</div>'+
-      '<span class="q-title">'+a.title+'</span>'+
-      '<span class="q-ctrl">'+
-        '<button data-a="up" title="Hoch">'+svg('up')+'</button>'+
-        '<button data-a="down" title="Runter">'+svg('down')+'</button>'+
-        '<button data-a="del" class="del" title="Entfernen">'+svg('close')+'</button>'+
-      '</span>';
-    el.querySelector('[data-a="up"]').onclick=()=>moveQueue(i,-1);
-    el.querySelector('[data-a="down"]').onclick=()=>moveQueue(i,1);
-    el.querySelector('[data-a="del"]').onclick=()=>removeFromQueue(i);
-    list.appendChild(el);
-  });
-  updateQueueAfter();
-  refreshAdded();
-}
-function updateQueueAfter(){ $('#q-after').innerHTML = postLabel(); }
-function refreshAdded(){
-  const set=new Set(queue);
-  document.querySelectorAll('.card').forEach(c=>{
-    const btn=c.querySelector('.card-add');
-    if(btn) btn.classList.toggle('added', set.has(parseInt(c.dataset.id,10)));
-  });
-}
-function pulseBadge(){
-  const b=$('#queue-count'); b.animate?b.animate([{transform:'scale(1.4)'},{transform:'scale(1)'}],{duration:260,easing:'ease-out'}):0;
-}
-function openQueue(open){
-  $('#queue').classList.toggle('open', open);
-  $('#q-overlay').classList.toggle('show', open);
-}
-$('#queue-btn').onclick=()=>openQueue(true);
-$('#q-close').onclick=()=>openQueue(false);
-$('#q-overlay').onclick=()=>openQueue(false);
-$('#q-clear').onclick=()=>{ queue=[]; renderQueue(); };
-$('#q-run').onclick=()=>{
-  if(running || queue.length===0) return;
-  const restore=$('#restore').checked;
-  const ids=queue.slice();
-  const start=()=>{ send({type:'runQueue', ids:ids, restore:restore, post:post, delay:delay}); openQueue(false); };
-  const dangerCount=ids.filter(id=>byId(id).danger).length;
-  if(dangerCount>0) confirmModal('Warteschlange starten', dangerCount+' Aktion(en) erfordern eine Bestätigung. Alle '+ids.length+' der Reihe nach ausführen?', start);
-  else start();
-};
-
-/* ---------- Shutdown-Banner ---------- */
-let sbTimer=null;
-function showShutdownBar(mode, secs){
-  hideShutdownBar();
-  const bar=$('#shutdown-bar'); bar.classList.add('show');
-  let left=secs;
-  const word = mode==='restart' ? 'neu gestartet' : 'heruntergefahren';
-  const paint=()=>{ $('#sb-text').innerHTML='Der PC wird in <b>'+left+' Sek.</b> '+word+' …'; };
-  paint();
-  sbTimer=setInterval(()=>{ left--; if(left<=0){ clearInterval(sbTimer); sbTimer=null; } else paint(); }, 1000);
-}
-function hideShutdownBar(){ if(sbTimer){clearInterval(sbTimer);sbTimer=null;} $('#shutdown-bar').classList.remove('show'); }
-$('#sb-cancel').onclick=()=>{ send({type:'cancelShutdown'}); hideShutdownBar(); };
-
-/* ---------- Update (Banner + Dialog) ---------- */
-$('#um-ico').innerHTML = svg('download');
-let updateVersion='';
-
-function showUpdate(version){ // kleines Banner oben (Fallback nach "Später")
-  $('#ub-text').innerHTML = 'Neue Version <b>'+version+'</b> verfügbar';
-  $('#update-bar').classList.add('show');
-}
-function umSet(title, html, opts){
-  opts=opts||{};
-  $('#um-title').textContent=title;
-  $('#um-text').innerHTML=html;
-  $('#um-progress').classList.toggle('hidden', !opts.progress);
-  $('#um-btns').classList.toggle('hidden', !opts.buttons);
-}
-function showUpdatePrompt(version){
-  updateVersion=version||'';
-  $('#update-bar').classList.remove('show');
-  umSet('Update verfügbar', 'Version <b>'+updateVersion+'</b> ist verfügbar.<br>Jetzt herunterladen?', {buttons:true});
-  $('#um-later').textContent='Später';
-  $('#um-go').textContent='Jetzt herunterladen';
-  $('#um-later').onclick=()=>{ hideUpdateModal(); showUpdate(updateVersion); };
-  $('#um-go').onclick=()=>startUpdateFlow();
-  $('#update-modal').classList.remove('hidden');
-}
-function startUpdateFlow(){
-  setUpdateProgress(0);
-  umSet('Wird heruntergeladen …', 'Lade '+updateVersion+' …', {progress:true});
-  $('#update-modal').classList.remove('hidden');
-  send({type:'startUpdate'});
-}
-function startAutoUpdate(version){ // Einstellung „Updates automatisch installieren"
-  updateVersion=version||'';
-  $('#update-bar').classList.remove('show');
-  setUpdateProgress(0);
-  umSet('Update wird automatisch installiert', 'Version '+updateVersion+' wird geladen – das Programm startet gleich neu …', {progress:true});
-  $('#update-modal').classList.remove('hidden');
-  send({type:'startUpdate'});
-}
-function setUpdateProgress(p){ $('#um-bar').style.width=(p||0)+'%'; }
-function setUpdatePhase(phase){
-  if(phase==='download') umSet('Wird heruntergeladen …','Lade '+updateVersion+' …',{progress:true});
-  else if(phase==='extract'){ setUpdateProgress(100); umSet('Wird entpackt …','Fast fertig …',{progress:true}); }
-  else if(phase==='restart') umSet('Neustart …','Das Programm startet sich neu …',{progress:true});
-}
-function setUpdateError(msg){
-  umSet('Update fehlgeschlagen',
-    esc(msg||'Unbekannter Fehler')+
-    '<br><span class="um-hint">Häufigste Ursache: keine oder gestörte Internetverbindung. Einfach später erneut versuchen – oder das Update unten über den Browser laden.</span>',
-    {buttons:true});
-  $('#um-later').textContent='Schließen';
-  $('#um-go').textContent='Im Browser öffnen';
-  $('#um-later').onclick=()=>hideUpdateModal();
-  $('#um-go').onclick=()=>{ send({type:'openUpdate'}); hideUpdateModal(); };
-}
-function hideUpdateModal(){ $('#update-modal').classList.add('hidden'); }
-$('#ub-get').onclick=()=>startUpdateFlow();
-$('#ub-skip').onclick=()=>{ $('#update-bar').classList.remove('show'); }; // nur ausblenden, erscheint beim nächsten Start wieder
-
-/* ---------- Toasts ---------- */
-function toast(title, msg, kind){
-  const ico = kind==='good'?'check':(kind==='warn'?'warn':'xcirc');
-  const el=document.createElement('div');
-  el.className='toast '+(kind||'good');
-  el.innerHTML=
-    '<div class="toast-ico">'+svg(ico)+'</div>'+
-    '<div class="toast-body"><div class="toast-title">'+title+'</div>'+
-    '<div class="toast-msg">'+msg+'</div><div class="toast-more">Klicken für Details →</div></div>';
-  el.onclick=()=>{ setConsole(true); dismiss(el); };
-  $('#toasts').appendChild(el);
-  el._timer=setTimeout(()=>dismiss(el), 4200);
-}
-function dismiss(el){ clearTimeout(el._timer); el.classList.add('out'); setTimeout(()=>el.remove(), 360); }
-
-/* ---------- Bestätigungs-Dialog ---------- */
-function confirmModal(title, desc, onYes){
-  const ov=document.createElement('div'); ov.className='modal-ov';
-  ov.innerHTML=
-    '<div class="modal">'+
-      '<div class="modal-ico">'+svg('alert')+'</div>'+
-      '<h3>'+title+'</h3><p>'+desc+'</p>'+
-      '<div class="modal-btns"><button class="mb cancel">Abbrechen</button><button class="mb ok">Ausführen</button></div>'+
-    '</div>';
-  document.body.appendChild(ov);
-  ov.querySelector('.cancel').onclick=()=>ov.remove();
-  ov.querySelector('.ok').onclick=()=>{ ov.remove(); onYes(); };
-  ov.onclick=e=>{ if(e.target===ov) ov.remove(); };
-}
-
-/* ---------- Erklär-Dialog (einfache Sprache) ---------- */
-function infoModal(a){
-  const ov=document.createElement('div'); ov.className='modal-ov';
-  const warn = a.danger ? '<div class="info-warn">Achtung: Diese Aktion bewusst einsetzen – sie greift tiefer ins System ein.</div>' : '';
-  ov.innerHTML=
-    '<div class="modal info-modal">'+
-      '<div class="modal-ico '+(a.danger?'warn':'accent')+'">'+svg(a.icon)+'</div>'+
-      '<h3>'+a.title+'</h3>'+
-      '<div class="info-lead">In einfachen Worten</div>'+
-      '<p class="info-body">'+(INFO[a.id]||a.desc)+'</p>'+
-      warn+
-      '<div class="modal-btns"><button class="mb cancel">Schließen</button><button class="mb ok">Ausführen</button></div>'+
-    '</div>';
-  document.body.appendChild(ov);
-  ov.querySelector('.cancel').onclick=()=>ov.remove();
-  ov.querySelector('.ok').onclick=()=>{ ov.remove(); run(a); };
-  ov.onclick=e=>{ if(e.target===ov) ov.remove(); };
-}
-
-/* ---------- Fenstersteuerung / Titelleiste ---------- */
-document.querySelectorAll('.wc').forEach(b=>b.onclick=()=>send({type:'win', action:b.dataset.win}));
-const tbDrag=document.querySelector('.tb-left');
-tbDrag.addEventListener('mousedown', e=>{ if(e.button===0) send({type:'win', action:'drag'}); });
-tbDrag.addEventListener('dblclick', ()=>send({type:'win', action:'max'}));
-
-document.querySelectorAll('.rz').forEach(g=>{
-  g.addEventListener('mousedown', e=>{ if(e.button===0){ e.preventDefault(); send({type:'resize', dir:g.dataset.rz}); } });
-});
-
-/* ---------- Mock (Browser-Vorschau ohne C#) ---------- */
-function mockRun(jobs, mPost, mDelay){
-  setRunning(true);
-  let qi=0;
-  const nextJob=()=>{
-    if(qi>=jobs.length){
-      append('✔  Erfolgreich abgeschlossen','good'); append('','norm'); setRunning(false);
-      onDone(jobs.length>1?'Warteschlange':byId(jobs[0]).title,'good','Erfolgreich abgeschlossen');
-      if(mPost!=='none') showShutdownBar(mPost, mDelay);
-      return;
-    }
-    const a=byId(jobs[qi]); append('▶  '+a.title,'head');
-    let s=0; const steps=['Wird ausgeführt …','Abschluss …'];
-    const t=setInterval(()=>{
-      if(s<steps.length){ append('›  '+steps[s],'dim'); s++; }
-      else { clearInterval(t); qi++; nextJob(); }
-    }, 260);
-  };
-  nextJob();
-}
-function mockHandle(msg){
-  if(msg.type==='run') mockRun([msg.id], msg.post, msg.delay);
-  else if(msg.type==='runQueue') mockRun(msg.ids, msg.post, msg.delay);
-  else if(msg.type==='cancelShutdown') hideShutdownBar();
-  else if(msg.type==='startUpdate'){
-    let p=0; setUpdatePhase('download');
-    const t=setInterval(()=>{
-      p+=12;
-      if(p>=100){ clearInterval(t); setUpdateProgress(100);
-        setTimeout(()=>setUpdatePhase('extract'), 350);
-        setTimeout(()=>setUpdatePhase('restart'), 950);
-        setTimeout(()=>{ hideUpdateModal(); toast('Aktualisiert','Erfolgreich auf '+(updateVersion||'v4.3')+' aktualisiert','good'); }, 1800);
-      } else setUpdateProgress(p);
-    }, 170);
-  }
-}
-
-function welcome(){
-  append('Windows-Wartung  ·  bereit','head');
-  append('Aktion links auswählen und auf eine Kachel klicken.','dim');
-  append('','norm');
-}
-
-/* ---------- Start ---------- */
-buildNav();
-selectCat('Übersicht');
-renderQueue();
-welcome();
-setConsole(SET.consoleOpen);
-send({type:'setNotify', on:SET.notify});
-
-/* Vorschau-Hilfen für Screenshots */
-if(location.search.indexOf('seed')>=0){
-  append('▶  Komplett-Reparatur','head');
-  append('›  DISM /Online /Cleanup-Image /ScanHealth','dim');
-  append('Der Vorgang wurde erfolgreich abgeschlossen.','norm');
-  append('›  sfc /scannow','dim');
-  append('Der Windows-Ressourcenschutz hat keine Integritätsverletzungen gefunden.','norm');
-  append('✔  Erfolgreich in 142.3s','good');
-}
-if(location.hash.indexOf('queue')>=0){
-  queue=[0,11]; post='shutdown';
-  document.querySelectorAll('#post-seg button').forEach(x=>x.classList.toggle('active', x.dataset.post==='shutdown'));
-  $('#post-delay-row').classList.remove('hidden');
-  renderQueue(); openQueue(true);
-}
-if(location.hash.indexOf('shutdown')>=0){ showShutdownBar('shutdown', 58); }
-if(location.hash==='#updateprompt'){ showUpdatePrompt('v4.3'); }
-else if(location.hash==='#updating'){ updateVersion='v4.3'; umSet('Wird heruntergeladen …','Lade v4.3 …',{progress:true}); setUpdateProgress(62); $('#update-modal').classList.remove('hidden'); }
-else if(location.hash==='#updated'){ toast('Aktualisiert','Erfolgreich auf v4.3 aktualisiert','good'); }
-else if(location.hash==='#updatebar'){ showUpdate('v4.2'); }
-else if(location.hash==='#info'){ selectCat('Reparieren'); infoModal(byId(7)); }
-else if(location.hash==='#autostart'){ selectCat('Autostart'); }
-else if(location.hash==='#settings'){ selectCat('Einstellungen'); }
-else if(location.hash==='#rep'){ selectCat('Reparieren'); }
-else if(location.hash==='#history'){ selectCat('Verlauf'); }
-else if(location.hash==='#restore'){
-  active='Wiederherstellung'; buildNav();
-  cards.classList.remove('dashboard','settings','autostart','history','power','restore','sched');
-  cards.classList.add('restore'); send({type:'dashboard', active:false});
-  $('#cat-title').textContent='Wiederherstellung';
-  $('#cat-hint').textContent='Systemzustand sichern & zurücksetzen';
-  renderRestore();
-  renderRestoreList([
-    {seq:128,desc:'Manueller Punkt (Windows-Wartung)',rtype:12,time:'2026-06-09 14:05'},
-    {seq:127,desc:'Geplante Wartung',rtype:12,time:'2026-06-08 03:00'},
-    {seq:125,desc:'Windows Update',rtype:13,time:'2026-06-05 11:42'}
-  ]);
-}
-else if(location.hash==='#power'){
-  active='Energie'; buildNav();
-  cards.classList.remove('dashboard','settings','autostart','history','power','restore','sched');
-  cards.classList.add('power'); send({type:'dashboard', active:false});
-  $('#cat-title').textContent='Energie';
-  $('#cat-hint').textContent='Energiesparplan wählen';
-  renderPower();
-  renderPowerList([
-    {guid:'381b4222-f694-41f0-9685-ff5bb260df2e', name:'Ausbalanciert', active:true},
-    {guid:'8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c', name:'Höchstleistung', active:false},
-    {guid:'a1841308-3541-4fab-bc81-f71556f20b4a', name:'Energiesparmodus', active:false}
-  ]);
-}
-else if(location.hash==='#netdiag'){
-  selectCat('Netzwerk');
-  promptModal('Netzwerk-Diagnose','Ziel eingeben – Webadresse oder IP (z. B. google.com oder 8.8.8.8):','google.com', ()=>{});
-}
-else if(location.hash==='#sched'){
-  active='Geplant'; buildNav();
-  cards.classList.remove('dashboard','settings','autostart','history','power','restore','sched');
-  cards.classList.add('sched'); send({type:'dashboard', active:false});
-  $('#cat-title').textContent='Geplante Wartung';
-  $('#cat-hint').textContent='Automatisch im Hintergrund warten lassen';
-  renderSchedule();
-  renderScheduleStatus({exists:true, config:{mode:'weekly', days:['SAT','SUN'], time:'12:00'}});
-}
-else if(location.hash==='#bloat'){
-  active='Bloatware'; buildNav();
-  cards.classList.remove('dashboard','settings','autostart','history','power','restore','sched','bloat');
-  cards.classList.add('bloat'); send({type:'dashboard', active:false});
-  $('#cat-title').textContent='Bloatware';
-  $('#cat-hint').textContent='Vorinstallierte Apps entfernen';
-  renderBloat();
-  renderBloatList([
-    {name:'Microsoft.MicrosoftSolitaireCollection', full:'Microsoft.MicrosoftSolitaireCollection_x', label:'Solitaire-Sammlung', cat:'Spiele & Xbox', pub:'Microsoft Corporation'},
-    {name:'Microsoft.XboxGamingOverlay', full:'Microsoft.XboxGamingOverlay_x', label:'Xbox Game Bar', cat:'Spiele & Xbox', pub:'Microsoft Corporation'},
-    {name:'Microsoft.GamingApp', full:'Microsoft.GamingApp_x', label:'Xbox-App', cat:'Spiele & Xbox', pub:'Microsoft Corporation'},
-    {name:'Clipchamp.Clipchamp', full:'Clipchamp.Clipchamp_x', label:'Clipchamp (Videoeditor)', cat:'Medien', pub:'Microsoft Corporation'},
-    {name:'Microsoft.ZuneVideo', full:'Microsoft.ZuneVideo_x', label:'Filme & TV', cat:'Medien', pub:'Microsoft Corporation'},
-    {name:'Microsoft.BingNews', full:'Microsoft.BingNews_x', label:'Nachrichten (Bing)', cat:'Bing & Nachrichten', pub:'Microsoft Corporation'},
-    {name:'Microsoft.BingWeather', full:'Microsoft.BingWeather_x', label:'Wetter (MSN)', cat:'Bing & Nachrichten', pub:'Microsoft Corporation'},
-    {name:'MicrosoftTeams', full:'MicrosoftTeams_x', label:'Teams (privat / Chat)', cat:'Kommunikation & Office', pub:'Microsoft Corporation'},
-    {name:'Microsoft.GetHelp', full:'Microsoft.GetHelp_x', label:'Hilfe anfordern', cat:'System-Extras', pub:'Microsoft Corporation'},
-    {name:'Microsoft.Getstarted', full:'Microsoft.Getstarted_x', label:'Tipps', cat:'System-Extras', pub:'Microsoft Corporation'}
-  ]);
-  // Vorschau: zwei Apps vorausgewählt, damit der Button-/Auswahl-Zustand sichtbar ist
-  ['Microsoft.MicrosoftSolitaireCollection_x','Microsoft.BingNews_x'].forEach(f=>{
-    const b=cards.querySelector('.bloat-item[data-full="'+f+'"]');
-    if(b){ b.classList.add('sel'); bloatSel.add(f); }
-  });
-  updateBloatRemove();
-}
-else if(location.hash==='#progress'){
-  selectCat('Reparieren'); setConsole(true);
-  append('▶  Komplett-Reparatur','head');
-  append('›  DISM /Online /Cleanup-Image /RestoreHealth','dim');
-  append('Tool für die Abbildverwaltung für die Bereitstellung','norm');
-  append('Abbildversion: 10.0.22631.3737','norm');
-  setRunning(true); setProgress(45);
-}
-else if(location.hash==='#dashseed'){
-  // Übersicht ist bereits aktiv – realistische Werte einspeisen, damit Count-up, Ring-Füllung und Reveal sichtbar werden
-  updateStats({
-    cpu:23, ram:58, disk:71, score:88,
-    ramUsedGB:9.3, ramTotalGB:16, diskFreeGB:148.6, diskTotalGB:512,
-    uptime:'2 Tage 4 Std', os:'Windows 11 Pro (24H2)', model:'ASUS TUF Gaming F15',
-    drives:[
-      {name:'C:',label:'System',freeGB:148.6,totalGB:512,used:71},
-      {name:'D:',label:'Daten',freeGB:402.1,totalGB:1024,used:61}
-    ],
-    recs:[{text:'Alles im grünen Bereich – aktuell ist nichts nötig.',action:-1}]
-  });
-}
-
-/* UI ist vollständig geladen -> Host darf jetzt Marker prüfen + auf Updates checken */
+/* ---------- Los ---------- */
+renderStart();
 send({type:'ready'});
-if(location.hash.indexOf('toast')>=0){
-  setConsole(false);
-  toast('SFC scannow','Erfolgreich – keine Fehler','good');
-  setTimeout(()=>toast('Netzwerk-Reset','Mit Hinweisen abgeschlossen','warn'),120);
-}

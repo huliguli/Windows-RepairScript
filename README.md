@@ -1,88 +1,126 @@
 # Windows-Wartung
 
-Eine native Windows-Wartungs- und Reparatur-Toolbox mit moderner Oberfläche. Bündelt die Befehle, die man sonst einzeln in der Eingabeaufforderung eintippt – DISM, SFC, Netzwerk-Reset, Aufräumen, Diagnose – in einem aufgeräumten Tool mit Kategorien, Live-Ausgabe und optionalem Wiederherstellungspunkt.
+Ein Wartungs- und Reparaturwerkzeug für Windows, gebaut für Menschen **ohne** PC-Kenntnisse.
 
-Die Oberfläche ist in HTML/CSS gebaut und läuft in einem schlanken **WebView2**-Host; die eigentliche Logik steckt in C#. Kompiliert wird mit dem in Windows enthaltenen Compiler – **kein .NET SDK nötig**.
+Beim Öffnen sieht man, wie es dem PC geht, und darunter genau eine Schaltfläche:
+**PC jetzt prüfen**. Die Prüfung liest nur, sie verändert nichts. Danach steht in
+Alltagssprache da, was gefunden wurde, was behoben wurde und was noch zu tun ist.
 
-## Funktionen
+Wer mehr will, findet hinter **Alle Werkzeuge** die 28 Einzelaktionen, die dieses Programm
+seit jeher bündelt: die Befehle, die man sonst einzeln in ein schwarzes Fenster tippt.
 
-**Reparieren** — Komplett-Reparatur (DISM + SFC), DISM RestoreHealth, SFC scannow & nur prüfen, WinSxS aufräumen, Komponentenspeicher analysieren, Windows-Update reparieren, CHKDSK planen, Drucker reparieren, Uhrzeit synchronisieren, Windows-Suche reparieren
+Die Oberfläche ist HTML/CSS und läuft in einem schlanken **WebView2**-Fenster, die Logik
+steckt in C#. Das Ergebnis ist eine rund 190 KB kleine `.exe`, die **ohne jede
+Laufzeit-Installation** auf jedem Windows 11 startet.
 
-**Netzwerk** — Netzwerk-Reset (DNS / Winsock / IP), DNS-Cache leeren, IP-Adresse erneuern, Netzwerk-Diagnose (Ping/Route zu einem Ziel)
+## Der Hauptweg
 
-**Aufräumen** — Temp-Dateien, Windows-Update-Cache, Papierkorb, Datenträgerbereinigung, Miniaturansichten-Cache, Store-Cache (wsreset)
+**Prüfen** (verändert nichts): sieben lesende Prüfungen plus die beiden Windows-eigenen
+Werkzeuge für Bausteine und Systemdateien:
 
-**Diagnose** — System-Übersicht, Festplatten-Gesundheit (SMART), Akkubericht, Defender-Schnellscan, RAM-Diagnose, Treiber-Backup, Absturz-Historie, Netzwerk-Übersicht, Startzeit-Analyse
+| Bereich | Was geprüft wird |
+| --- | --- |
+| Windows-Dateien | ob wichtige Dateien von Windows beschädigt sind |
+| Freier Speicherplatz | ob genug Platz für Updates und zum Arbeiten bleibt |
+| Sicherheit | Virenschutz, Alter der Erkennungsdaten, Firewall, Verschlüsselung |
+| Zustand der Festplatten | Selbstdiagnose, Verschleiß, Betriebsstunden |
+| Ordnung auf der Festplatte | ob Windows eine Festplattenprüfung vorgemerkt hat |
+| Windows-Updates | ausstehender Neustart, Alter des letzten Updates |
+| Stabilität | Abstürze und unerwartete Neustarts der letzten 14 Tage |
+| Akku | verbliebene Kapazität gegenüber dem Neuzustand (nur bei Laptops) |
 
-**Energie** — vorhandene Energiesparpläne anzeigen, den aktiven markieren und per Klick wechseln
+**Beheben**: legt zuerst einen Sicherungspunkt an, holt dann fehlende Windows-Bausteine
+nach, ersetzt beschädigte Dateien und räumt bei Bedarf Datenmüll weg.
 
-**Wiederherstellung** — Wiederherstellungspunkt anlegen, vorhandene auflisten und (mit doppelter Bestätigung) auf einen zurücksetzen
+Was sich **nicht** feststellen ließ, wird auch so genannt. Eine Prüfung ohne Daten wird
+niemals als Problem ausgegeben.
 
-**Geplant** — wiederkehrende, automatische Wartung per Aufgabenplanung (täglich, wöchentlich mit mehreren Wochentagen oder monatlich); die Aufgaben des Laufs sind frei wählbar (Standard: Reparatur + Aufräumen); läuft still im Hintergrund und meldet sich per Benachrichtigung – ist die App gerade geöffnet, übernimmt sie den Lauf sichtbar
+## Alle Werkzeuge
 
-**Verlauf** — protokolliert jede Ausführung (Zeit, Aktion, Ergebnis, Dauer) zum Nachschlagen
+**Reparieren**: Rundum-Reparatur, Windows über das Internet reparieren, Windows-Dateien
+prüfen und reparieren, nur nachsehen, alte Update-Reste löschen, nachsehen ob Aufräumen
+lohnt, Windows-Update von vorn starten, Festplatte beim Neustart prüfen, Drucker wieder zum
+Laufen bringen, Uhrzeit richtig stellen, Windows-Suche neu aufbauen
 
-**Autostart** — alle Startprogramme anzeigen und per Schalter an-/abschalten (umkehrbar); Windows-Wartung selbst per Schalter zum PC-Start hinzufügen (über die Aufgabenplanung, ohne UAC-Nachfrage); Autostart-Ordner direkt öffnen, mit Anleitung zum Hinzufügen eigener Programme
+**Netzwerk**: alle Interneteinstellungen zurücksetzen, gemerkte Internet-Adressen
+verwerfen, neue Netzwerk-Adresse vom Router holen
 
-**Bloatware** — vorinstallierte Apps (`Get-AppxPackage`) gruppiert anzeigen, mehrere auswählen und (mit doppelter Bestätigung und optionalem Wiederherstellungspunkt) entfernen. Aus Sicherheit werden nur als unbedenklich bekannte Apps angeboten; System-, Store- und Defender-Pakete sind durch eine Blockliste hart geschützt
+**Aufräumen**: temporäre Dateien, heruntergeladene Update-Dateien, Papierkorb,
+Windows-Aufräumfenster, Vorschaubilder, Microsoft Store zurücksetzen
 
-Dazu:
+**Diagnose**: Überblick über den PC, Festplatten auf Verschleiß prüfen, Akkubericht,
+kurzer Virenscan, Arbeitsspeicher prüfen, Abstürze anzeigen, Netzwerk-Daten, Startdauer
 
-- **Live-Fortschritt** – bei DISM und SFC zeigt ein Fortschrittsbalken den tatsächlichen Stand statt nur „arbeitet …"
+Dazu: **Sicherungspunkte** anlegen und zurücksetzen, **automatische Wartung** nach Zeitplan,
+**Verlauf**, **Startprogramme** an- und abschalten, **vorinstallierte Apps** entfernen
+(nur bekannte, unbedenkliche), **Energieplan** wählen.
 
-- **Dashboard** – Startseite mit Live-Systemzustand (Prozessor/RAM/Festplatte), Gesundheits-Score und konkreten Empfehlungen
-- **Erklärungen in einfacher Sprache** – das „?" auf jeder Kachel erklärt laienverständlich, was die Aktion macht
-- Modernes, dunkles UI mit eigener Titelleiste, Glas-Effekten, weichen Animationen und Kategorie-Sidebar
-- Live-Ausgabe mit Log-Export, **ein-/ausklappbar** – eingeklappt erscheinen kurze Hinweis-Toasts oben rechts
-- **Warteschlange** – mehrere Aktionen nacheinander abarbeiten (z. B. Reparatur → Aufräumen → Herunterfahren)
-- **Nach Fertigstellung** – wahlweise Herunterfahren oder Neustart mit Countdown (jederzeit abbrechbar)
-- Optionaler **Wiederherstellungspunkt** vor jeder Reparatur
-- **Auto-Update** – prüft beim Start auf neue Releases; auf Wunsch lädt die App das Update herunter, installiert es und startet sich neu
-- **Windows-Benachrichtigungen** bei Abschluss/Fehler (wenn das Fenster im Hintergrund ist), Tray-Icon
-- **Einstellungen** – UI-Größe/Skalierung (Barrierefreiheit), Akzentfarbe, Konsole-Verhalten, Benachrichtigungen
-- Startet automatisch mit Administratorrechten (UAC)
+## Grundsätze
+
+- **Alltagssprache.** Jede Kachel heißt nach ihrer Aufgabe, nicht nach ihrem Werkzeug. Der
+  Fachname steht klein darunter. Ein Prüfskript wacht darüber, dass das so bleibt.
+- **Kein Punktestand.** Eine nicht nachrechenbare Zahl ist die Masche unseriöser
+  „PC-Reiniger“. Hier steht der Zustand je Bereich in Worten, mit dem echten Messwert.
+- **Keine Registry-Reinigung.** Microsoft unterstützt sie ausdrücklich nicht.
+- **Rückgängig vor Rückfrage.** Vor jedem Eingriff wird ein Sicherungspunkt angelegt, auch
+  bei den riskanten Aktionen. Bestätigungsdialoge gibt es nur, wo etwas unumkehrbar ist.
+- **Keine erfundenen Diagnosen.** Gedeutet werden nur offiziell dokumentierte Fehlercodes
+  und Meldungstexte. Unbekanntes bleibt unkommentiert.
 
 ## Aufbau
 
 ```
-host/        C#-Host (rahmenloses Fenster + WebView2 + Nachrichtenbrücke)
+host/        C#-Host: Fenster, WebView2, Nachrichtenbrücke, Update
+host/CheckFlow.cs   der Hauptweg (prüfen und beheben)
 ui/          Oberfläche in HTML/CSS/JS
-src/         gemeinsame Logik (Aktionskatalog, Befehls-Runner) + App-Manifest
-libs/        WebView2-DLLs (aus dem NuGet-Paket, eingecheckt – kein SDK nötig)
-assets/      App-Icon
-tools/       Icon-Generator
+src/         Aktionskatalog, Prüfungen, Befehls-Runner, Protokoll
+tests/       Prüfskript für Sprache, Optik und Sicherheitszusagen
+libs/        WebView2-DLLs (eingecheckt)
 installer/   Setup-Skript (Inno Setup)
-build.ps1    Build über das eingebaute csc.exe
-sfcscript.bat  schlanke Batch-Version (Vorgänger)
+build.ps1    Bau über den Roslyn-Compiler des .NET SDK
 ```
 
 ## Installation
 
-Für Endnutzer am einfachsten: unter **Releases** den **`WindowsWartung-Setup.exe`**-Installer laden und ausführen – legt einen Startmenü-Eintrag an und lässt sich sauber wieder deinstallieren. Alternativ das `WindowsWartung.zip` entpacken und `WindowsWartung.exe` starten (die Dateien daneben müssen mitkopiert bleiben).
+Für Endnutzer am einfachsten: unter **Releases** die **`WindowsWartung-Setup.exe`** laden
+und ausführen. Alternativ das `WindowsWartung.zip` entpacken und `WindowsWartung.exe`
+starten (die Dateien daneben müssen mitkopiert bleiben).
 
 ## Bauen
 
-Voraussetzung: Windows 10/11. Der nötige Compiler (`csc.exe`) ist Teil des .NET Framework, die WebView2-Runtime ist auf aktuellen Windows-Systemen vorinstalliert.
+Voraussetzung: Windows 10/11 und das **.NET SDK** (nur zum Bauen). Der Zielrahmen bleibt
+.NET Framework 4.8, das ab Werk in Windows steckt.
 
 ```powershell
 .\build.ps1 -Release
+.\tests\run-tests.ps1
 ```
 
-oder einfach **`build.cmd` doppelklicken**. Ergebnis in `bin\`: `WindowsWartung.exe` plus die drei WebView2-DLLs und der `ui`-Ordner. Diese vier gehören beim Verteilen **zusammen** (das GitHub-Release packt sie als ZIP).
+Ohne `-Release` entsteht ein Build ohne Admin-Manifest, praktisch zum Ansehen der
+Oberfläche. Echte Reparaturen brauchen den Release-Build.
 
-> Ohne `-Release` entsteht ein Dev-Build ohne Admin-Manifest – praktisch zum Ansehen der Oberfläche, echte Reparaturen brauchen aber den Release-Build (UAC).
+Der in Windows eingebaute Compiler wird bewusst nicht mehr verwendet: er beherrscht nur
+C# 5 und lehnt jede höhere Sprachversion mit `CS1617` ab.
 
-## Nutzen
+### Belegaufnahmen
 
-`WindowsWartung.exe` starten → UAC bestätigen → links eine Kategorie wählen → Kachel anklicken. Die Ausgabe läuft unten live mit; **Log speichern** schreibt sie in eine Textdatei.
+```powershell
+.\bin\WindowsWartung.exe --shot bild.png --view light,tools --shotwait 4000
+```
+
+`--view` versteht `light`, `dark`, eine Ansicht (`tools`, `history`, `settings` …) und
+`check` für einen automatisch gestarteten Prüflauf. Kommagetrennt kombinierbar.
 
 ## Hinweise
 
-- DISM und SFC brauchen je nach System ein paar Minuten – ein Fortschrittsbalken zeigt den Stand.
-- Netzwerk-Reset und RAM-Diagnose erfordern anschließend einen Neustart.
-- Ausführliche SFC-Ergebnisse stehen wie immer in `C:\Windows\Logs\CBS\CBS.log`.
-- Die `.exe` ist nicht signiert – beim ersten Start zeigt Windows SmartScreen ggf. „Der Computer wurde geschützt"; über *Weitere Informationen → Trotzdem ausführen* startet sie.
+- Die Prüfung braucht je nach System 5 bis 10 Minuten. Der PC bleibt benutzbar.
+- Zurücksetzen der Interneteinstellungen und die Speicherprüfung brauchen danach einen
+  Neustart.
+- Die `.exe` ist nicht von einer bekannten Stelle signiert. Beim ersten Start zeigt Windows
+  gegebenenfalls „Der Computer wurde geschützt“; über *Weitere Informationen → Trotzdem
+  ausführen* startet sie.
+- Läuft etwas schief: Einstellungen → **Protokoll öffnen**.
 
 ## Lizenz
 
-MIT – siehe [LICENSE](LICENSE).
+MIT, siehe [LICENSE](LICENSE).

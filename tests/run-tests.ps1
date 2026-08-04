@@ -1,0 +1,182 @@
+# Pruefungen, die bei jedem Bau und in der CI laufen.
+#
+# Hintergrund: Regeln, die nur in einem Dokument stehen, werden ueberlesen. Genau so sind
+# die Farbwolken, das Korn und die falsch geschlossenen Anfuehrungszeichen ins Projekt
+# gekommen. Deshalb stehen sie hier als Test - ein Verstoss bricht den Bau.
+#
+# Aufruf:  .\tests\run-tests.ps1
+# Ergebnis: ExitCode 0 = alles gruen, 1 = mindestens ein Test rot.
+
+$ErrorActionPreference = 'Stop'
+$root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+$failed = 0
+$passed = 0
+
+function Test-Result([string]$name, [bool]$ok, [string[]]$details) {
+    if ($ok) {
+        Write-Host ("  [ok]   " + $name) -ForegroundColor Green
+        $script:passed++
+    } else {
+        Write-Host ("  [FEHL] " + $name) -ForegroundColor Red
+        foreach ($d in $details) { Write-Host ("         " + $d) -ForegroundColor DarkYellow }
+        $script:failed++
+    }
+}
+
+# Alle nutzersichtbaren Quellen. bin\ ist nur eine Kopie und wird ausgelassen.
+$uiFiles  = Get-ChildItem (Join-Path $root 'ui') -File -Include *.js,*.css,*.html -Recurse
+$csFiles  = Get-ChildItem (Join-Path $root 'src'),(Join-Path $root 'host') -File -Filter *.cs -Recurse
+# README und CHANGELOG sind kundennahe Texte: der Changelog wird woertlich zur
+# Release-Beschreibung auf GitHub. Sie gehoeren damit in die Sprachpruefung.
+$docFiles = @(Get-Item (Join-Path $root 'README.md')) + @(Get-Item (Join-Path $root 'CHANGELOG.md'))
+$allFiles = @($uiFiles) + @($csFiles) + @($docFiles)
+
+Write-Host "`nAnti-AI-Slop, Optik (Teil B)" -ForegroundColor Cyan
+
+# Tell 6: radiale Farbwolken und Korn-Overlay.
+$hits = @()
+foreach ($f in $uiFiles) {
+    $i = 0
+    foreach ($line in [IO.File]::ReadAllLines($f.FullName)) {
+        $i++
+        if ($line -match '^\s*(/\*|\*|//)') { continue }   # Kommentar, kein Stil
+        if ($line -match 'radial-gradient|feTurbulence') { $hits += "$($f.Name):$i  $($line.Trim())" }
+    }
+}
+Test-Result "Tell 6: keine Farbwolken, kein Korn" ($hits.Count -eq 0) $hits
+
+# Tell 7: Verlaufstext in Ueberschriften.
+$hits = @()
+foreach ($f in $uiFiles) {
+    $i = 0
+    foreach ($line in [IO.File]::ReadAllLines($f.FullName)) {
+        $i++
+        if ($line -match '^\s*(/\*|\*|//)') { continue }
+        if ($line -match 'background-clip\s*:\s*text|-webkit-text-fill-color') { $hits += "$($f.Name):$i" }
+    }
+}
+Test-Result "Tell 7: kein Verlaufstext" ($hits.Count -eq 0) $hits
+
+# Tell 8: farbiger Schein statt Schatten. Ein Schatten ist die Abwesenheit von Licht -
+# in einem echten Schatten liegen die drei Farbkanaele dicht beieinander. Geprueft werden
+# nur AUSSEN liegende Schatten; "inset" ist eine Kante, keine Leuchtdeko.
+$hits = @()
+foreach ($f in $uiFiles) {
+    $i = 0
+    foreach ($line in [IO.File]::ReadAllLines($f.FullName)) {
+        $i++
+        if ($line -notmatch 'box-shadow|--shadow') { continue }
+        foreach ($m in [regex]::Matches($line, 'rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)')) {
+            $r = [int]$m.Groups[1].Value; $g = [int]$m.Groups[2].Value; $b = [int]$m.Groups[3].Value
+            $spread = (@($r,$g,$b) | Measure-Object -Maximum).Maximum - (@($r,$g,$b) | Measure-Object -Minimum).Minimum
+            # Vor dem Treffer steht "inset"? Dann ist es eine Innenkante.
+            $before = $line.Substring(0, $m.Index)
+            if ($before -match 'inset[^,;]*$') { continue }
+            if ($spread -gt 40) { $hits += "$($f.Name):$i  rgb($r,$g,$b) Kanalabstand $spread" }
+        }
+        if ($line -match 'box-shadow[^;]*0 0 \d+px var\(--(accent|green|red|yellow)') {
+            $hits += "$($f.Name):$i  Schein in Akzent-/Statusfarbe"
+        }
+    }
+}
+Test-Result "Tell 8: neutrale Schatten, kein farbiger Schein" ($hits.Count -eq 0) $hits
+
+# Tell 9: Inhalt, der erst beim Scrollen erscheint.
+$hits = @()
+foreach ($f in $uiFiles) {
+    $i = 0
+    foreach ($line in [IO.File]::ReadAllLines($f.FullName)) {
+        $i++
+        if ($line -match 'IntersectionObserver|data-reveal') { $hits += "$($f.Name):$i" }
+    }
+}
+Test-Result "Tell 9: kein Einblenden beim Scrollen" ($hits.Count -eq 0) $hits
+
+Write-Host "`nAnti-AI-Slop, Text (Teil A)" -ForegroundColor Cyan
+
+# Tell 1: englischer Geviertstrich im deutschen Satz.
+$hits = @()
+foreach ($f in $allFiles) {
+    $i = 0
+    foreach ($line in [IO.File]::ReadAllLines($f.FullName, [Text.Encoding]::UTF8)) {
+        $i++
+        if ($line.Contains([char]0x2014)) { $hits += "$($f.Name):$i  $($line.Trim())" }
+    }
+}
+Test-Result "Tell 1: kein Geviertstrich (U+2014)" ($hits.Count -eq 0) $hits
+
+# Tell 3: deutsches Anfuehrungspaar korrekt geschlossen.
+# Falsch:  "Text"  (unten geoeffnet, gerade geschlossen)   Richtig:  "Text"
+$hits = @()
+$rx = [regex]("" + [char]0x201E + "[^" + [char]0x201C + [char]0x201E + "]{0,160}?" + [char]0x0022)
+foreach ($f in $allFiles) {
+    $i = 0
+    foreach ($line in [IO.File]::ReadAllLines($f.FullName, [Text.Encoding]::UTF8)) {
+        $i++
+        foreach ($m in $rx.Matches($line)) { $hits += "$($f.Name):$i  $($m.Value)" }
+    }
+}
+Test-Result "Tell 3: deutsche Anfuehrungszeichen korrekt geschlossen" ($hits.Count -eq 0) $hits
+
+Write-Host "`nDeutsche Sprache" -ForegroundColor Cyan
+
+# Umlaute statt ae/oe/ue in nutzersichtbaren C#-Zeichenketten.
+# Der Bau nutzt /codepage:65001 - die alte ASCII-Regel ist hinfaellig. Geprueft werden nur
+# Zeichenketten, die als Anzeige-Text gedacht sind (keine Befehle, keine Pfade, kein PowerShell).
+$ersatz = 'Aufraeum|aufraeum|gruen|Gruen|uebersprung|Verknuepf|zuruecksetz|Zuruecksetz|waehlen|Waehlen|fuer das|moeglich|noetig|schliessen'
+$hits = @()
+foreach ($f in $csFiles) {
+    $i = 0
+    foreach ($line in [IO.File]::ReadAllLines($f.FullName, [Text.Encoding]::UTF8)) {
+        $i++
+        if ($line -match '^\s*//') { continue }                         # Kommentare duerfen ASCII sein
+        if ($line -match 'powershell|cmd\.exe|Args =|Join-Path|HKLM|\$env:') { continue }  # Befehle
+        foreach ($m in [regex]::Matches($line, '"([^"]{4,})"')) {
+            if ($m.Groups[1].Value -match $ersatz) { $hits += "$($f.Name):$i  $($m.Groups[1].Value)" }
+        }
+    }
+}
+Test-Result "Anzeige-Texte mit echten Umlauten" ($hits.Count -eq 0) $hits
+
+Write-Host "`nKatalog an EINER Stelle" -ForegroundColor Cyan
+
+# Der Katalog wird vom Host geschickt. Baut jemand wieder eine zweite Fassung in die
+# Oberflaeche, laufen die Texte auseinander - genau das war vorher der Fall
+# (18 von 28 Beschreibungen wichen ab, der CHKDSK-Hinweis fehlte im UI komplett).
+$jsText = [IO.File]::ReadAllText((Join-Path $root 'ui\app.js'), [Text.Encoding]::UTF8)
+$hits = @()
+if ($jsText -match "(?m)^\s*const\s+ACTIONS\s*=") { $hits += "ui/app.js definiert wieder eine eigene ACTIONS-Liste" }
+if ($jsText -match "(?m)^\s*const\s+INFO\s*=")    { $hits += "ui/app.js definiert wieder eigene INFO-Texte" }
+if ($jsText -notmatch "case 'catalog'")             { $hits += "ui/app.js verarbeitet die Katalog-Nachricht des Hosts nicht mehr" }
+Test-Result "Aktionstexte stehen nur im C#-Katalog" ($hits.Count -eq 0) $hits
+
+# Gegenprobe: der Host schickt ihn auch wirklich.
+$shellText = [IO.File]::ReadAllText((Join-Path $root 'host\ShellForm.cs'), [Text.Encoding]::UTF8)
+$hits = @()
+if ($shellText -notmatch 'type = "catalog"') { $hits += "host/ShellForm.cs sendet keinen Katalog mehr" }
+Test-Result "Host sendet den Katalog an die Oberflaeche" ($hits.Count -eq 0) $hits
+
+Write-Host "`nSicherheit" -ForegroundColor Cyan
+
+# Das Haekchen "Sicherungspunkt vor jeder Reparatur" muss auch bei den RISKANTEN
+# Aktionen greifen. Frueher zaehlte nur IsRepair - alle fuenf Danger-Aktionen liefen
+# ohne Netz. Die Garantie steckt jetzt in WantsRestorePoint; hier wird geprueft,
+# dass sie nicht stillschweigend wieder eingeengt wird.
+$maText = [IO.File]::ReadAllText((Join-Path $root 'src\MaintenanceAction.cs'), [Text.Encoding]::UTF8)
+$hits = @()
+$prop = [regex]::Match($maText, 'public bool WantsRestorePoint\s*\{\s*get\s*\{\s*return([^;]+);')
+if (-not $prop.Success) { $hits += "WantsRestorePoint wurde entfernt oder umgebaut" }
+else {
+    $expr = $prop.Groups[1].Value
+    foreach ($flag in @('IsRepair','Danger','NeedsRestore')) {
+        if ($expr -notmatch $flag) { $hits += "WantsRestorePoint beruecksichtigt '$flag' nicht mehr" }
+    }
+}
+$shellText2 = [IO.File]::ReadAllText((Join-Path $root 'host\ShellForm.cs'), [Text.Encoding]::UTF8)
+if ($shellText2 -match 'restore\s*&&\s*a\.IsRepair') { $hits += "host/ShellForm.cs prueft wieder nur IsRepair statt WantsRestorePoint" }
+Test-Result "Riskante Aktionen bekommen einen Sicherungspunkt" ($hits.Count -eq 0) $hits
+
+Write-Host ""
+Write-Host ("Ergebnis: {0} bestanden, {1} fehlgeschlagen" -f $passed, $failed) -ForegroundColor $(if ($failed) { 'Red' } else { 'Green' })
+if ($failed) { exit 1 }
+exit 0

@@ -48,7 +48,27 @@ namespace WartungsToolbox
                 "/TR \"\\\"" + exePath + "\\\" --auto\" " +
                 "/SC " + sc + " /ST " + hh + ":" + mm + " /RL HIGHEST /F";
             if (mode == "weekly" || mode == "monthly") args += " /D " + dSpec;
-            return RunCode("schtasks.exe", args) == 0;
+            if (RunCode("schtasks.exe", args) != 0) return false;
+
+            // schtasks legt mit den Windows-Standardwerten an, und die sind fuer ein
+            // Wartungswerkzeug falsch: auf Akku laeuft die Aufgabe NIE, beim Abstecken
+            // bricht sie mitten in DISM ab, und ein verpasster Termin (PC war aus) faellt
+            // ersatzlos aus. Genau das macht die geplante Wartung auf Notebooks wirkungslos.
+            // Deshalb die Einstellungen direkt nachziehen. Schlaegt das fehl, bleibt die
+            // Aufgabe trotzdem bestehen - sie laeuft dann eben nur am Netzteil.
+            string ps =
+                "$ErrorActionPreference='Stop';" +
+                "$t = Get-ScheduledTask -TaskName '" + TaskName + "';" +
+                "$s = $t.Settings;" +
+                "$s.DisallowStartIfOnBatteries = $false;" +
+                "$s.StopIfGoingOnBatteries = $false;" +
+                "$s.StartWhenAvailable = $true;" +          // verpasste Termine nachholen
+                "$s.ExecutionTimeLimit = 'PT2H';" +          // Reissleine gegen haengende Laeufe
+                "Set-ScheduledTask -TaskName '" + TaskName + "' -Settings $s | Out-Null";
+            if (RunCode("powershell.exe", "-NoProfile -ExecutionPolicy Bypass -Command \"" + ps + "\"") != 0)
+                AppLog.Warn("Zeitplan angelegt, aber die Akku-/Nachhol-Einstellungen liessen sich nicht setzen.");
+
+            return true;
         }
 
         public static void Delete()

@@ -62,7 +62,7 @@ namespace WartungsToolbox
             new Bloat("Microsoft.WindowsMaps",  "Karten",             "Bing & Nachrichten", false),
 
             // --- Kommunikation & Office ---
-            new Bloat("Microsoft.MicrosoftOfficeHub",        "Office (Hub-Verknuepfung)", "Kommunikation & Office", false),
+            new Bloat("Microsoft.MicrosoftOfficeHub",        "Office (Startseite)", "Kommunikation & Office", false),
             new Bloat("Microsoft.SkypeApp",                  "Skype",                 "Kommunikation & Office", false),
             new Bloat("MicrosoftTeams",                      "Teams (privat / Chat)", "Kommunikation & Office", false),
             new Bloat("Microsoft.Todos",                     "Microsoft To Do",       "Kommunikation & Office", false),
@@ -299,7 +299,7 @@ namespace WartungsToolbox
                 psi.CreateNoWindow = true;
                 psi.RedirectStandardOutput = true;
                 psi.RedirectStandardError = true;
-                psi.StandardOutputEncoding = Encoding.UTF8;
+                psi.StandardOutputEncoding = Encoding.GetEncoding((int)Native.GetOEMCP());
                 using (Process p = Process.Start(psi))
                 {
                     System.Threading.Tasks.Task<string> rd = p.StandardOutput.ReadToEndAsync();

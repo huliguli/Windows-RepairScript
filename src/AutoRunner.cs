@@ -32,7 +32,14 @@ namespace WartungsToolbox
             bool created;
             using (Mutex mx = new Mutex(true, "WindowsWartung_AutoRun", out created))
             {
-                if (!created) return;
+                if (!created)
+                {
+                    // Ein vorheriger Lauf haengt noch. Das gehoert in den Verlauf, sonst
+                    // merkt der Nutzer nie, dass seine Wartung seit Wochen ausfaellt.
+                    History.Add("Geplante Wartung", "warn", "Übersprungen, ein vorheriger Lauf war noch aktiv", 0);
+                    AppLog.Warn("Geplante Wartung nicht gestartet: vorheriger Lauf ist noch aktiv.");
+                    return;
+                }
 
                 Stopwatch sw = Stopwatch.StartNew();
                 bool problem = false;
@@ -86,7 +93,14 @@ namespace WartungsToolbox
                     p.ErrorDataReceived += delegate { };
                     p.BeginOutputReadLine();
                     p.BeginErrorReadLine();
-                    p.WaitForExit();
+                    // Ohne Zeitlimit haelt ein haengendes DISM den Mutex und damit ALLE
+                    // kuenftigen geplanten Laeufe auf - lautlos, ohne Protokolleintrag.
+                    if (!p.WaitForExit(45 * 60 * 1000))
+                    {
+                        AppLog.Warn("Geplante Wartung: Zeitlimit bei " + s.File + " " + s.Args);
+                        Shell.KillTree(p.Id);
+                        return -1;
+                    }
                     return p.ExitCode;
                 }
             }

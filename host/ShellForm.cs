@@ -4,8 +4,10 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.IO.Compression;
+using System.Linq;
 using System.Net;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Threading;
@@ -19,7 +21,7 @@ using Microsoft.Web.WebView2.WinForms;
 
 namespace WartungsToolbox
 {
-    public class ShellForm : Form
+    public partial class ShellForm : Form
     {
         WebView2 _web;
         CommandRunner _runner;
@@ -29,6 +31,7 @@ namespace WartungsToolbox
 
         readonly string _shotPath;
         readonly string _view;
+        readonly int _shotWaitMs;
 
         string _pendingPost = "none";
         int _pendingDelay = 60;
@@ -49,48 +52,43 @@ namespace WartungsToolbox
         [DllImport("user32.dll")] static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
         [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
 
-        [DllImport("kernel32.dll")] static extern bool GetSystemTimes(out FILETIME64 idle, out FILETIME64 kernel, out FILETIME64 user);
-        [DllImport("kernel32.dll")] static extern ulong GetTickCount64();
-        [DllImport("kernel32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        static extern bool GlobalMemoryStatusEx([In, Out] MemStatusEx buffer);
-
-        [StructLayout(LayoutKind.Sequential)]
-        struct FILETIME64 { public uint Low; public uint High; }
-        static ulong FT(FILETIME64 f) { return ((ulong)f.High << 32) | f.Low; }
-
-        [StructLayout(LayoutKind.Sequential)]
-        class MemStatusEx
-        {
-            public uint dwLength;
-            public uint dwMemoryLoad;
-            public ulong ullTotalPhys, ullAvailPhys, ullTotalPageFile, ullAvailPageFile, ullTotalVirtual, ullAvailVirtual, ullAvailExtendedVirtual;
-        }
-
-        System.Windows.Forms.Timer _stats;
-        ulong _lastIdle, _lastKernel, _lastUser;
-        string _osInfo, _modelInfo;
-
         NotifyIcon _tray;
         bool _notifyEnabled = true;
 
-        public ShellForm(string shotPath, string view)
+        public ShellForm(string shotPath, string view, int shotWaitMs = 950)
         {
             _shotPath = shotPath;
             _view = view ?? "";
+            _shotWaitMs = shotWaitMs < 200 ? 200 : shotWaitMs;
 
             FormBorderStyle = FormBorderStyle.None;
-            BackColor = Color.FromArgb(13, 15, 20);
-            ClientSize = new Size(1180, 760);
-            MinimumSize = new Size(700, 500);
-            if (_view == "small") ClientSize = new Size(780, 540); // Test: kleines Fenster -> Scrollen
+            BackColor = Color.FromArgb(21, 24, 29);
+
+            // Das Manifest fordert PerMonitorV2 - Groessen in WinForms sind damit echte
+            // Geraetepixel. Ungeskaliert startete die App auf einem 200-%-Bildschirm mit
+            // nur 590x380 logischen Pixeln, das Fenster war unbenutzbar klein.
+            float scale = 1f;
+            try { using (Graphics g = CreateGraphics()) scale = g.DpiX / 96f; }
+            catch { }
+            if (scale < 1f) scale = 1f;
+            if (scale > 3f) scale = 3f;
+
+            ClientSize = new Size((int)(1180 * scale), (int)(760 * scale));
+            MinimumSize = new Size((int)(760 * scale), (int)(560 * scale));
+
+            // Auf sehr kleinen Bildschirmen nicht ueber den Arbeitsbereich hinauswachsen.
+            Rectangle work = Screen.PrimaryScreen.WorkingArea;
+            if (ClientSize.Width > work.Width || ClientSize.Height > work.Height)
+                ClientSize = new Size(Math.Min(ClientSize.Width, work.Width - 40),
+                                      Math.Min(ClientSize.Height, work.Height - 40));
+
             StartPosition = FormStartPosition.CenterScreen;
             Text = "Windows-Wartung";
             DoubleBuffered = true;
 
             _web = new WebView2();
             _web.Dock = DockStyle.Fill;
-            _web.DefaultBackgroundColor = Color.FromArgb(13, 15, 20);
+            _web.DefaultBackgroundColor = Color.FromArgb(21, 24, 29);
             Controls.Add(_web);
 
             try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
@@ -114,163 +112,6 @@ namespace WartungsToolbox
                 _tray.ShowBalloonTip(5000, "Windows-Wartung", title + " – " + message, ic);
             }
             catch { }
-        }
-
-        // ---------- Dashboard: Live-Systemzustand ----------
-        void SetDashboard(bool active)
-        {
-            if (active)
-            {
-                if (_stats == null)
-                {
-                    _stats = new System.Windows.Forms.Timer();
-                    _stats.Interval = 1500;
-                    _stats.Tick += StatsTick;
-                }
-                if (_osInfo == null) GetStaticInfo();
-                FILETIME64 i, k, u;
-                if (GetSystemTimes(out i, out k, out u)) { _lastIdle = FT(i); _lastKernel = FT(k); _lastUser = FT(u); }
-                StatsTick(null, null);
-                _stats.Start();
-            }
-            else if (_stats != null) _stats.Stop();
-        }
-
-        void StatsTick(object sender, EventArgs e)
-        {
-            try
-            {
-                int cpu = 0;
-                FILETIME64 fi, fk, fu;
-                if (GetSystemTimes(out fi, out fk, out fu))
-                {
-                    ulong i = FT(fi), k = FT(fk), u = FT(fu);
-                    ulong di = i - _lastIdle, dk = k - _lastKernel, du = u - _lastUser;
-                    _lastIdle = i; _lastKernel = k; _lastUser = u;
-                    ulong total = dk + du; // Kernel-Zeit enthaelt Idle
-                    if (total > 0) cpu = (int)((100UL * (total - di)) / total);
-                    if (cpu < 0) cpu = 0; if (cpu > 100) cpu = 100;
-                }
-
-                int ram = 0; double ramUsedGB = 0, ramTotalGB = 0;
-                MemStatusEx ms = new MemStatusEx();
-                ms.dwLength = (uint)Marshal.SizeOf(typeof(MemStatusEx));
-                if (GlobalMemoryStatusEx(ms))
-                {
-                    ram = (int)ms.dwMemoryLoad;
-                    ramTotalGB = ms.ullTotalPhys / 1073741824.0;
-                    ramUsedGB = (ms.ullTotalPhys - ms.ullAvailPhys) / 1073741824.0;
-                }
-
-                int disk = 0; double diskFreeGB = 0, diskTotalGB = 0;
-                try
-                {
-                    DriveInfo d = new DriveInfo(Path.GetPathRoot(Environment.GetFolderPath(Environment.SpecialFolder.System)));
-                    if (d.IsReady && d.TotalSize > 0)
-                    {
-                        diskTotalGB = d.TotalSize / 1073741824.0;
-                        diskFreeGB = d.TotalFreeSpace / 1073741824.0;
-                        disk = (int)Math.Round(100.0 * (d.TotalSize - d.TotalFreeSpace) / d.TotalSize);
-                    }
-                }
-                catch { }
-
-                // Alle fest verbauten Laufwerke
-                List<object> drives = new List<object>();
-                try
-                {
-                    foreach (DriveInfo dr in DriveInfo.GetDrives())
-                    {
-                        try
-                        {
-                            if (dr.DriveType != DriveType.Fixed || !dr.IsReady || dr.TotalSize <= 0) continue;
-                            string lbl = "";
-                            try { lbl = dr.VolumeLabel ?? ""; } catch { }
-                            drives.Add(new
-                            {
-                                name = dr.Name.TrimEnd('\\'),
-                                label = lbl,
-                                freeGB = Math.Round(dr.TotalFreeSpace / 1073741824.0, 1),
-                                totalGB = Math.Round(dr.TotalSize / 1073741824.0, 1),
-                                used = (int)Math.Round(100.0 * (dr.TotalSize - dr.TotalFreeSpace) / dr.TotalSize)
-                            });
-                        }
-                        catch { }
-                    }
-                }
-                catch { }
-
-                ulong upMs = GetTickCount64();
-                double upDays = upMs / 86400000.0;
-
-                int score = 100;
-                List<object> recs = new List<object>();
-                double diskFreePct = diskTotalGB > 0 ? 100.0 * diskFreeGB / diskTotalGB : 100;
-                if (diskFreePct < 10) { score -= 30; recs.Add(new { text = "Festplatte fast voll (" + disk + "% belegt) - Aufraeumen schafft Platz.", action = 11 }); }
-                else if (diskFreePct < 20) { score -= 12; recs.Add(new { text = "Festplatte recht voll - Aufraeumen kann helfen.", action = 11 }); }
-                if (ram > 90) { score -= 12; recs.Add(new { text = "Arbeitsspeicher stark ausgelastet - evtl. Programme schliessen.", action = -1 }); }
-                if (upDays >= 7) { score -= 10; recs.Add(new { text = "Seit " + (int)upDays + " Tagen kein Neustart - ein Neustart tut dem PC gut.", action = -1 }); }
-                else if (upDays >= 3) { score -= 4; }
-                if (score < 0) score = 0;
-                if (recs.Count == 0) recs.Add(new { text = "Alles im gruenen Bereich - aktuell ist nichts noetig.", action = -1 });
-
-                Post(new
-                {
-                    type = "stats",
-                    cpu = cpu,
-                    ram = ram,
-                    disk = disk,
-                    ramUsedGB = Math.Round(ramUsedGB, 1),
-                    ramTotalGB = Math.Round(ramTotalGB, 1),
-                    diskFreeGB = Math.Round(diskFreeGB, 1),
-                    diskTotalGB = Math.Round(diskTotalGB, 1),
-                    uptime = FormatUptime(upMs),
-                    os = _osInfo,
-                    model = _modelInfo,
-                    drives = drives,
-                    score = score,
-                    recs = recs
-                });
-            }
-            catch { }
-        }
-
-        static string FormatUptime(ulong ms)
-        {
-            long sec = (long)(ms / 1000);
-            long d = sec / 86400, h = (sec % 86400) / 3600, mi = (sec % 3600) / 60;
-            if (d > 0) return d + " Tage " + h + " Std";
-            if (h > 0) return h + " Std " + mi + " Min";
-            return mi + " Min";
-        }
-
-        void GetStaticInfo()
-        {
-            try
-            {
-                using (RegistryKey k = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion"))
-                {
-                    string prod = k.GetValue("ProductName", "Windows") as string;
-                    string disp = (k.GetValue("DisplayVersion", null) as string) ?? (k.GetValue("ReleaseId", "") as string);
-                    int build; int.TryParse(k.GetValue("CurrentBuildNumber", "") as string, out build);
-                    string winName = build >= 22000 ? "Windows 11" : "Windows 10";
-                    string edition = (prod ?? "").Replace("Windows 10", "").Replace("Windows 11", "").Trim();
-                    _osInfo = winName + (edition.Length > 0 ? " " + edition : "")
-                              + " (" + (string.IsNullOrEmpty(disp) ? ("Build " + build) : disp) + ")";
-                }
-            }
-            catch { _osInfo = "Windows"; }
-            try
-            {
-                using (RegistryKey k = Registry.LocalMachine.OpenSubKey(@"HARDWARE\DESCRIPTION\System\BIOS"))
-                {
-                    string man = k.GetValue("SystemManufacturer", "") as string;
-                    string mod = k.GetValue("SystemProductName", "") as string;
-                    _modelInfo = ((man ?? "") + " " + (mod ?? "")).Trim();
-                    if (string.IsNullOrEmpty(_modelInfo)) _modelInfo = "-";
-                }
-            }
-            catch { _modelInfo = "-"; }
         }
 
         // Bringt das Fenster beim Start zuverlässig in den Vordergrund (auch elevated/UAC)
@@ -351,32 +192,14 @@ namespace WartungsToolbox
             _runner = new CommandRunner(_web, Log, SetState, Done, OnProgress);
 
             // Gespeicherte UI-Groesse schon vor dem Anzeigen anwenden (kein Flackern)
-            try { _web.ZoomFactor = _view == "zoombig" ? 1.5 : ((_shotPath != null) ? 1.0 : ReadZoom()); } catch { }
+            try { _web.ZoomFactor = (_shotPath != null) ? 1.0 : ReadZoom(); } catch { }
 
             if (_shotPath != null)
                 core.NavigationCompleted += OnNavForShot;
 
-            string suffix = "";
-            if (_view == "seed") suffix = "?seed=1";
-            else if (_view == "toast") suffix = "#toast";
-            else if (_view == "queue") suffix = "#queue";
-            else if (_view == "shutdown") suffix = "#shutdown";
-            else if (_view == "update") suffix = "#updatebar";
-            else if (_view == "updateprompt") suffix = "#updateprompt";
-            else if (_view == "updating") suffix = "#updating";
-            else if (_view == "updated") suffix = "#updated";
-            else if (_view == "info") suffix = "#info";
-            else if (_view == "autostart") suffix = "#autostart";
-            else if (_view == "settings") suffix = "#settings";
-            else if (_view == "rep") suffix = "#rep";
-            else if (_view == "history") suffix = "#history";
-            else if (_view == "restore") suffix = "#restore";
-            else if (_view == "power") suffix = "#power";
-            else if (_view == "netdiag") suffix = "#netdiag";
-            else if (_view == "bloat") suffix = "#bloat";
-            else if (_view == "sched") suffix = "#sched";
-            else if (_view == "progress") suffix = "#progress";
-            else if (_view == "dashseed") suffix = "#dashseed";
+            // Der --view-Wert wird unveraendert als Adresszusatz weitergereicht.
+            // Die Oberflaeche wertet ihn nur fuer Belegaufnahmen aus (Farbschema, Ansicht).
+            string suffix = string.IsNullOrEmpty(_view) ? "" : "#" + Uri.EscapeDataString(_view);
 
             _web.Source = new Uri("https://app/index.html" + suffix);
             // Update-Prüfung startet erst, wenn das UI 'ready' meldet (siehe OnReady)
@@ -384,11 +207,55 @@ namespace WartungsToolbox
 
         void OnReady()
         {
-            if (_shotPath != null) return;
+            if (_shotPath != null)
+            {
+                SendCatalog();
+                try { Post(new { type = "admin", on = IsElevated() }); } catch { }
+                if (_shotWaitMs > 1500) StartQuickGlance();
+                return;
+            }
+            SendCatalog();
             try { Post(new { type = "zoom", factor = _web.ZoomFactor }); } catch { }
             try { Post(new { type = "admin", on = IsElevated() }); } catch { }
             CheckUpdatedMarker();   // nach einem Update: Erfolgsmeldung zeigen
             StartUpdateCheck();     // auf neue Version prüfen
+            StartQuickGlance();     // sofort einen echten, lesenden Erstbefund zeigen
+        }
+
+        /// <summary>
+        /// Schickt den Aktionskatalog an die Oberflaeche. Er ist damit nur noch an EINER
+        /// Stelle gepflegt; frueher stand eine zweite Fassung in ui/app.js, und 18 von 28
+        /// Beschreibungen waren bereits auseinandergelaufen.
+        /// </summary>
+        void SendCatalog()
+        {
+            try
+            {
+                Post(new
+                {
+                    type = "catalog",
+                    version = typeof(ShellForm).Assembly.GetName().Version.ToString(3),
+                    categories = Catalog.Categories,
+                    notes = Catalog.CategoryNotes,
+                    actions = _actions.Select(a => new
+                    {
+                        id = a.Id,
+                        title = a.Title,
+                        tech = a.TechTitle,
+                        desc = a.Desc,
+                        info = a.Info,
+                        icon = a.Icon,
+                        cat = a.Category,
+                        danger = a.Danger,
+                        restore = a.WantsRestorePoint,
+                    }).ToArray(),
+                    autoTasks = Catalog.AutoCatalog().Select(t => new
+                    {
+                        key = t.Key, title = t.Title, desc = t.Desc, std = t.Std,
+                    }).ToArray(),
+                });
+            }
+            catch (Exception ex) { AppLog.Error("Katalog konnte nicht gesendet werden", ex); }
         }
 
         static bool IsElevated()
@@ -399,6 +266,13 @@ namespace WartungsToolbox
                     return new WindowsPrincipal(id).IsInRole(WindowsBuiltInRole.Administrator);
             }
             catch { return false; }
+        }
+
+        /// <summary>Konsolen-Codepage des Systems (cmd.exe und PowerShell schreiben darin).</summary>
+        static Encoding OemEncoding()
+        {
+            try { return Encoding.GetEncoding((int)Native.GetOEMCP()); }
+            catch { return Encoding.Default; }
         }
 
         static string Sha256File(string path)
@@ -415,7 +289,7 @@ namespace WartungsToolbox
             {
                 try
                 {
-                    try { ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12; } catch { }
+                    SetupTls();
 
                     HttpWebRequest req = (HttpWebRequest)WebRequest.Create(
                         "https://api.github.com/repos/" + Repo + "/releases/latest");
@@ -503,79 +377,190 @@ namespace WartungsToolbox
             }
             Thread t = new Thread(delegate ()
             {
-                string tmp = Path.Combine(Path.GetTempPath(), "WindowsWartung_update");
+                string tmp = UpdateWorkDir();
                 try
                 {
                     try { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); } catch { }
-                    Directory.CreateDirectory(tmp);
+                    CreateAdminOnlyDirectory(tmp);
                     string zip = Path.Combine(tmp, "update.zip");
 
-                    try { ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12; } catch { }
+                    SetupTls();
                     UiPost(new { type = "updateStatus", phase = "download" });
 
-                    // Echter Download laeuft parallel zum Fortschrittsbalken
-                    Exception dlError = null;
-                    Thread dl = new Thread(delegate ()
+                    // Echter Fortschritt aus dem echten Download. Frueher lief hier ein
+                    // fingierter Balken (70 Schritte a 50 ms) und der Download wurde erst
+                    // danach abgewartet: auf langsamer Leitung stand die Anzeige minutenlang
+                    // bei 100 %, ohne dass etwas passierte.
+                    string dlError = DownloadWithProgress(_updateAsset, zip);
+                    if (dlError != null)
                     {
-                        try
-                        {
-                            using (WebClient wc = new WebClient())
-                            {
-                                wc.Headers.Add("User-Agent", "WindowsWartung-Updater");
-                                wc.DownloadFile(new Uri(_updateAsset), zip);
-                            }
-                        }
-                        catch (Exception ex) { dlError = ex; }
-                    });
-                    dl.IsBackground = true;
-                    dl.Start();
-
-                    // Gemaechlicher Fortschritt fuer echtes Update-Gefuehl (~3,5 s)
-                    int steps = 70;
-                    for (int i = 0; i <= steps; i++)
-                    {
-                        UiPost(new { type = "updateProgress", percent = (int)(i * 100.0 / steps) });
-                        Thread.Sleep(50);
-                    }
-
-                    dl.Join(); // auf das echte Ende warten (langsame Leitung)
-                    if (dlError != null || !File.Exists(zip))
-                    {
-                        UiPost(new { type = "updateError", message = dlError != null ? dlError.Message : "Download fehlgeschlagen." });
+                        AppLog.Warn("Update-Download fehlgeschlagen: " + dlError);
+                        UiPost(new { type = "updateError", message = dlError });
                         return;
                     }
 
-                    // Sicherheit: heruntergeladene Datei gegen die im Release hinterlegte SHA-256 prüfen
-                    if (!string.IsNullOrEmpty(_updateHashUrl))
+                    // Echtheitspruefung. Frueher war sie fail-open: fehlte die .sha256 im
+                    // Release oder scheiterte ihr Abruf, wurde ohne jede Pruefung installiert.
+                    // Jetzt bricht jeder dieser Faelle ab.
+                    if (string.IsNullOrEmpty(_updateHashUrl))
                     {
-                        string expected = "";
-                        try
+                        AppLog.Warn("Update abgebrochen: keine Pruefsumme im Release hinterlegt.");
+                        UiPost(new { type = "updateError", message = "Zu diesem Update fehlt die Prüfsumme. Aus Sicherheitsgründen wurde es nicht installiert." });
+                        return;
+                    }
+                    string expected = null;
+                    try
+                    {
+                        using (WebClient hw = new WebClient())
                         {
-                            using (WebClient hw = new WebClient())
-                            {
-                                hw.Headers.Add("User-Agent", "WindowsWartung-Updater");
-                                expected = hw.DownloadString(_updateHashUrl).Trim();
-                            }
+                            hw.Headers.Add("User-Agent", UserAgent);
+                            expected = (hw.DownloadString(_updateHashUrl) ?? "").Trim();
                         }
-                        catch { }
-                        if (!string.IsNullOrEmpty(expected) &&
-                            !string.Equals(expected, Sha256File(zip), StringComparison.OrdinalIgnoreCase))
-                        {
-                            UiPost(new { type = "updateError", message = "Prüfsumme stimmt nicht überein – Update aus Sicherheitsgründen abgebrochen." });
-                            return;
-                        }
+                    }
+                    catch (Exception ex) { AppLog.Warn("Pruefsumme nicht abrufbar: " + ex.Message); }
+
+                    if (string.IsNullOrEmpty(expected))
+                    {
+                        UiPost(new { type = "updateError", message = "Die Prüfsumme konnte nicht geladen werden. Aus Sicherheitsgründen wurde das Update nicht installiert." });
+                        return;
+                    }
+                    if (!string.Equals(expected, Sha256File(zip), StringComparison.OrdinalIgnoreCase))
+                    {
+                        AppLog.Error("Update abgebrochen: Pruefsumme weicht ab.");
+                        UiPost(new { type = "updateError", message = "Die heruntergeladene Datei ist beschädigt. Aus Sicherheitsgründen wurde die Installation abgebrochen. Bitte versuchen Sie es später erneut." });
+                        return;
                     }
 
                     UiPost(new { type = "updateStatus", phase = "extract" });
-                    Thread.Sleep(600);
 
                     if (_web != null && _web.IsHandleCreated)
                         _web.BeginInvoke((Action)delegate { FinishUpdate(tmp, zip); });
                 }
-                catch (Exception ex) { UiPost(new { type = "updateError", message = ex.Message }); }
+                catch (Exception ex)
+                {
+                    AppLog.Error("Update fehlgeschlagen", ex);
+                    UiPost(new { type = "updateError", message = ex.Message });
+                }
             });
             t.IsBackground = true;
             t.Start();
+        }
+
+        const string UserAgent = "WindowsWartung-Updater";
+        const long MaxUpdateBytes = 200L * 1024 * 1024;   // Reissleine gegen endlose Antworten
+
+        static void SetupTls()
+        {
+            // Nur moderne Protokolle. Frueher wurde TLS 1.2 nur ODER-verknuepft ergaenzt,
+            // veraltete Protokolle blieben also aktiv.
+            try
+            {
+                SecurityProtocolType want = SecurityProtocolType.Tls12;
+                try { want |= (SecurityProtocolType)12288; } catch { }   // TLS 1.3, falls bekannt
+                ServicePointManager.SecurityProtocol = want;
+            }
+            catch
+            {
+                try { ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12; } catch { }
+            }
+        }
+
+        /// <summary>
+        /// Arbeitsordner fuer das Update. Bewusst NICHT %TEMP%: die App laeuft als Administrator,
+        /// der Nutzer-Temp ist aber auch ohne Adminrechte beschreibbar. Ein nicht erhoehter
+        /// Prozess konnte das entpackte Paket oder die Batchdatei zwischen Schreiben und
+        /// Ausfuehren austauschen und damit Code als Administrator ausfuehren.
+        /// </summary>
+        static string UpdateWorkDir()
+        {
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "WindowsWartung", "update");
+        }
+
+        /// <summary>
+        /// Legt einen Ordner an, in den nur Administratoren und SYSTEM schreiben duerfen.
+        /// Vererbte Rechte werden ausdruecklich abgeworfen.
+        /// </summary>
+        static void CreateAdminOnlyDirectory(string path)
+        {
+            Directory.CreateDirectory(path);
+            try
+            {
+                DirectoryInfo di = new DirectoryInfo(path);
+                DirectorySecurity sec = new DirectorySecurity();
+                sec.SetAccessRuleProtection(true, false);   // Vererbung aus, nichts uebernehmen
+
+                SecurityIdentifier admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+                SecurityIdentifier system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+                InheritanceFlags inh = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
+
+                sec.AddAccessRule(new FileSystemAccessRule(admins, FileSystemRights.FullControl, inh, PropagationFlags.None, AccessControlType.Allow));
+                sec.AddAccessRule(new FileSystemAccessRule(system, FileSystemRights.FullControl, inh, PropagationFlags.None, AccessControlType.Allow));
+                sec.SetOwner(admins);
+
+                di.SetAccessControl(sec);
+            }
+            catch (Exception ex)
+            {
+                // Ohne gesetzte Rechte waere der Pfad angreifbar - dann lieber gar nicht updaten.
+                AppLog.Error("Update-Ordner konnte nicht abgesichert werden", ex);
+                throw new InvalidOperationException(
+                    "Der Ordner für das Update konnte nicht abgesichert werden. Das Update wurde abgebrochen.");
+            }
+        }
+
+        /// <summary>
+        /// Laedt die Datei und meldet echten Fortschritt. Gibt null bei Erfolg zurueck,
+        /// sonst eine laienverstaendliche Fehlermeldung.
+        /// </summary>
+        string DownloadWithProgress(string url, string target)
+        {
+            try
+            {
+                HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
+                req.UserAgent = UserAgent;
+                req.Timeout = 20000;             // Verbindungsaufbau
+                req.ReadWriteTimeout = 60000;    // Stillstand mitten im Strom
+
+                using (WebResponse resp = req.GetResponse())
+                using (Stream src = resp.GetResponseStream())
+                using (FileStream dst = new FileStream(target, FileMode.Create, FileAccess.Write))
+                {
+                    long total = resp.ContentLength;      // -1, wenn der Server nichts sagt
+                    if (total > MaxUpdateBytes) return "Das Update ist unerwartet groß. Der Download wurde abgebrochen.";
+
+                    byte[] buf = new byte[81920];
+                    long got = 0;
+                    int lastPct = -1;
+                    int read;
+                    while ((read = src.Read(buf, 0, buf.Length)) > 0)
+                    {
+                        dst.Write(buf, 0, read);
+                        got += read;
+                        if (got > MaxUpdateBytes) return "Das Update ist unerwartet groß. Der Download wurde abgebrochen.";
+
+                        int pct = total > 0 ? (int)(got * 100 / total) : -1;
+                        if (pct != lastPct)
+                        {
+                            lastPct = pct;
+                            UiPost(new { type = "updateProgress", percent = pct, bytes = got, total = total });
+                        }
+                    }
+                    if (total > 0 && got != total) return "Der Download wurde unterbrochen. Bitte versuchen Sie es später erneut.";
+                }
+                return null;
+            }
+            catch (WebException ex)
+            {
+                AppLog.Warn("Update-Download: " + ex.Message);
+                return "Das Update konnte nicht geladen werden. Häufigste Ursache: keine oder gestörte Internetverbindung.";
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("Update-Download", ex);
+                return ex.Message;
+            }
         }
 
         void FinishUpdate(string tmp, string zip)
@@ -598,19 +583,33 @@ namespace WartungsToolbox
 
                 WriteMarker(_updateTag);
 
-                string bat = Path.Combine(Path.GetTempPath(), "ww_update.cmd");
+                // Die Batchdatei liegt im abgesicherten Update-Ordner, NICHT in %TEMP%:
+                // sie wird gleich mit Adminrechten ausgefuehrt.
+                string bat = Path.Combine(tmp, "ww_update.cmd");
                 string content =
                     "@echo off\r\n" +
                     ":w\r\n" +
                     "tasklist /FI \"PID eq " + pid + "\" 2>nul | find \"" + pid + "\" >nul\r\n" +
                     "if not errorlevel 1 ( timeout /t 1 /nobreak >nul & goto w )\r\n" +
                     "robocopy \"" + newDir + "\" \"" + appDir + "\" /E /NFL /NDL /NJH /NJS /R:3 /W:2 >nul\r\n" +
+                    // Robocopy meldet alles unter 8 als Erfolg. Ist mehr passiert, wurde nicht
+                    // sauber kopiert - dann die alte Fassung weiterlaufen lassen statt eine
+                    // halb ueberschriebene zu starten.
+                    "if errorlevel 8 (\r\n" +
+                    "  echo Update fehlgeschlagen, die bisherige Fassung bleibt bestehen.> \"" + Path.Combine(tmp, "fehler.txt") + "\"\r\n" +
+                    ")\r\n" +
                     "start \"\" \"" + appExe + "\"\r\n" +
-                    "rmdir /s /q \"" + tmp + "\" >nul 2>&1\r\n" +
+                    "rmdir /s /q \"" + Path.Combine(tmp, "new") + "\" >nul 2>&1\r\n" +
+                    "del \"" + Path.Combine(tmp, "update.zip") + "\" >nul 2>&1\r\n" +
                     "del \"%~f0\" >nul 2>&1\r\n";
-                File.WriteAllText(bat, content, Encoding.Default);
+
+                // cmd.exe liest Batchdateien in der OEM-Codepage. Mit Encoding.Default (ANSI)
+                // wurden Umlaute im Pfad verstuemmelt - bei einem Benutzernamen wie "Müller"
+                // schlug das Kopieren fehl und die App startete nach dem Update nicht mehr.
+                File.WriteAllText(bat, content, OemEncoding());
 
                 Post(new { type = "updateStatus", phase = "restart" });
+                AppLog.Info("Update auf " + _updateTag + " wird angewendet.");
 
                 ProcessStartInfo psi = new ProcessStartInfo("cmd.exe", "/c \"" + bat + "\"");
                 psi.UseShellExecute = false;
@@ -619,7 +618,11 @@ namespace WartungsToolbox
 
                 BeginInvoke((Action)delegate { Application.Exit(); });
             }
-            catch (Exception ex) { Post(new { type = "updateError", message = ex.Message }); }
+            catch (Exception ex)
+            {
+                AppLog.Error("Update konnte nicht angewendet werden", ex);
+                Post(new { type = "updateError", message = ex.Message });
+            }
         }
 
         string ZoomPath()
@@ -703,7 +706,7 @@ namespace WartungsToolbox
 
         async void OnNavForShot(object sender, CoreWebView2NavigationCompletedEventArgs e)
         {
-            await Task.Delay(950);
+            await Task.Delay(_shotWaitMs);
             try
             {
                 using (FileStream fs = new FileStream(_shotPath, FileMode.Create))
@@ -746,22 +749,41 @@ namespace WartungsToolbox
                 object idsObj;
                 if (m.TryGetValue("ids", out idsObj) && idsObj is object[])
                 {
+                    // Ein Sicherungspunkt fuer die GANZE Warteschlange, ganz vorn. Vorher legte
+                    // jede einzelne Aktion einen an; Windows drosselt auf einen je 24 Stunden,
+                    // also wurden die uebrigen mit einer Warnung uebersprungen - das las sich wie
+                    // ein Fehler, obwohl alles in Ordnung war.
+                    bool restoreDone = false;
                     foreach (object o in (object[])idsObj)
                     {
                         int id;
                         try { id = Convert.ToInt32(o); } catch { continue; }
                         if (id < 0 || id >= _actions.Count) continue;
                         MaintenanceAction a = _actions[id];
-                        jobs.Add(new Job { Title = a.Title, Steps = BuildSteps(a, restore) });
+
+                        List<Step> steps = new List<Step>();
+                        if (restore && a.WantsRestorePoint && !restoreDone)
+                        {
+                            steps.Add(RestoreStep());
+                            restoreDone = true;
+                        }
+                        steps.AddRange(a.Steps);
+                        jobs.Add(new Job { Title = a.Title, Steps = steps });
                     }
                 }
                 if (jobs.Count == 0) return;
                 _runner.RunJobs("Warteschlange (" + jobs.Count + ")", jobs);
             }
-            else if (type == "cancel") { if (_runner != null) _runner.Cancel(); }
+            // --- Hauptweg -------------------------------------------------------
+            else if (type == "startCheck") StartCheck();
+            else if (type == "startFix") StartFix();
+            else if (type == "cancelFlow") CancelFlow();
+            else if (type == "openLog") AppLog.Open();
+            else if (type == "restartNow") { _pendingPost = "restart"; _pendingDelay = 60; ScheduleShutdown(); _pendingPost = "none"; }
+            // --------------------------------------------------------------------
+            else if (type == "cancel") { if (_runner != null) _runner.Cancel(); CancelFlow(); }
             else if (type == "cancelShutdown") CancelShutdown();
             else if (type == "ready") OnReady();
-            else if (type == "dashboard") SetDashboard(ToBool(m, "active"));
             else if (type == "openUpdate") OpenUpdate();
             else if (type == "startUpdate") BeginUpdate();
             else if (type == "save") SaveLog();
@@ -877,11 +899,24 @@ namespace WartungsToolbox
         {
             History.Add(title, KindStr(k), message, seconds);
             Post(new { type = "done", title = title, kind = KindStr(k), message = message });
+
+            // Steht noch ein nachgeholter Wartungslauf an, darf JETZT kein Abschalt-Countdown
+            // starten: sonst faehrt der PC mitten in DISM oder SFC herunter und beschaedigt genau
+            // das, was das Werkzeug reparieren soll. Der Wunsch bleibt gemerkt und greift nach
+            // dem letzten Lauf.
+            if (_autoRunPending)
+            {
+                Notify(title, message, k);
+                _autoRunPending = false;
+                if (_pendingPost != "none")
+                    Log("●  Der Abschalt-Countdown startet erst nach der geplanten Wartung.", LogKind.Warn);
+                RunScheduledJobsNow();
+                return;
+            }
+
             if (k != LogKind.Bad && _pendingPost != "none") ScheduleShutdown();
             _pendingPost = "none";
             Notify(title, message, k);
-            // Kam waehrend des Laufs ein geplanter Wartungs-Trigger, jetzt nachholen.
-            if (_autoRunPending) { _autoRunPending = false; RunScheduledJobsNow(); }
         }
 
         // ---------- Geplante Wartung, an die offene App uebergeben (--auto -> WM_WW_RUNAUTO) ----------
@@ -917,7 +952,7 @@ namespace WartungsToolbox
         List<Step> BuildSteps(MaintenanceAction a, bool restore)
         {
             List<Step> steps = new List<Step>();
-            if (restore && a.IsRepair) steps.Add(RestoreStep());
+            if (restore && a.WantsRestorePoint) steps.Add(RestoreStep());
             steps.AddRange(a.Steps);
             return steps;
         }
@@ -1031,7 +1066,7 @@ namespace WartungsToolbox
                 "catch { 'Wiederherstellung fehlgeschlagen: ' + $_.Exception.Message }";
             Step s = new Step { File = "powershell.exe", Args = "-NoProfile -ExecutionPolicy Bypass -Command \"" + cmd + "\"" };
             List<Job> jobs = new List<Job>();
-            jobs.Add(new Job { Title = "Auf Wiederherstellungspunkt zuruecksetzen", Steps = new List<Step> { s } });
+            jobs.Add(new Job { Title = "Windows auf einen früheren Stand zurücksetzen", Steps = new List<Step> { s } });
             _runner.RunJobs("Wiederherstellung", jobs);
         }
 
@@ -1134,7 +1169,7 @@ namespace WartungsToolbox
                 "Set-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore' -Name 'SystemRestorePointCreationFrequency' -Value 0 -EA SilentlyContinue; " +
                 "Checkpoint-Computer -Description 'Vor Bloatware-Entfernung' -RestorePointType MODIFY_SETTINGS -EA Stop; " +
                 "'Wiederherstellungspunkt angelegt.' " +
-                "} catch { 'Wiederherstellungspunkt uebersprungen (Systemschutz aktiv?): ' + $_.Exception.Message }";
+                "} catch { 'Es wurde kein Sicherungspunkt angelegt: ' + $_.Exception.Message }";
             return new Step
             {
                 File = "powershell.exe",
@@ -1198,7 +1233,7 @@ namespace WartungsToolbox
             string folder;
             using (FolderBrowserDialog d = new FolderBrowserDialog())
             {
-                d.Description = "Zielordner fuer das Treiber-Backup waehlen";
+                d.Description = "Ordner fuer die Treiber-Sicherung aussuchen";
                 d.ShowNewFolderButton = true;
                 if (d.ShowDialog(this) != DialogResult.OK) return;
                 folder = d.SelectedPath;

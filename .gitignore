@@ -14,3 +14,10 @@ cert/
 # Protokolle der Batch-Version
 logs/
 *.log
+
+# Interne Arbeitsdokumente (bleiben lokal)
+docs/OVERHAUL-KONZEPT.md
+docs/vorher/
+docs/nachher/
+docs/entwurf-ansichten.html
+docs/entwurf-fenster.html

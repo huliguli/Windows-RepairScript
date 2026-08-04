@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="de" data-theme="light">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -7,148 +7,195 @@
 <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <!-- Eigene Titelleiste -->
-  <div id="titlebar">
-    <div class="tb-left" data-drag>
-      <div class="appmark" id="appmark"></div>
-      <span class="tb-title">Windows-Wartung</span>
-      <span class="tb-sep"></span>
-      <span class="tb-sub">Wartungs-Toolbox</span>
-    </div>
-    <div class="tb-controls">
-      <button class="wc" data-win="min" title="Minimieren"></button>
-      <button class="wc" data-win="max" title="Maximieren"></button>
-      <button class="wc close" data-win="close" title="Schließen"></button>
-    </div>
+
+<div id="titlebar">
+  <div class="tb-left" data-drag>
+    <span class="appmark" id="appmark" aria-hidden="true"></span>
+    <span class="tb-title">Windows-Wartung</span>
   </div>
+  <div class="tb-controls">
+    <button class="wc" data-win="min" aria-label="Fenster minimieren"></button>
+    <button class="wc" data-win="max" aria-label="Fenster vergrößern"></button>
+    <button class="wc close" data-win="close" aria-label="Fenster schließen"></button>
+  </div>
+</div>
 
-  <div id="app">
-    <!-- Sidebar -->
-    <aside id="sidebar">
-      <div class="side-label">Kategorien</div>
-      <nav id="nav"></nav>
+<main id="stage">
 
-      <div class="side-foot">
-        <div class="post-block">
-          <span class="post-label">Nach Fertigstellung</span>
-          <div class="seg" id="post-seg">
-            <button data-post="none" class="active">Nichts</button>
-            <button data-post="shutdown">Herunterfahren</button>
-            <button data-post="restart">Neustart</button>
-          </div>
-          <div class="post-delay" id="post-delay-row">
-            <span>Verzögerung</span>
-            <input id="post-delay" type="number" min="5" max="86400" value="60" />
-            <span>Sek.</span>
-          </div>
-        </div>
+  <!-- ================= Start ================= -->
+  <section class="screen on" id="s-start" aria-labelledby="start-title">
+    <div class="verdict">
+      <span class="vico" id="start-ico" aria-hidden="true"></span>
+      <span class="vtxt">
+        <h1 id="start-title">Ihr PC wurde noch nicht geprüft</h1>
+        <p id="start-lead">Die Prüfung schaut nach, ob mit Windows etwas nicht stimmt: beschädigte
+          Dateien, zu wenig freier Speicher, Probleme beim Start. Sie verändert dabei nichts an
+          Ihren Fotos, Dokumenten oder Programmen.</p>
+      </span>
+    </div>
 
-        <label class="toggle-row">
-          <span class="toggle-text">
-            <span class="toggle-title">Wiederherstellungspunkt</span>
-            <span class="toggle-desc">vor jeder Reparatur</span>
-          </span>
-          <span class="switch"><input type="checkbox" id="restore" /><i></i></span>
-        </label>
-        <div class="admin-badge" id="admin-badge"><i class="dot"></i> <span id="admin-text">Als Administrator</span></div>
+    <div class="mainrow">
+      <button class="btn btn-primary" id="btn-check">PC jetzt prüfen</button>
+      <span class="hint" id="start-hint">Dauert meist 5 bis 10 Minuten. Sie können den PC währenddessen weiter benutzen.</span>
+    </div>
+
+    <div class="areas" id="start-areas" aria-label="Zustand der geprüften Bereiche"></div>
+
+    <details class="disc" id="start-what">
+      <summary><span aria-hidden="true"></span> <b>Was passiert bei der Prüfung?</b>
+        <span style="color:var(--text-3)">Die Schritte im Einzelnen</span></summary>
+      <div class="disc-body">
+        <p><b>1. Bestandsaufnahme.</b> Wir lesen aus, wie viel Platz frei ist, ob der Virenschutz
+          läuft, wie es Ihren Festplatten geht und ob Windows aktuell ist. Dabei wird nichts verändert.</p>
+        <p><b>2. Grundbestandteile von Windows.</b> Wir lassen Windows nachsehen, ob seine eigenen
+          Bausteine vollständig sind.</p>
+        <p><b>3. Windows-Dateien.</b> Wir lassen Windows seine wichtigen Dateien auf Beschädigungen
+          prüfen. Auch dieser Schritt meldet nur, er repariert noch nichts.</p>
+        <p>Erst wenn Sie danach auf „Gefundene Probleme beheben“ klicken, wird tatsächlich etwas
+          verändert. Vorher legen wir automatisch einen Sicherungspunkt an, damit sich alles
+          rückgängig machen lässt.</p>
       </div>
-    </aside>
+    </details>
 
-    <!-- Hauptbereich -->
-    <main id="main">
-      <header id="cat-header">
-        <div>
-          <h1 id="cat-title">Reparieren</h1>
-          <p id="cat-hint">8 Aktionen</p>
-        </div>
-        <button id="queue-btn" title="Warteschlange">
-          <span class="qb-ico"></span>Warteschlange
-          <span id="queue-count" class="qbadge">0</span>
-        </button>
-      </header>
-
-      <section id="cards"></section>
-
-      <!-- Konsole -->
-      <div id="console" class="open">
-        <div id="console-head">
-          <div class="ch-left">
-            <span class="ch-title">Ausgabe</span>
-            <span id="status" class="status"><i class="status-dot"></i><span id="status-text">bereit</span></span>
-          </div>
-          <div class="ch-actions">
-            <button id="btn-stop" class="link danger" disabled>Stoppen</button>
-            <button id="btn-clear" class="link">Leeren</button>
-            <button id="btn-save" class="link">Log speichern</button>
-            <button id="btn-collapse" class="link icon-only" title="Ausblenden"></button>
-          </div>
-        </div>
-        <div id="console-progress"><div id="console-progress-bar"></div></div>
-        <div id="console-body"></div>
-      </div>
-      <button id="console-reopen" title="Ausgabe einblenden"><span></span>Ausgabe</button>
-    </main>
-  </div>
-
-  <!-- Warteschlangen-Schublade -->
-  <div id="q-overlay"></div>
-  <aside id="queue" class="drawer">
-    <div class="q-head">
-      <h2>Warteschlange</h2>
-      <button id="q-close" class="link icon-only" title="Schließen"></button>
+    <div class="foot">
+      <span class="foot-l" id="admin-line"></span>
+      <span class="foot-r">
+        <button class="link" data-go="tools">Alle Werkzeuge</button>
+        <button class="link" data-go="history">Verlauf</button>
+        <button class="link" data-go="settings">Einstellungen</button>
+      </span>
     </div>
-    <div id="q-list"></div>
-    <div class="q-empty" id="q-empty">Noch keine Aktionen.<br><span>Auf einer Kachel das <b>+</b> klicken.</span></div>
-    <div class="q-foot">
-      <div class="q-after" id="q-after"></div>
-      <div class="q-foot-btns">
-        <button id="q-clear" class="link">Leeren</button>
-        <button id="q-run" class="primary">Starten</button>
-      </div>
+  </section>
+
+  <!-- ================= Ablauf ================= -->
+  <section class="screen" id="s-run" aria-labelledby="run-title">
+    <div class="verdict">
+      <span class="vico" id="run-ico" aria-hidden="true"></span>
+      <span class="vtxt">
+        <h1 id="run-title">Ihr PC wird geprüft</h1>
+        <p id="run-lead">Das dauert einen Moment. Sie können das Fenster ruhig zur Seite legen und
+          weiterarbeiten. Wir melden uns, wenn wir fertig sind.</p>
+      </span>
     </div>
-  </aside>
 
-  <!-- Update-Banner -->
-  <div id="update-bar">
-    <span class="ub-ico"></span>
-    <span id="ub-text">Neue Version verfügbar</span>
-    <button id="ub-get">Herunterladen</button>
-    <button id="ub-skip" class="ub-x" title="Später erinnern"></button>
-  </div>
-
-  <!-- Update-Dialog (In-App-Update) -->
-  <div id="update-modal" class="modal-ov hidden">
-    <div class="modal upd">
-      <div class="modal-ico accent" id="um-ico"></div>
-      <h3 id="um-title">Update verfügbar</h3>
-      <p id="um-text">Eine neue Version ist verfügbar. Jetzt herunterladen?</p>
-      <div id="um-progress" class="um-progress hidden"><div id="um-bar"></div></div>
-      <div class="modal-btns" id="um-btns">
-        <button class="mb cancel" id="um-later">Später</button>
-        <button class="mb ok" id="um-go">Jetzt herunterladen</button>
-      </div>
+    <div class="barrow">
+      <span class="bar" id="run-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"
+            aria-labelledby="run-status"><i style="width:0%"></i></span>
+      <span class="barpct" id="run-pct"></span>
     </div>
-  </div>
+    <p class="hint" id="run-status" aria-live="polite">Wird vorbereitet …</p>
 
-  <!-- Shutdown-Banner -->
-  <div id="shutdown-bar">
-    <span class="sb-ico"></span>
-    <span id="sb-text">Der PC wird heruntergefahren …</span>
-    <button id="sb-cancel">Abbrechen</button>
-  </div>
+    <div class="steps" id="run-steps"></div>
 
-  <div id="toasts"></div>
+    <details class="disc">
+      <summary><span aria-hidden="true"></span> <b>Technische Details</b>
+        <span style="color:var(--text-3)">für Fortgeschrittene: die vollständige Ausgabe</span></summary>
+      <div class="disc-body">
+        <div id="console-body" role="log" aria-label="Ausgabe der Wartungswerkzeuge"
+             aria-live="polite" aria-relevant="additions"></div>
+      </div>
+    </details>
 
-  <!-- Resize-Greifzonen am Fensterrand -->
-  <div class="rz rz-t" data-rz="t"></div>
-  <div class="rz rz-b" data-rz="b"></div>
-  <div class="rz rz-l" data-rz="l"></div>
-  <div class="rz rz-r" data-rz="r"></div>
-  <div class="rz rz-tl" data-rz="tl"></div>
-  <div class="rz rz-tr" data-rz="tr"></div>
-  <div class="rz rz-bl" data-rz="bl"></div>
-  <div class="rz rz-br" data-rz="br"></div>
+    <div class="foot">
+      <span class="foot-l" id="run-foot"></span>
+      <span class="foot-r"><button class="link danger" id="btn-cancel">Abbrechen</button></span>
+    </div>
+  </section>
 
-  <script src="app.js"></script>
+  <!-- ================= Ergebnis ================= -->
+  <section class="screen" id="s-result" aria-labelledby="res-title">
+    <div class="verdict">
+      <span class="vico" id="res-ico" aria-hidden="true"></span>
+      <span class="vtxt">
+        <h1 id="res-title">Fertig</h1>
+        <p id="res-lead"></p>
+      </span>
+    </div>
+
+    <div class="res" id="res-list"></div>
+    <div class="next" id="res-next" hidden></div>
+
+    <details class="disc">
+      <summary><span aria-hidden="true"></span> <b>Technische Details</b>
+        <span style="color:var(--text-3)">die vollständige Ausgabe der Werkzeuge</span></summary>
+      <div class="disc-body"><div id="console-body-2" role="log" aria-label="Ausgabe"></div></div>
+    </details>
+
+    <div class="foot">
+      <span class="foot-l" id="res-foot"></span>
+      <span class="foot-r">
+        <button class="link" id="btn-save">Bericht speichern</button>
+        <button class="link" data-go="tools">Alle Werkzeuge</button>
+        <button class="link" data-go="start">Zurück zum Anfang</button>
+      </span>
+    </div>
+  </section>
+
+  <!-- ================= Werkzeugkasten ================= -->
+  <section class="screen" id="s-tools" aria-labelledby="tools-title">
+    <div class="tools-head">
+      <div>
+        <h1 id="tools-title">Alle Werkzeuge</h1>
+        <p>Einzelne Aktionen für den gezielten Einsatz. Wenn Sie nicht sicher sind, welche die
+          richtige ist, gehen Sie zurück und lassen Sie den PC prüfen. Das Fragezeichen auf jeder
+          Karte erklärt in einfachen Worten, was sie tut.</p>
+      </div>
+      <button class="btn btn-ghost" data-go="start">Zurück</button>
+    </div>
+
+    <div class="tabs" id="tool-tabs" role="tablist" aria-label="Bereiche"></div>
+    <div id="tool-note"></div>
+    <div class="cards" id="tool-cards" role="tabpanel"></div>
+
+    <div class="foot">
+      <span class="foot-l" id="tools-foot"></span>
+      <span class="foot-r">
+        <button class="link" data-go="history">Verlauf</button>
+        <button class="link" data-go="restore">Sicherungspunkte</button>
+        <button class="link" data-go="schedule">Automatische Wartung</button>
+        <button class="link" data-go="autostart">Startprogramme</button>
+        <button class="link" data-go="apps">Vorinstallierte Apps</button>
+        <button class="link" data-go="power">Energie</button>
+      </span>
+    </div>
+  </section>
+
+  <!-- ================= Nebenansichten ================= -->
+  <section class="screen" id="s-sub" aria-labelledby="sub-title">
+    <div class="tools-head">
+      <div>
+        <h1 id="sub-title"></h1>
+        <p id="sub-lead"></p>
+      </div>
+      <button class="btn btn-ghost" data-go="tools">Zurück</button>
+    </div>
+    <div id="sub-body"></div>
+    <div class="foot"><span class="foot-l" id="sub-foot"></span></div>
+  </section>
+
+</main>
+
+<div id="toasts" aria-live="polite" aria-atomic="false"></div>
+
+<div class="banner" id="shutdown-bar" role="alert">
+  <span id="sb-ico" aria-hidden="true"></span>
+  <span id="sb-text"></span>
+  <button class="btn btn-ghost btn-md" id="sb-cancel">Doch nicht</button>
+</div>
+
+<div class="banner" id="update-bar">
+  <span id="ub-ico" aria-hidden="true"></span>
+  <span id="ub-text"></span>
+  <button class="btn btn-primary btn-md" id="ub-get">Jetzt aktualisieren</button>
+  <button class="link" id="ub-skip">Später</button>
+</div>
+
+<div class="rz rz-t" data-rz="t"></div><div class="rz rz-b" data-rz="b"></div>
+<div class="rz rz-l" data-rz="l"></div><div class="rz rz-r" data-rz="r"></div>
+<div class="rz rz-tl" data-rz="tl"></div><div class="rz rz-tr" data-rz="tr"></div>
+<div class="rz rz-bl" data-rz="bl"></div><div class="rz rz-br" data-rz="br"></div>
+
+<script src="icons.js"></script>
+<script src="app.js"></script>
 </body>
 </html>
