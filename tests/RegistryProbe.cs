@@ -229,7 +229,7 @@ namespace WartungsToolbox
 
             try
             {
-                using (RegistryKey k = Registry.CurrentUser.OpenSubKey(runPfad, true))
+                using (RegistryKey k = Autostartschluessel())
                 {
                     if (k == null) { Ist("Sicherung vor Loeschung", false, "Autostart-Schluessel nicht schreibbar"); return; }
                     k.SetValue(name, "\"" + ziel + "\"", RegistryValueKind.String);
@@ -300,7 +300,7 @@ namespace WartungsToolbox
 
             try
             {
-                using (RegistryKey k = Registry.CurrentUser.OpenSubKey(runPfad, true))
+                using (RegistryKey k = Autostartschluessel())
                 {
                     if (k == null) { Ist("Alles oder nichts", false, "Autostart-Schluessel nicht schreibbar"); return; }
                     k.SetValue(name, @"C:\gibt-es-nicht\nichts.exe", RegistryValueKind.String);
@@ -344,6 +344,22 @@ namespace WartungsToolbox
                 }
                 catch { }
             }
+        }
+
+        /// <summary>
+        /// Der Autostart-Schluessel des Nutzers, zum Schreiben geoeffnet.
+        ///
+        /// CreateSubKey statt OpenSubKey: Auf frisch aufgesetzten Systemen und auf
+        /// Bau-Servern gibt es HKCU\...\CurrentVersion\Run schlicht noch nicht, weil dort
+        /// nie ein Programm einen Autostart eingetragen hat. OpenSubKey liefert dann null,
+        /// und die beiden wichtigsten Pruefungen dieser Probe fielen aus - ausgerechnet
+        /// dort, wo niemand hinschaut. Ein leerer Standardschluessel von Windows ist
+        /// voellig unbedenklich; er bleibt danach leer zurueck.
+        /// </summary>
+        static RegistryKey Autostartschluessel()
+        {
+            try { return Registry.CurrentUser.CreateSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Run"); }
+            catch { return null; }
         }
 
         static bool LaufwerkDa(string pfad)
