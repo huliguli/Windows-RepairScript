@@ -31,6 +31,57 @@ $csFiles  = Get-ChildItem (Join-Path $root 'src'),(Join-Path $root 'host') -File
 $docFiles = @(Get-Item (Join-Path $root 'README.md')) + @(Get-Item (Join-Path $root 'CHANGELOG.md'))
 $allFiles = @($uiFiles) + @($csFiles) + @($docFiles)
 
+Write-Host "`nOberflaeche laeuft ueberhaupt" -ForegroundColor Cyan
+
+# Ein Syntaxfehler in app.js legt die GESAMTE Oberflaeche lahm: kein Symbol, kein
+# Katalog, keine Reaktion - und der C#-Bau merkt davon nichts, weil er JavaScript
+# gar nicht ansieht. Real passiert beim Zurueckholen der Warteschlange.
+$hits = @()
+$node = Get-Command node -ErrorAction SilentlyContinue
+if (-not $node) {
+    $hits += "node nicht gefunden - die Syntaxpruefung der Oberflaeche konnte NICHT laufen"
+} else {
+    foreach ($f in (Get-ChildItem (Join-Path $root 'ui') -Filter *.js)) {
+        $out = & node --check $f.FullName 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            $hits += "$($f.Name): " + (($out | Select-Object -First 3) -join ' | ')
+        }
+    }
+}
+Test-Result "JavaScript der Oberflaeche ist fehlerfrei lesbar" ($hits.Count -eq 0) $hits
+
+# Jede Kennung, die app.js anspricht, muss es in index.html auch geben. Ein Tippfehler
+# hier fuehrt zu einem stillen null-Zugriff mitten im Ablauf.
+$html = [IO.File]::ReadAllText((Join-Path $root 'ui\index.html'), [Text.Encoding]::UTF8)
+$js   = [IO.File]::ReadAllText((Join-Path $root 'ui\app.js'), [Text.Encoding]::UTF8)
+$vorhanden = [regex]::Matches($html, 'id="([a-zA-Z0-9_-]+)"') | ForEach-Object { $_.Groups[1].Value }
+$hits = @()
+foreach ($m in ([regex]::Matches($js, "\`$\('#([a-zA-Z0-9_-]+)'\)") | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)) {
+    # Kennungen, die app.js selbst erzeugt, stehen nicht im HTML: entweder als
+    # id="..." in einem erzeugten HTML-Schnipsel oder per .id = '...' zur Laufzeit.
+    if ($js -match ("id=""" + $m + """")) { continue }
+    if ($js -match ("\.id\s*=\s*'" + $m + "'")) { continue }
+    if ($js -match ("'" + $m + "'\s*\+")) { continue }
+    if ($vorhanden -notcontains $m) { $hits += "app.js sucht #$m - gibt es in index.html nicht" }
+}
+Test-Result "Alle angesprochenen Kennungen existieren im HTML" ($hits.Count -eq 0) $hits
+
+# svg('name') mit unbekanntem Namen liefert stillschweigend ein LEERES Symbol - man
+# sieht einen leeren Kasten und sucht den Fehler an der falschen Stelle. Real passiert
+# beim Vormerken-Knopf: 'plus' fehlte im Satz.
+$csText  = [IO.File]::ReadAllText((Join-Path $root 'src\ActionCatalog.cs'), [Text.Encoding]::UTF8)
+$iconsJs = [IO.File]::ReadAllText((Join-Path $root 'ui\icons.js'), [Text.Encoding]::UTF8)
+$bekannt = [regex]::Matches($iconsJs, "(?m)^\s*([a-zA-Z][a-zA-Z0-9]*)\s*:\s*'") | ForEach-Object { $_.Groups[1].Value }
+$hits = @()
+foreach ($n in ([regex]::Matches($js, "svg\('([a-zA-Z][a-zA-Z0-9]*)'") | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)) {
+    if ($bekannt -notcontains $n) { $hits += "svg('$n') - dieses Symbol gibt es in icons.js nicht" }
+}
+# Auch die aus C# kommenden Symbolnamen des Katalogs muessen existieren.
+foreach ($n in ([regex]::Matches($csText, 'Icon = "([a-zA-Z][a-zA-Z0-9]*)"') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)) {
+    if ($bekannt -notcontains $n) { $hits += "Katalog nutzt Symbol '$n' - gibt es in icons.js nicht" }
+}
+Test-Result "Alle verwendeten Symbole existieren ($($bekannt.Count) im Satz)" ($hits.Count -eq 0) $hits
+
 Write-Host "`nAnti-AI-Slop, Optik (Teil B)" -ForegroundColor Cyan
 
 # Tell 6: radiale Farbwolken und Korn-Overlay.
@@ -138,6 +189,22 @@ foreach ($f in $csFiles) {
 }
 Test-Result "Anzeige-Texte mit echten Umlauten" ($hits.Count -eq 0) $hits
 
+# README und CHANGELOG sind kundennahe Texte - der Changelog wird woertlich zur
+# Release-Beschreibung auf GitHub. Auch dort gehoeren echte Umlaute hin.
+$hits = @()
+foreach ($f in $docFiles) {
+    $i = 0
+    foreach ($line in [IO.File]::ReadAllLines($f.FullName, [Text.Encoding]::UTF8)) {
+        $i++
+        foreach ($w in ([regex]::Matches($line, '\b[A-Za-zÄÖÜäöüß]{4,}\b') | ForEach-Object { $_.Value })) {
+            if ($w -match '(?i)(laeuft|oeffn|pruef|geraet|kuenft|ausloes|haette|oberflaech|veroeff|aufraeum|gruen|zuruecksetz|moeglich|noetig|waehl|fuer[a-z])') {
+                $hits += "$($f.Name):$i  $w"
+            }
+        }
+    }
+}
+Test-Result "README und CHANGELOG mit echten Umlauten" ($hits.Count -eq 0) $hits
+
 Write-Host "`nKatalog an EINER Stelle" -ForegroundColor Cyan
 
 # Der Katalog wird vom Host geschickt. Baut jemand wieder eine zweite Fassung in die
@@ -175,6 +242,50 @@ else {
 $shellText2 = [IO.File]::ReadAllText((Join-Path $root 'host\ShellForm.cs'), [Text.Encoding]::UTF8)
 if ($shellText2 -match 'restore\s*&&\s*a\.IsRepair') { $hits += "host/ShellForm.cs prueft wieder nur IsRepair statt WantsRestorePoint" }
 Test-Result "Riskante Aktionen bekommen einen Sicherungspunkt" ($hits.Count -eq 0) $hits
+
+Write-Host "`nFunktionsumfang" -ForegroundColor Cyan
+
+# Jeder Befehl, den der Host versteht, muss von der Oberflaeche auch ausloesbar sein.
+#
+# Anlass: Beim Oberflaechen-Umbau auf v7.0 sind acht Funktionen still verschwunden
+# (Warteschlange, Herunterfahren danach, Netzwerk-Diagnose, Treiber-Backup,
+# Autostart-Ordner, Selbststart-Schalter, Verlauf leeren, Browser-Rueckfallweg beim
+# Update). Der Code blieb im Host stehen, nur der Weg dorthin fehlte - und genau das
+# faellt beim Durchklicken der NEUEN Oberflaeche niemandem auf.
+#
+# Geprueft wird gegen das Vorkommen des Befehlsnamens als Zeichenkette irgendwo in
+# app.js, damit auch berechnete Aufrufe zaehlen (z. B. mode === 'fix' ? 'startFix' : ...).
+$shellText3 = [IO.File]::ReadAllText((Join-Path $root 'host\ShellForm.cs'), [Text.Encoding]::UTF8)
+$jsText2    = [IO.File]::ReadAllText((Join-Path $root 'ui\app.js'), [Text.Encoding]::UTF8)
+
+$befehle = [regex]::Matches($shellText3, 'type == "([a-zA-Z]+)"') |
+           ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
+
+# Diese Befehle darf die Oberflaeche bewusst nicht senden (mit Begruendung).
+$ausgenommen = @{
+    'ready' = 'wird gesendet, aber als erster Aufruf ohne type-Vergleich gesucht'
+}
+
+$hits = @()
+foreach ($b in $befehle) {
+    if ($ausgenommen.ContainsKey($b)) { continue }
+    if ($jsText2 -notmatch ("'" + $b + "'")) {
+        $hits += "'$b' versteht der Host, aber ui/app.js loest es nirgends aus"
+    }
+}
+Test-Result "Alle Host-Befehle sind aus der Oberflaeche erreichbar ($($befehle.Count) Befehle)" ($hits.Count -eq 0) $hits
+
+# Abbrechen muss BEIDE Laufarten stoppen: den Pruef-/Reparaturablauf UND eine
+# Einzelaktion aus dem Werkzeugkasten (die laeuft im CommandRunner, nicht im Flow).
+$hits = @()
+if ($shellText3 -notmatch 'type == "cancel"') { $hits += "Der Befehl 'cancel' fehlt im Host" }
+$cancelZweig = [regex]::Match($shellText3, 'type == "cancel"\)([^\r\n]*)')
+if ($cancelZweig.Success) {
+    $z = $cancelZweig.Groups[1].Value
+    if ($z -notmatch '_runner') { $hits += "'cancel' stoppt den CommandRunner nicht" }
+    if ($z -notmatch 'CancelFlow') { $hits += "'cancel' stoppt den Pruefablauf nicht" }
+}
+Test-Result "Abbrechen stoppt Ablauf UND Einzelaktion" ($hits.Count -eq 0) $hits
 
 Write-Host ""
 Write-Host ("Ergebnis: {0} bestanden, {1} fehlgeschlagen" -f $passed, $failed) -ForegroundColor $(if ($failed) { 'Red' } else { 'Green' })

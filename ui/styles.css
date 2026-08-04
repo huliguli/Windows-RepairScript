@@ -355,6 +355,34 @@ details.disc > summary b{font-weight:600;color:var(--text)}
 .card-help:hover{opacity:1;color:var(--accent);border-color:var(--accent)}
 .card-help svg{width:14px;height:14px}
 
+/* ---------- Vormerken und „wenn alles fertig ist“ ---------- */
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.chip{
+  display:inline-flex;align-items:center;gap:6px;padding:5px 6px 5px 11px;
+  border-radius:999px;background:var(--surface);border:1px solid var(--line-strong);
+  font-size:12.5px;
+}
+.chip-x{
+  width:19px;height:19px;border-radius:50%;border:0;background:transparent;
+  color:var(--text-3);display:grid;place-items:center;cursor:pointer;flex:none;
+}
+.chip-x svg{width:11px;height:11px}
+.chip-x:hover{background:var(--bad-bg);color:var(--bad)}
+
+.post-choice{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px}
+.post-label{font-size:13px;color:var(--text-2)}
+
+/* Das Pluszeichen ist dauerhaft sichtbar, nicht erst bei Maus-Hover: wer mit
+   Tastatur oder Finger bedient, faende es sonst nie. */
+.card-add{
+  position:absolute;top:12px;right:44px;width:26px;height:26px;border-radius:50%;
+  border:1px solid var(--line);background:var(--surface-2);color:var(--text-3);
+  display:grid;place-items:center;cursor:pointer;opacity:.75;
+}
+.card-add:hover{opacity:1;color:var(--accent);border-color:var(--accent)}
+.card-add svg{width:14px;height:14px}
+.card .card-b{padding-right:80px}
+
 /* ---------- Listen (Verlauf, Autostart, Punkte, Energie, Apps) ---------- */
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);
   box-shadow:var(--shadow-1);margin-bottom:14px;overflow:hidden}

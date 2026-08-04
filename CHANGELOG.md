@@ -1,5 +1,46 @@
 # Changelog
 
+## [7.0.1] - 2026-08-04
+
+Nachtrag zu 7.0: Beim großen Umbau der Oberfläche waren acht Funktionen unter den Tisch
+gefallen. Sie sind wieder da, an passenderer Stelle als vorher.
+
+### Wieder da
+
+- **Mehrere Aktionen vormerken.** Das Pluszeichen auf jeder Karte legt eine Aktion auf eine
+  Liste; die läuft dann in einem Rutsch der Reihe nach durch. Ein Sicherungspunkt wird
+  einmal für die ganze Liste angelegt statt für jede Aktion einzeln.
+- **Wenn alles fertig ist.** Der PC kann sich nach dem letzten Lauf herunterfahren oder neu
+  starten. Die Wahl steht im Werkzeugkasten und gilt für einzelne Aktionen genauso wie für
+  die Liste; vor dem Start wird sie noch einmal genannt.
+- **Verbindung zu einer Seite testen.** Prüft, ob und wie gut Ihr PC eine bestimmte Adresse
+  erreicht, und zeigt den Weg dorthin.
+- **Gerätetreiber sichern.** Kopiert alle nachinstallierten Treiber in einen Ordner Ihrer
+  Wahl, praktisch vor einer Neuinstallation.
+- **Windows-Wartung mit dem PC starten.** Der Schalter in den Startprogrammen ist zurueck.
+- **Autostart-Ordner öffnen**, getrennt für Ihr Konto und für alle am PC, mit Erklaerung.
+- **Verlauf leeren.**
+- **Im Browser öffnen**, wenn eine Aktualisierung nicht durchläuft.
+
+### Behoben
+
+- **Abbrechen wirkt wieder.** Bei einer einzelnen Aktion aus dem Werkzeugkasten tat der Knopf
+  nichts: er stoppte nur den Prüfablauf, nicht den tatsaechlich laufenden Befehl. Jetzt gibt
+  es einen Abbruch, der beides beendet.
+- Das Pluszeichen zum Vormerken fehlte im Symbolsatz und blieb als leerer Kreis stehen.
+
+### Unter der Haube
+
+Vier neue Prüfungen, die genau diese Fehlerklassen künftig abfangen, bevor etwas
+veröffentlicht wird:
+
+- Jeder Befehl, den das Programm intern versteht, muss aus der Oberfläche auch auslösbar
+  sein. Das hätte die acht verlorenen Funktionen sofort gemeldet.
+- Abbrechen muss beide Laufarten stoppen.
+- Das JavaScript der Oberfläche wird auf Lesbarkeit geprüft. Ein Tippfehler darin legt sonst
+  die gesamte Oberfläche lahm, ohne dass der Bau etwas merkt.
+- Jede angesprochene Kennung und jedes verwendete Symbol muss es wirklich geben.
+
 ## [7.0] - 2026-08-04
 
 Die größte Überarbeitung seit Bestehen des Programms. Es richtet sich jetzt ausdrücklich an

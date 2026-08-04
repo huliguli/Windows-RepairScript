@@ -29,6 +29,9 @@ namespace WartungsToolbox
         public string Desc;       // ein Satz Alltagssprache
         public string Info;       // ausfuehrliche Erklaerung fuer das Fragezeichen
         public string Icon;       // Name aus dem Symbolsatz der Oberflaeche
+        // Sonderaktion, die vorher eine Eingabe braucht (Ziel, Zielordner). Sie hat keine
+        // Steps und laeuft ueber einen eigenen Befehl statt ueber "run".
+        public string Special;
         public string Glyph;      // Segoe MDL2 Assets (Altbestand)
         public string Category;
         public bool Danger;       // Sicherheitsabfrage vor Ausfuehrung

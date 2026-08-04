@@ -44,6 +44,9 @@ const S = {
   stepIndex: 0,
   stepTotal: 0,
   result: null,
+  queue: [],            // vorgemerkte Aktionen (Werkzeugkasten)
+  post: 'none',         // was nach dem letzten Lauf passieren soll
+  selfStart: false,     // startet die App mit dem PC?
   admin: true,
   version: '',
 };
@@ -251,7 +254,7 @@ $('#btn-cancel').onclick = () => {
     S.mode === 'fix'
       ? 'Was bereits repariert wurde, bleibt erhalten. Den Rest können Sie später erneut starten.'
       : 'Die Prüfung wird beendet. Ihrem PC passiert dabei nichts.',
-    'Abbrechen', () => { send({type:'cancelFlow'}); });
+    'Abbrechen', () => { send({type:'cancel'}); });
 };
 
 /* =====================================================================
@@ -412,8 +415,9 @@ function renderTools(){
   cards.innerHTML = '';
   S.catalog.actions.filter(a => a.cat === S.cat).forEach(a => cards.appendChild(toolCard(a)));
 
-  $('#tools-foot').innerHTML = svg('info') +
-    '<span>Weitere Bereiche:</span>';
+  renderQueueBar();
+  renderPostChoice();
+  $('#tools-foot').innerHTML = svg('info') + '<span>Weitere Bereiche:</span>';
 }
 
 function toolCard(a){
@@ -426,7 +430,8 @@ function toolCard(a){
     '<span class="card-ico">' + svg(a.icon || 'wrench') + '</span>' +
     '<span class="card-b">' +
       '<span class="card-t">' + esc(a.title) +
-        (a.danger ? '<span class="tag warn">Nachfrage</span>' : '') + '</span>' +
+        (a.danger ? '<span class="tag warn">Nachfrage</span>' : '') +
+        (a.special ? '<span class="tag rec">Eingabe</span>' : '') + '</span>' +
       '<span class="card-d">' + esc(a.desc) + '</span>' +
       (a.tech ? '<span class="card-tech">' + esc(a.tech) + '</span>' : '') +
     '</span>';
@@ -438,39 +443,192 @@ function toolCard(a){
   h.setAttribute('aria-label','Was macht „' + a.title + '“?');
   h.onclick = (e) => { e.stopPropagation(); infoModal(a.title, a.info || a.desc, 'info', a.tech); };
   wrap.appendChild(h);
+
+  // Sonderaktionen brauchen eine Eingabe und lassen sich deshalb nicht sammeln.
+  if(!a.special){
+    const p = el('button','card-add', svg('plus'));
+    p.type = 'button';
+    p.setAttribute('aria-label','„' + a.title + '“ vormerken');
+    p.onclick = (e) => { e.stopPropagation(); addToQueue(a.id); };
+    wrap.appendChild(p);
+  }
   return wrap;
 }
 
-function runAction(a){
-  if(!S.admin){
-    infoModal('Administratorrechte fehlen',
-      'Diese Aktion braucht Administratorrechte. Bitte schließen Sie das Programm und starten ' +
-      'Sie es über die rechte Maustaste als Administrator.', 'warn');
-    return;
-  }
-  const start = () => {
+/* ---------- Vormerken (Warteschlange) ---------- */
+function addToQueue(id){
+  if(S.queue.indexOf(id) >= 0){ toast('Schon vorgemerkt','Diese Aktion steht bereits auf der Liste.','warn'); return; }
+  S.queue.push(id);
+  renderQueueBar();
+}
+function removeFromQueue(i){ S.queue.splice(i,1); renderQueueBar(); }
+
+function renderQueueBar(){
+  const bar = $('#queue-bar');
+  if(!S.queue.length){ bar.hidden = true; bar.innerHTML = ''; return; }
+  bar.hidden = false;
+  bar.innerHTML = '';
+
+  const b = el('span','next-b');
+  b.innerHTML = '<span class="next-t">' +
+    (S.queue.length === 1 ? 'Eine Aktion vorgemerkt' : S.queue.length + ' Aktionen vorgemerkt') +
+    '</span><span class="next-s">Sie laufen nacheinander in dieser Reihenfolge.</span>';
+  const chips = el('div','chips');
+  S.queue.forEach((id,i) => {
+    const a = S.catalog.actions.find(x => x.id === id);
+    if(!a) return;
+    const c = el('span','chip', '<span>' + (i+1) + '. ' + esc(a.title) + '</span>');
+    const x = el('button','chip-x', svg('close'));
+    x.type = 'button';
+    x.setAttribute('aria-label','„' + a.title + '“ von der Liste nehmen');
+    x.onclick = () => removeFromQueue(i);
+    c.appendChild(x);
+    chips.appendChild(c);
+  });
+  b.appendChild(chips);
+  bar.appendChild(b);
+
+  const clear = el('button','btn btn-ghost','Liste leeren');
+  clear.onclick = () => { S.queue = []; renderQueueBar(); };
+  bar.appendChild(clear);
+
+  const go = el('button','btn btn-primary btn-md','Der Reihe nach ausführen');
+  go.onclick = () => startQueue();
+  bar.appendChild(go);
+}
+
+/* „Wenn alles fertig ist“: gilt für Einzelaktionen wie für die Liste. */
+function renderPostChoice(){
+  const box = $('#post-choice');
+  if(!box) return;
+  const wahl = [['none','Nichts weiter','check'],['shutdown','PC herunterfahren','power'],
+                ['restart','PC neu starten','refresh']];
+  box.innerHTML = '<span class="post-label">Wenn alles fertig ist:</span>';
+  const seg = el('div','tabs');
+  seg.style.margin = '0';
+  wahl.forEach(w => {
+    const b = el('button','tab', svg(w[2]) + w[1]);
+    b.type = 'button';
+    b.setAttribute('aria-selected', String(S.post === w[0]));
+    b.onclick = () => { S.post = w[0]; renderPostChoice(); };
+    seg.appendChild(b);
+  });
+  box.appendChild(seg);
+}
+
+function startQueue(){
+  if(!S.admin){ needAdmin(); return; }
+  const ids = S.queue.slice();
+  const gefaehrlich = ids.filter(id => (S.catalog.actions.find(a => a.id === id) || {}).danger).length;
+  const namen = ids.map(id => (S.catalog.actions.find(a => a.id === id) || {}).title).join('\n');
+  const los = () => {
     $('#console-body').innerHTML = '';
     S.mode = 'action';
-    S.steps = [a.title];
+    S.steps = ids.map(id => (S.catalog.actions.find(a => a.id === id) || {}).title);
     S.stepIndex = 1;
-    S.stepTotal = 1;
+    S.stepTotal = ids.length;
     $('#run-ico').className = 'vico';
-    $('#run-ico').innerHTML = svg(a.icon || 'wrench');
-    $('#run-title').textContent = a.title;
-    $('#run-lead').textContent = a.desc;
+    $('#run-ico').innerHTML = svg('list');
+    $('#run-title').textContent = 'Ihre Liste wird abgearbeitet';
+    $('#run-lead').textContent = 'Die vorgemerkten Aktionen laufen jetzt nacheinander. ' +
+      'Vor der ersten Reparatur legen wir einen Sicherungspunkt an.';
     $('#run-foot').innerHTML = svg('info') + '<span>Sie können jederzeit abbrechen.</span>';
     renderSteps();
     setBar(-1);
-    $('#run-status').textContent = 'Läuft …';
     show('run');
-    send({ type:'run', id:a.id, restore:true, post:'none', delay:60 });
+    send({ type:'runQueue', ids:ids, restore:true, post:S.post, delay:60 });
+    S.queue = [];
+    renderQueueBar();
+  };
+  confirmModal('Liste starten?',
+    namen + (S.post !== 'none'
+      ? '\n\nDanach wird der PC ' + (S.post === 'restart' ? 'neu gestartet' : 'heruntergefahren') + '.'
+      : ''),
+    'Los geht es', los, gefaehrlich > 0);
+}
+
+function needAdmin(){
+  infoModal('Administratorrechte fehlen',
+    'Dafür braucht das Programm Administratorrechte. Bitte schließen Sie es, klicken Sie das ' +
+    'Symbol mit der rechten Maustaste an und wählen Sie „Als Administrator ausführen“.', 'warn');
+}
+
+function runAction(a){
+  if(!S.admin){ needAdmin(); return; }
+
+  // Sonderaktionen: erst die Eingabe, dann ein eigener Befehl.
+  if(a.special === 'netdiag'){
+    promptModal(a.title,
+      'Welche Adresse sollen wir testen? Zum Beispiel google.com oder die Adresse einer Seite, ' +
+      'die bei Ihnen nicht lädt.', 'google.com', wert => {
+        const ziel = (wert || '').trim();
+        if(!ziel) return;
+        if(!/^[a-zA-Z0-9][a-zA-Z0-9.\-:]*$/.test(ziel)){
+          toast('Das geht so nicht', 'Bitte nur Buchstaben, Zahlen, Punkt und Bindestrich eingeben.', 'warn');
+          return;
+        }
+        prepareSingleRun(a);
+        send({ type:'netDiag', target:ziel });
+      });
+    return;
+  }
+  if(a.special === 'driverbackup'){
+    confirmModal(a.title,
+      a.info + '\n\nIm nächsten Schritt öffnet sich ein Fenster, in dem Sie den Zielordner aussuchen.',
+      'Ordner aussuchen', () => { prepareSingleRun(a); send({ type:'driverBackup' }); });
+    return;
+  }
+
+  const start = () => {
+    prepareSingleRun(a);
+    send({ type:'run', id:a.id, restore:true, post:S.post, delay:60 });
   };
 
   if(a.danger || SET.confirm){
     confirmModal(a.title,
-      (a.info || a.desc) + (a.restore ? '\n\nVorher legen wir einen Sicherungspunkt an, damit sich das rückgängig machen lässt.' : ''),
+      (a.info || a.desc) +
+      (a.restore ? '\n\nVorher legen wir einen Sicherungspunkt an, damit sich das rückgängig machen lässt.' : '') +
+      (S.post !== 'none' ? '\n\nDanach wird der PC ' +
+        (S.post === 'restart' ? 'neu gestartet' : 'heruntergefahren') + '.' : ''),
       'Jetzt ausführen', start, a.danger);
   } else start();
+}
+
+/* Bereitet den Ablauf-Bildschirm für eine einzelne Aktion vor. */
+function prepareSingleRun(a){
+  $('#console-body').innerHTML = '';
+  S.mode = 'action';
+  S.steps = [a.title];
+  S.stepIndex = 1;
+  S.stepTotal = 1;
+  $('#run-ico').className = 'vico';
+  $('#run-ico').innerHTML = svg(a.icon || 'wrench');
+  $('#run-title').textContent = a.title;
+  $('#run-lead').textContent = a.desc;
+  $('#run-foot').innerHTML = svg('info') + '<span>Sie können jederzeit abbrechen.</span>';
+  renderSteps();
+  setBar(-1);
+  $('#run-status').textContent = 'Läuft …';
+  show('run');
+}
+
+/* ---------- Eingabe-Dialog ---------- */
+function promptModal(title, body, vorgabe, onOk){
+  const m = buildModal({ title:title, body:body, icon:'globe' });
+  const inp = el('input','modal-input');
+  inp.type = 'text';
+  inp.spellcheck = false;
+  inp.value = vorgabe || '';
+  inp.setAttribute('aria-label', title);
+  m.box.insertBefore(inp, m.btns);
+  const cancel = el('button','btn btn-ghost','Abbrechen');
+  cancel.onclick = m.close;
+  const ok = el('button','btn btn-primary btn-md','Starten');
+  ok.onclick = () => { const v = inp.value; m.close(); onOk(v); };
+  m.btns.appendChild(cancel);
+  m.btns.appendChild(ok);
+  inp.addEventListener('keydown', e => { if(e.key === 'Enter'){ e.preventDefault(); ok.click(); } });
+  setTimeout(() => { try{ inp.focus(); inp.select(); }catch(_){} }, 50);
 }
 
 /* =====================================================================
@@ -789,6 +947,13 @@ function onHost(m){
     case 'powerPlans':   renderPower(m.items); break;
     case 'bloatPackages':renderApps(m.items); break;
     case 'autostart':    renderAutostart(m.items); break;
+    case 'selfstart':
+      S.selfStart = !!m.on;
+      { const i = $('#as-self'); if(i) i.checked = S.selfStart; }
+      if(m.changed === true)  toast(S.selfStart ? 'Eingerichtet' : 'Entfernt',
+        S.selfStart ? 'Windows-Wartung startet künftig mit dem PC.' : 'Windows-Wartung startet nicht mehr automatisch.', 'good');
+      if(m.changed === false) toast('Nicht geändert','Der Eintrag ließ sich nicht anpassen.','bad');
+      break;
     case 'schedule':     renderSchedule(m); break;
 
     // --- Update ---
@@ -805,10 +970,22 @@ function onHost(m){
       $('#ub-text').textContent = m.phase === 'extract' ? 'Wird ausgepackt …'
         : (m.phase === 'restart' ? 'Das Programm startet gleich neu …' : 'Wird geladen …');
       break;
-    case 'updateError':
+    case 'updateError': {
       $('#update-bar').classList.remove('show');
-      infoModal('Die Aktualisierung hat nicht geklappt', m.message, 'warn');
+      const dlg = buildModal({
+        title: 'Die Aktualisierung hat nicht geklappt',
+        body: m.message + '\n\nSie können die neue Fassung stattdessen im Browser ' +
+              'herunterladen und von Hand installieren.',
+        icon: 'alert', tone: 'warn' });
+      const zu = el('button','btn btn-ghost','Schließen');
+      zu.onclick = dlg.close;
+      const br = el('button','btn btn-primary btn-md','Im Browser öffnen');
+      br.onclick = () => { dlg.close(); send({type:'openUpdate'}); };
+      dlg.btns.appendChild(zu);
+      dlg.btns.appendChild(br);
+      br.focus();
       break;
+    }
     case 'updated':
       toast('Aktualisiert', 'Das Programm läuft jetzt in der Fassung ' + m.version + '.', 'good');
       break;
@@ -834,7 +1011,10 @@ function renderHistory(items){
     return;
   }
   const words = { good:'Erfolgreich', bad:'Fehlgeschlagen', warn:'Mit Hinweisen' };
-  let h = '<div class="panel"><div class="panel-b">';
+  let h = '<div class="panel"><div class="panel-h" style="display:flex;align-items:center;' +
+    'justify-content:space-between;gap:12px"><span><span class="panel-t">' + items.length +
+    (items.length === 1 ? ' Eintrag' : ' Einträge') + '</span></span>' +
+    '<button class="link danger" id="hist-clear">Verlauf leeren</button></div><div class="panel-b">';
   items.forEach(it => {
     const k = ['good','bad','warn'].indexOf(it.kind) >= 0 ? it.kind : 'unknown';
     h += '<div class="row"><span class="dot ' + (k === 'good' ? 'ok' : (k === 'bad' ? 'bad' : 'warn')) + '"></span>' +
@@ -844,6 +1024,9 @@ function renderHistory(items){
   });
   h += '</div></div>';
   b.innerHTML = h;
+  $('#hist-clear').onclick = () => confirmModal('Verlauf leeren?',
+    'Alle Einträge werden endgültig gelöscht. Auf Ihren PC hat das keine Auswirkung.',
+    'Leeren', () => send({type:'historyClear'}));
 }
 
 function renderRestore(items){
@@ -907,7 +1090,40 @@ function renderPower(items){
 
 function renderAutostart(items){
   const b = $('#sub-body');
-  if(!items || !items.length){ b.innerHTML = '<div class="empty">Es starten keine zusätzlichen Programme mit.</div>'; return; }
+  b.innerHTML = '';
+
+  // Selbststart der App und der Weg zum Autostart-Ordner. Beides stand in v6.6
+  // ueber der Liste und war beim Umbau verlorengegangen.
+  const kopf = el('div','panel');
+  kopf.innerHTML = '<div class="panel-h"><div class="panel-t">Windows-Wartung selbst</div>' +
+    '<div class="panel-d">Das Programm kann sich beim Anmelden von allein starten. ' +
+    'Es fragt dann nicht jedes Mal nach Administratorrechten.</div></div>';
+  const selbst = switchRow('Mit dem PC starten',
+    'Wird über die Aufgabenplanung von Windows eingerichtet.',
+    !!S.selfStart, v => send({type:'selfStartSet', on:v}));
+  selbst.querySelector('input').id = 'as-self';
+  kopf.appendChild(selbst);
+  b.appendChild(kopf);
+
+  const ordner = el('div','panel');
+  ordner.innerHTML = '<div class="panel-h"><div class="panel-t">Eigene Programme mitstarten lassen</div>' +
+    '<div class="panel-d">Legen Sie eine Verknüpfung in den Autostart-Ordner, dann startet ' +
+    'das Programm künftig mit. „Nur für mich“ gilt für Ihr Benutzerkonto, „Für alle“ für jeden ' +
+    'an diesem PC.</div></div>';
+  const zeile = el('div','row');
+  zeile.innerHTML = '<span class="row-b"><span class="row-s">Ordner im Explorer öffnen</span></span>';
+  const b1 = el('button','btn btn-ghost', svg('folder') + 'Nur für mich');
+  b1.onclick = () => send({type:'openStartupFolder', scope:'user'});
+  const b2 = el('button','btn btn-ghost', svg('folder') + 'Für alle');
+  b2.onclick = () => send({type:'openStartupFolder', scope:'common'});
+  zeile.appendChild(b1); zeile.appendChild(b2);
+  ordner.appendChild(zeile);
+  b.appendChild(ordner);
+
+  if(!items || !items.length){
+    b.appendChild(el('div','empty','Es starten keine zusätzlichen Programme mit.'));
+    return;
+  }
   const groups = {};
   items.forEach(it => { (groups[it.locName] = groups[it.locName] || []).push(it); });
   const box = el('div','panel');
@@ -925,7 +1141,6 @@ function renderAutostart(items){
       box.appendChild(row);
     });
   });
-  b.innerHTML = '';
   b.appendChild(box);
 }
 

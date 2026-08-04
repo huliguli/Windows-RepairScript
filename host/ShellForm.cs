@@ -248,6 +248,7 @@ namespace WartungsToolbox
                         cat = a.Category,
                         danger = a.Danger,
                         restore = a.WantsRestorePoint,
+                        special = a.Special,
                     }).ToArray(),
                     autoTasks = Catalog.AutoCatalog().Select(t => new
                     {
@@ -737,6 +738,7 @@ namespace WartungsToolbox
                 bool restore = ToBool(m, "restore");
                 ReadPost(m);
                 MaintenanceAction a = _actions[id];
+                if (a.Special != null) return;   // braucht eine Eingabe, laeuft ueber den eigenen Befehl
                 List<Job> jobs = new List<Job>();
                 jobs.Add(new Job { Title = a.Title, Steps = BuildSteps(a, restore) });
                 _runner.RunJobs(a.Title, jobs);
@@ -760,6 +762,7 @@ namespace WartungsToolbox
                         try { id = Convert.ToInt32(o); } catch { continue; }
                         if (id < 0 || id >= _actions.Count) continue;
                         MaintenanceAction a = _actions[id];
+                        if (a.Special != null) continue;   // Sonderaktion, nicht sammelbar
 
                         List<Step> steps = new List<Step>();
                         if (restore && a.WantsRestorePoint && !restoreDone)
@@ -777,10 +780,12 @@ namespace WartungsToolbox
             // --- Hauptweg -------------------------------------------------------
             else if (type == "startCheck") StartCheck();
             else if (type == "startFix") StartFix();
-            else if (type == "cancelFlow") CancelFlow();
             else if (type == "openLog") AppLog.Open();
             else if (type == "restartNow") { _pendingPost = "restart"; _pendingDelay = 60; ScheduleShutdown(); _pendingPost = "none"; }
             // --------------------------------------------------------------------
+            // Stoppt beides: den Pruef-/Reparaturablauf und eine Einzelaktion aus dem
+            // Werkzeugkasten. Die laufen in verschiedenen Threads, ein Aufruf allein
+            // liesse den jeweils anderen weiterlaufen.
             else if (type == "cancel") { if (_runner != null) _runner.Cancel(); CancelFlow(); }
             else if (type == "cancelShutdown") CancelShutdown();
             else if (type == "ready") OnReady();

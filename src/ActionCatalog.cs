@@ -337,6 +337,25 @@ namespace WartungsToolbox
                 Steps = { new Step { File = "wsreset.exe", Detached = true } }
             });
 
+            // ---------- Sonderaktionen: brauchen vorher eine Eingabe ----------
+            // Sie stehen im Katalog, damit ihre Texte an derselben Stelle gepflegt werden
+            // wie alle anderen. Sie haben aber KEINE Steps: die Oberflaeche fragt erst die
+            // Eingabe ab und schickt dann einen eigenen Befehl.
+            l.Add(new MaintenanceAction {                          // id 28
+                Category = "Netzwerk", Icon = "activity", Special = "netdiag",
+                Title = "Verbindung zu einer Seite testen",
+                TechTitle = "ping und tracert",
+                Desc = "Prüft, ob und wie gut Ihr PC eine bestimmte Adresse im Internet erreicht.",
+                Info = "Wir schicken vier Testpakete an eine Adresse Ihrer Wahl und verfolgen, über welche Stationen sie laufen. Daran sieht man, ob das Problem bei Ihnen, bei Ihrem Anbieter oder auf der Gegenseite liegt.\n\nGeben Sie einfach eine Webadresse ein, zum Beispiel google.com. Der Test dauert etwa eine halbe Minute und verändert nichts."
+            });
+            l.Add(new MaintenanceAction {                          // id 29
+                Category = "Diagnose", Icon = "save", Special = "driverbackup",
+                Title = "Gerätetreiber sichern",
+                TechTitle = "pnputil /export-driver",
+                Desc = "Kopiert alle nachinstallierten Treiber in einen Ordner Ihrer Wahl.",
+                Info = "Treiber sind die kleinen Programme, mit denen Windows Ihren Drucker, die Grafik oder das WLAN ansteuert. Diese Aktion sichert alle nachträglich installierten davon in einen Ordner.\n\nDas lohnt sich vor einer Windows-Neuinstallation: Sie können die Treiber danach aus dem Ordner zurückholen, statt sie einzeln beim Hersteller zu suchen. Im nächsten Schritt wählen Sie den Zielordner aus."
+            });
+
             return l;
         }
 
