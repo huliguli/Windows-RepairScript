@@ -116,9 +116,12 @@ C# 5 und lehnt jede höhere Sprachversion mit `CS1617` ab.
 - Die Prüfung braucht je nach System 5 bis 10 Minuten. Der PC bleibt benutzbar.
 - Zurücksetzen der Interneteinstellungen und die Speicherprüfung brauchen danach einen
   Neustart.
-- Die `.exe` ist nicht von einer bekannten Stelle signiert. Beim ersten Start zeigt Windows
-  gegebenenfalls „Der Computer wurde geschützt“; über *Weitere Informationen → Trotzdem
-  ausführen* startet sie.
+- Programm und Installer sind signiert, allerdings mit einem selbst ausgestellten
+  Zertifikat (`CN=Jonas (Windows-Wartung)`). Das macht Manipulationen erkennbar und ist die
+  Grundlage dafür, dass die Selbstaktualisierung nur Fassungen desselben Herausgebers
+  annimmt. Es ersetzt **kein** Zertifikat einer anerkannten Stelle: beim ersten Start zeigt
+  Windows weiterhin „Der Computer wurde geschützt“; über *Weitere Informationen → Trotzdem
+  ausführen* startet das Programm.
 - Läuft etwas schief: Einstellungen → **Protokoll öffnen**.
 
 ## Lizenz
