@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Web.Script.Serialization;
 
@@ -161,6 +163,81 @@ namespace WartungsToolbox
                 try { return Convert.ToBoolean(v); } catch { }
             }
             return null;
+        }
+
+        // ---------------------------------------------------------------- Im Nutzerkontext oeffnen
+
+        // Die Fensterliste der Windows-Oberflaeche. Sie wird von der laufenden explorer.exe
+        // bereitgestellt - also von einem Prozess, der NICHT erhoeht laeuft.
+        [ComImport, Guid("9BA05972-F6A8-11CF-A442-00A0C90A8F39")]
+        class ShellWindowsKlasse { }
+
+        [ComImport, Guid("85CB6900-4D95-11CF-960C-0080C7F4EE85"),
+         InterfaceType(ComInterfaceType.InterfaceIsIDispatch)]
+        interface IShellWindows
+        {
+            [return: MarshalAs(UnmanagedType.IDispatch)]
+            object FindWindowSW(ref object ort, ref object wurzel, int klasse,
+                                out int hwnd, int optionen);
+        }
+
+        const int SWC_DESKTOP = 8;
+        const int SWFO_NEEDDISPATCH = 1;
+
+        /// <summary>
+        /// Oeffnet eine Datei, einen Ordner oder eine Adresse so, wie es der angemeldete
+        /// Nutzer selbst tun wuerde - ausdruecklich OHNE die Administratorrechte dieser App.
+        ///
+        /// Warum der Umweg: Diese App laeuft im Auslieferungszustand erhoeht. Ein einfaches
+        /// Process.Start vererbt diese Rechte an das gestartete Programm. Ein Explorer oder
+        /// ein Browser mit Administratorrechten ist ein weit offenes Tor: Aus dem Explorer
+        /// heraus laesst sich jede beliebige Datei erhoeht starten, und ein Browser mit
+        /// Adminrechten gibt jeder heruntergeladenen Datei dieselben Rechte mit.
+        ///
+        /// Der Weg hier laesst die laufende explorer.exe den Start ausfuehren. Sie gehoert
+        /// dem angemeldeten Nutzer und laeuft nicht erhoeht - das gestartete Programm erbt
+        /// also deren Rechte, nicht unsere.
+        ///
+        /// Klappt das nicht (keine Oberflaeche vorhanden, COM abgelehnt), wird auf den
+        /// direkten Start zurueckgefallen: Lieber erhoeht oeffnen als gar nicht, denn ohne
+        /// den Weg zum Protokoll oder zum Sicherungsordner steht der Nutzer im Regen.
+        /// </summary>
+        public static void OeffneImNutzerkontext(string ziel, string argumente = null)
+        {
+            if (string.IsNullOrWhiteSpace(ziel)) return;
+
+            try
+            {
+                var fenster = (IShellWindows)new ShellWindowsKlasse();
+                object ort = null, wurzel = null;
+                int hwnd;
+                object schreibtisch = fenster.FindWindowSW(ref ort, ref wurzel,
+                                                           SWC_DESKTOP, out hwnd, SWFO_NEEDDISPATCH);
+                if (schreibtisch != null)
+                {
+                    object doc = schreibtisch.GetType().InvokeMember(
+                        "Document", BindingFlags.GetProperty, null, schreibtisch, null);
+                    object anwendung = doc.GetType().InvokeMember(
+                        "Application", BindingFlags.GetProperty, null, doc, null);
+                    anwendung.GetType().InvokeMember(
+                        "ShellExecute", BindingFlags.InvokeMethod, null, anwendung,
+                        new object[] { ziel, argumente ?? "", "", "open", 1 });
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Start über die Oberfläche nicht möglich (" + ex.Message
+                            + "), es wird direkt gestartet.");
+            }
+
+            try
+            {
+                var psi = new ProcessStartInfo(ziel) { UseShellExecute = true };
+                if (!string.IsNullOrEmpty(argumente)) psi.Arguments = argumente;
+                Process.Start(psi);
+            }
+            catch (Exception ex) { AppLog.Warn("Konnte '" + ziel + "' nicht oeffnen: " + ex.Message); }
         }
 
         public static void KillTree(int pid)

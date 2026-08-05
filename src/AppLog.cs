@@ -119,15 +119,19 @@ namespace WartungsToolbox
             catch { }
         }
 
-        /// <summary>Oeffnet das Protokoll im Standard-Editor (Schaltflaeche in den Einstellungen).</summary>
-        public static void Open()
+        /// <summary>
+        /// Sorgt dafuer, dass die Protokolldatei existiert, und gibt ihren Pfad zurueck.
+        ///
+        /// Das OEFFNEN erledigt bewusst der Aufrufer (ShellForm) ueber
+        /// Shell.OeffneImNutzerkontext. Diese Klasse ist die unterste Ebene des Projekts -
+        /// sie darf von nichts abhaengen, sonst laesst sie sich nicht mehr allein
+        /// uebersetzen. Genau daran ist die Signatur-Probe zerbrochen, als hier kurzzeitig
+        /// ein Aufruf von Shell stand.
+        /// </summary>
+        public static string PfadZumOeffnen()
         {
-            try
-            {
-                if (!File.Exists(Path)) Info("Protokoll geoeffnet (war noch leer).");
-                Process.Start(new ProcessStartInfo(Path) { UseShellExecute = true });
-            }
-            catch (Exception ex) { Error("Protokoll konnte nicht geoeffnet werden", ex); }
+            if (!File.Exists(Path)) Info("Protokoll geoeffnet (war noch leer).");
+            return Path;
         }
     }
 }

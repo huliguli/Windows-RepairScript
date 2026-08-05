@@ -418,8 +418,9 @@ namespace WartungsToolbox
         void OpenUpdate()
         {
             if (string.IsNullOrEmpty(_updateUrl) || !_updateUrl.StartsWith("http")) return;
-            try { Process.Start(new ProcessStartInfo(_updateUrl) { UseShellExecute = true }); }
-            catch { }
+            // Ein Browser mit Administratorrechten gibt jeder heruntergeladenen Datei
+            // dieselben Rechte mit. Deshalb ueber die Oberflaeche des Nutzers starten.
+            Shell.OeffneImNutzerkontext(_updateUrl);
         }
 
         // ---------- In-App-Update: herunterladen, entpacken, tauschen, neu starten ----------
@@ -954,7 +955,9 @@ namespace WartungsToolbox
             // --- Hauptweg -------------------------------------------------------
             else if (type == "startCheck") StartCheck();
             else if (type == "startFix") StartFix();
-            else if (type == "openLog") AppLog.Open();
+            // Ein Editor mit Administratorrechten koennte jede Datei des Systems
+            // ueberschreiben - deshalb ueber die Oberflaeche des Nutzers oeffnen.
+            else if (type == "openLog") Shell.OeffneImNutzerkontext(AppLog.PfadZumOeffnen());
             else if (type == "restartNow") { _pendingPost = "restart"; _pendingDelay = 60; ScheduleShutdown(); _pendingPost = "none"; }
             // --- Speicher- und Registrierungs-Suche ----------------------------
             else if (type == "storageScan") StartStorageScan();
@@ -1030,10 +1033,10 @@ namespace WartungsToolbox
 
         void OpenStartupFolder(string scope)
         {
-            // Explorer oeffnet den Autostart-Ordner (shell:-Moniker, kein Pfad-Gefrickel)
+            // Explorer oeffnet den Autostart-Ordner (shell:-Moniker, kein Pfad-Gefrickel).
+            // Ueber die Oberflaeche des Nutzers, damit der Explorer nicht erhoeht laeuft.
             string arg = scope == "common" ? "shell:common startup" : "shell:startup";
-            try { Process.Start(new ProcessStartInfo("explorer.exe", arg) { UseShellExecute = true }); }
-            catch { }
+            Shell.OeffneImNutzerkontext("explorer.exe", arg);
         }
 
         void Win(string a)

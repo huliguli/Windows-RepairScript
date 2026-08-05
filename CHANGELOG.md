@@ -1,5 +1,30 @@
 # Changelog
 
+## [7.1.1] - 2026-08-05
+
+Zwei Nachbesserungen an den neuen Ansichten aus 7.1.0.
+
+### Geändert
+
+- **Sehr lange Gruppen sind zugeklappt.** In der Ansicht „Einträge, die ins Leere zeigen“
+  machten die reinen Merkzettel allein 98 Prozent aller Funde aus: mehrere hundert Zeilen,
+  durch die niemand scrollt, und der Knopf zum Entfernen lag ganz am Ende dahinter. Gruppen
+  ab zwölf Einträgen sind jetzt zugeklappt und nennen nur ihre Anzahl. Die kleinen, wirklich
+  interessanten Gruppen bleiben offen. „Alle auswählen“ liegt bewusst mit im zugeklappten
+  Bereich: Wer hunderte Einträge auf einmal auswählt, soll sie vorher aufgeklappt haben.
+
+### Sicherer
+
+- **Nichts wird mehr mit den Rechten des Programms geöffnet.** Windows-Wartung läuft mit
+  Administratorrechten. Wurde von hier aus ein Explorer-Fenster, der Browser oder das
+  Fehlerprotokoll geöffnet, erbte das geöffnete Programm diese Rechte. Aus einem Explorer
+  mit Administratorrechten lässt sich anschließend jede beliebige Datei mit denselben
+  Rechten starten, und ein Browser gäbe sie jedem Download mit. Solche Fenster öffnet jetzt
+  die Windows-Oberfläche selbst, die ganz normal unter Ihrem Benutzerkonto läuft. Betrifft
+  sechs Stellen: die beiden „Anzeigen“-Schaltflächen der neuen Ansichten, den Autostart-Ordner,
+  den Weg zur Download-Seite, den Hinweis auf die fehlende Windows-Komponente und das
+  Fehlerprotokoll.
+
 ## [7.1.0] - 2026-08-04
 
 Zwei neue Ansichten beantworten Fragen, die das Programm bisher offengelassen hat.

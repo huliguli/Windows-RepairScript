@@ -412,6 +412,40 @@ if (-not $csc -or -not $refDir) {
 }
 Test-Result "Aufraeumen laeuft nicht ueber Abzweigungen hinaus" ($hits.Count -eq 0) $hits
 
+# Die App laeuft im Auslieferungszustand ERHOEHT. Wer von hier aus einen Explorer, einen
+# Browser oder einen Editor startet, vererbt ihm die Administratorrechte - und aus einem
+# erhoehten Explorer laesst sich anschliessend jede beliebige Datei erhoeht starten.
+# Deshalb laufen solche Starts ueber Shell.OeffneImNutzerkontext, das die laufende
+# (nicht erhoehte) Oberflaeche des Nutzers die Arbeit machen laesst.
+#
+# Zwei Stellen duerfen das bewusst und sind deshalb ausgenommen:
+#   * Shell.cs        - der Rueckfallweg von OeffneImNutzerkontext selbst.
+#   * CommandRunner.cs - Wartungswerkzeuge mit eigenem Fenster (cleanmgr, mdsched, chkdsk).
+#                        Die BRAUCHEN die Rechte, sie sollen ja am System arbeiten.
+$erlaubt = @('Shell.cs', 'CommandRunner.cs')
+$hits = @()
+foreach ($f in (Get-ChildItem (Join-Path $root 'src'),(Join-Path $root 'host') -File -Filter *.cs -Recurse)) {
+    $i = 0
+    foreach ($line in [IO.File]::ReadAllLines($f.FullName, [Text.Encoding]::UTF8)) {
+        $i++
+        if ($line -match '^\s*(///|//)') { continue }
+        # UseShellExecute = true heisst "starte es so, wie der Nutzer es anklicken wuerde" -
+        # und vererbt dabei unsere Rechte. Werkzeugaufrufe der App laufen mit false.
+        if ($line -match 'UseShellExecute\s*=\s*true' -and $erlaubt -notcontains $f.Name) {
+            $hits += "$($f.Name):$i  $($line.Trim())"
+        }
+        # Explorer und Adressen NIE direkt, auch nicht aus den Ausnahmen heraus.
+        if ($line -match 'Process\.Start\s*\(\s*(new ProcessStartInfo\s*\(\s*)?"(explorer|https?:)') {
+            $hits += "$($f.Name):$i  $($line.Trim())"
+        }
+    }
+}
+$shellSrc = [IO.File]::ReadAllText((Join-Path $root 'src\Shell.cs'), [Text.Encoding]::UTF8)
+if ($shellSrc -notmatch 'OeffneImNutzerkontext') {
+    $hits += "Shell.OeffneImNutzerkontext wurde entfernt"
+}
+Test-Result "Nichts wird mit den Adminrechten der App geoeffnet" ($hits.Count -eq 0) $hits
+
 Write-Host "`nFunktionsumfang" -ForegroundColor Cyan
 
 # Jeder Befehl, den der Host versteht, muss von der Oberflaeche auch ausloesbar sein.

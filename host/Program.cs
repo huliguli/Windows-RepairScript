@@ -111,12 +111,9 @@ namespace WartungsToolbox
 
             if (r == DialogResult.Yes)
             {
-                try
-                {
-                    Process.Start(new ProcessStartInfo(
-                        "https://developer.microsoft.com/microsoft-edge/webview2/") { UseShellExecute = true });
-                }
-                catch { }
+                // Auch hier nicht erhoeht: ein Browser mit Administratorrechten gibt jeder
+                // heruntergeladenen Datei dieselben Rechte mit.
+                Shell.OeffneImNutzerkontext("https://developer.microsoft.com/microsoft-edge/webview2/");
             }
             return false;
         }

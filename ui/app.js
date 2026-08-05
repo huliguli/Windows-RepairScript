@@ -1532,6 +1532,12 @@ function renderRegistry(m){
       ' <span class="pill unknown">' + gruppen.length + '</span></div>' +
       '<div class="panel-d">' + esc((m.hinweise && m.hinweise[kat]) || '') + '</div></div>';
 
+    // Lange Gruppen werden zugeklappt. Die Merkzettel machen allein 98 Prozent aller
+    // Funde aus; ausgeklappt steht der Nutzer vor mehreren hundert Zeilen und findet den
+    // Knopf am Ende nie. Wichtig dabei: Der Knopf „Alle auswählen“ liegt MIT drin. Wer
+    // hunderte Einträge auf einmal auswählt, soll sie vorher wenigstens aufgeklappt haben.
+    const ziel = gruppen.length > 12 ? zugeklappt(p, gruppen.length) : p;
+
     const alle = el('div','row');
     alle.innerHTML = '<span class="row-b"><span class="row-s">Alle in dieser Gruppe auswählen</span></span>';
     const knopf = el('button','btn btn-ghost','Alle auswählen');
@@ -1547,7 +1553,7 @@ function renderRegistry(m){
       knopf.textContent = angehakt ? 'Auswahl aufheben' : 'Alle auswählen';
     };
     alle.appendChild(knopf);
-    p.appendChild(alle);
+    ziel.appendChild(alle);
 
     gruppen.forEach(g => {
       const row = el('label','row');
@@ -1560,7 +1566,7 @@ function renderRegistry(m){
         // Nichts ist vorangehakt. Wer in der Registrierung etwas entfernt, soll das
         // bewusst tun - nicht, weil ein Programm es ihm vorausgewählt hat.
         ' aria-label="' + esc(g.titel) + ' entfernen" /><i></i></span>';
-      p.appendChild(row);
+      ziel.appendChild(row);
     });
     b.appendChild(p);
   });
@@ -1578,6 +1584,21 @@ function renderRegistry(m){
   $('#sub-foot').innerHTML = svg('info') +
     '<span>Es wird nichts entfernt, was nur gerade nicht erreichbar ist: Einträge auf USB-Sticks, ' +
     'Speicherkarten und Netzlaufwerken bleiben unangetastet.</span>';
+}
+
+/* Hängt einen zugeklappten Bereich an ein Panel und gibt den Platz darin zurück.
+   Dasselbe Muster wie „Im Einzelnen ansehen“ im Ergebnis-Bildschirm. */
+function zugeklappt(panel, anzahl){
+  const d = el('details','disc');
+  d.style.margin = '0';
+  d.style.border = '0';
+  d.innerHTML = '<summary>' + svg('chevron') +
+    ' <b>Alle ' + anzahl + ' Einträge ansehen</b>' +
+    '<span style="color:var(--text-3)">Zugeklappt, weil es sehr viele sind</span></summary>';
+  const platz = el('div','');
+  d.appendChild(platz);
+  panel.appendChild(d);
+  return platz;
 }
 
 function starteRegistryClean(b){

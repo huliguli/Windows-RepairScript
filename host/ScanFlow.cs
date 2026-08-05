@@ -195,14 +195,11 @@ namespace WartungsToolbox
             if (letzter == null || index < 0 || index >= letzter.Brocken.Count) return;
             string pfad = letzter.Brocken[index].Pfad;
             if (string.IsNullOrEmpty(pfad)) return;
-            try
-            {
-                // /select zeigt den Eintrag im uebergeordneten Ordner markiert an, statt
-                // ihn zu oeffnen. Bei einer 40-GB-Datei ist das der freundlichere Weg.
-                Process.Start(new ProcessStartInfo("explorer.exe", "/select,\"" + pfad + "\"")
-                { UseShellExecute = true });
-            }
-            catch (Exception ex) { AppLog.Warn("Explorer liess sich nicht oeffnen: " + ex.Message); }
+            // /select zeigt den Eintrag im uebergeordneten Ordner markiert an, statt ihn zu
+            // oeffnen. Bei einer 40-GB-Datei ist das der freundlichere Weg.
+            // Der Start laeuft ueber die Oberflaeche des Nutzers, damit der Explorer NICHT
+            // die Administratorrechte dieser App erbt.
+            Shell.OeffneImNutzerkontext("explorer.exe", "/select,\"" + pfad + "\"");
         }
 
         // ================================================================ Registrierung
@@ -366,8 +363,7 @@ namespace WartungsToolbox
             {
                 string ordner = RegistryScan.Sicherungsordner();
                 Directory.CreateDirectory(ordner);
-                Process.Start(new ProcessStartInfo("explorer.exe", "\"" + ordner + "\"")
-                { UseShellExecute = true });
+                Shell.OeffneImNutzerkontext("explorer.exe", "\"" + ordner + "\"");
             }
             catch (Exception ex) { AppLog.Warn("Sicherungsordner liess sich nicht oeffnen: " + ex.Message); }
         }
