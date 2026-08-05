@@ -239,13 +239,13 @@ namespace WartungsToolbox
             if (_shotPath != null)
             {
                 SendCatalog();
-                try { Post(new { type = "admin", on = IsElevated() }); } catch { }
+                SendAdmin();
                 if (_shotWaitMs > 1500) StartQuickGlance();
                 return;
             }
             SendCatalog();
             try { Post(new { type = "zoom", factor = _web.ZoomFactor }); } catch { }
-            try { Post(new { type = "admin", on = IsElevated() }); } catch { }
+            SendAdmin();
             CheckUpdatedMarker();   // nach einem Update: Erfolgsmeldung zeigen
             StartUpdateCheck();     // auf neue Version prüfen
             StartQuickGlance();     // sofort einen echten, lesenden Erstbefund zeigen
@@ -286,6 +286,35 @@ namespace WartungsToolbox
                 });
             }
             catch (Exception ex) { AppLog.Error("Katalog konnte nicht gesendet werden", ex); }
+        }
+
+        /// <summary>
+        /// Meldet Rechtelage UND Benutzerkonto an die Oberflaeche. Beides gehoert zusammen:
+        /// Wer die Rechte ueber ein fremdes Konto geholt hat, sieht ueberall das Profil
+        /// dieses Kontos statt sein eigenes.
+        /// </summary>
+        void SendAdmin()
+        {
+            string laeuftAls = "", angemeldet = "";
+            bool fremd = false;
+            try { fremd = Nutzerkontext.AnderesKontoAlsAngemeldet(out laeuftAls, out angemeldet); }
+            catch (Exception ex) { AppLog.Warn("Kontopruefung fehlgeschlagen: " + ex.Message); }
+
+            if (fremd)
+                AppLog.Info("Laeuft als '" + laeuftAls + "', angemeldet ist '" + angemeldet + "'.");
+
+            try
+            {
+                Post(new
+                {
+                    type = "admin",
+                    on = IsElevated(),
+                    fremdesKonto = fremd,
+                    laeuftAls = laeuftAls,
+                    angemeldet = angemeldet,
+                });
+            }
+            catch { }
         }
 
         static bool IsElevated()
@@ -762,19 +791,35 @@ namespace WartungsToolbox
                 // Die Batchdatei liegt im abgesicherten Update-Ordner, NICHT in %TEMP%:
                 // sie wird gleich mit Adminrechten ausgefuehrt.
                 string bat = Path.Combine(tmp, "ww_update.cmd");
+                string sicherung = Path.Combine(tmp, "vorher");
                 string content =
                     "@echo off\r\n" +
                     ":w\r\n" +
                     "tasklist /FI \"PID eq " + pid + "\" 2>nul | find \"" + pid + "\" >nul\r\n" +
                     "if not errorlevel 1 ( timeout /t 1 /nobreak >nul & goto w )\r\n" +
+                    // Erst die bisherige Fassung zur Seite legen. Ohne diesen Schritt gab es
+                    // keinen Rueckweg: Bricht das Kopieren mittendrin ab, blieb eine halb
+                    // ueberschriebene Installation stehen - neue Oberflaeche, alte Programmdatei
+                    // oder umgekehrt. Scheitert schon die Sicherung, wird gar nichts angefasst.
+                    "rmdir /s /q \"" + sicherung + "\" >nul 2>&1\r\n" +
+                    "robocopy \"" + appDir + "\" \"" + sicherung + "\" /E /NFL /NDL /NJH /NJS /R:1 /W:1 >nul\r\n" +
+                    "if errorlevel 8 (\r\n" +
+                    "  echo Die bisherige Fassung liess sich nicht sichern. Es wurde nichts veraendert.> \"" + Path.Combine(tmp, "fehler.txt") + "\"\r\n" +
+                    "  start \"\" \"" + appExe + "\"\r\n" +
+                    "  goto ende\r\n" +
+                    ")\r\n" +
                     "robocopy \"" + newDir + "\" \"" + appDir + "\" /E /NFL /NDL /NJH /NJS /R:3 /W:2 >nul\r\n" +
                     // Robocopy meldet alles unter 8 als Erfolg. Ist mehr passiert, wurde nicht
-                    // sauber kopiert - dann die alte Fassung weiterlaufen lassen statt eine
-                    // halb ueberschriebene zu starten.
+                    // sauber kopiert - dann die gesicherte Fassung zurueckholen, statt eine
+                    // halb ueberschriebene zu starten. /PURGE raeumt dabei weg, was der
+                    // abgebrochene Lauf bereits hineinkopiert hatte.
                     "if errorlevel 8 (\r\n" +
-                    "  echo Update fehlgeschlagen, die bisherige Fassung bleibt bestehen.> \"" + Path.Combine(tmp, "fehler.txt") + "\"\r\n" +
+                    "  robocopy \"" + sicherung + "\" \"" + appDir + "\" /E /PURGE /NFL /NDL /NJH /NJS /R:2 /W:2 >nul\r\n" +
+                    "  echo Update fehlgeschlagen, die bisherige Fassung wurde wiederhergestellt.> \"" + Path.Combine(tmp, "fehler.txt") + "\"\r\n" +
                     ")\r\n" +
                     "start \"\" \"" + appExe + "\"\r\n" +
+                    ":ende\r\n" +
+                    "rmdir /s /q \"" + sicherung + "\" >nul 2>&1\r\n" +
                     "rmdir /s /q \"" + Path.Combine(tmp, "new") + "\" >nul 2>&1\r\n" +
                     "del \"" + Path.Combine(tmp, "update.zip") + "\" >nul 2>&1\r\n" +
                     "del \"%~f0\" >nul 2>&1\r\n";
@@ -857,10 +902,29 @@ namespace WartungsToolbox
                 try { File.Delete(p); } catch { }
                 Version target = ParseVer(tag);
                 Version cur = typeof(ShellForm).Assembly.GetName().Version;
-                if (target != null && cur >= target && _web != null && _web.IsHandleCreated)
+                if (target == null || _web == null || !_web.IsHandleCreated) return;
+
+                if (cur >= target)
                 {
                     string ftag = tag;
                     try { _web.BeginInvoke((Action)delegate { Post(new { type = "updated", version = ftag }); }); }
+                    catch { }
+                }
+                else
+                {
+                    // Der Merker nennt eine neuere Fassung, als hier laeuft: der Tausch ist
+                    // schiefgegangen und die bisherige Fassung wurde wiederhergestellt.
+                    // Frueher blieb das voellig stumm - der Nutzer klickte auf
+                    // "Jetzt aktualisieren" und danach war scheinbar nichts passiert.
+                    AppLog.Warn("Update auf " + tag + " wurde nicht wirksam, es laeuft weiter " + cur + ".");
+                    string ftag = tag;
+                    try
+                    {
+                        _web.BeginInvoke((Action)delegate
+                        {
+                            Post(new { type = "updateFailedSilently", version = ftag });
+                        });
+                    }
                     catch { }
                 }
             }
@@ -988,7 +1052,13 @@ namespace WartungsToolbox
                 WriteZoom(z);
             }
             else if (type == "autostartList") Post(new { type = "autostart", items = Autostart.List() });
-            else if (type == "autostartSet") Autostart.SetEnabled(Str(m, "loc"), Str(m, "key"), ToBool(m, "enable"));
+            // Klappt das Umschalten nicht, bekommt die Oberflaeche die WAHRE Liste zurueck.
+            // Sonst zeigt der Schalter eine Aenderung, die es gar nicht gab.
+            else if (type == "autostartSet")
+            {
+                bool ok = Autostart.SetEnabled(Str(m, "loc"), Str(m, "key"), ToBool(m, "enable"));
+                if (!ok) Post(new { type = "autostart", items = Autostart.List(), fehlgeschlagen = true });
+            }
             else if (type == "historyList") Post(new { type = "history", items = History.List() });
             else if (type == "historyClear") { History.Clear(); Post(new { type = "history", items = History.List() }); }
             else if (type == "restoreList") StartRestoreList();

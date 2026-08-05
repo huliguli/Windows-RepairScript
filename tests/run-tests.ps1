@@ -446,6 +446,34 @@ if ($shellSrc -notmatch 'OeffneImNutzerkontext') {
 }
 Test-Result "Nichts wird mit den Adminrechten der App geoeffnet" ($hits.Count -eq 0) $hits
 
+Write-Host "`nDaten des Nutzers" -ForegroundColor Cyan
+
+# Der Verlauf wurde mit File.WriteAllText geschrieben: das kuerzt die Datei zuerst auf null.
+# Ein Absturz oder Stromausfall in diesem Moment hinterliess eine halbe Datei, und weil die
+# als JSON unlesbar ist, war der GESAMTE Verlauf still verloren. Die Probe stellt genau das
+# nach - in einem Wegwerf-Ordner, der echte Verlauf wird nicht angefasst.
+$hits = @()
+if (-not $csc -or -not $refDir) {
+    $hits += "Compiler oder Referenzassemblies nicht gefunden - Verlaufs-Probe uebersprungen"
+} else {
+    $exe = Join-Path $env:TEMP 'WW_HistoryProbe.exe'
+    $refs = @('mscorlib.dll','System.dll','System.Core.dll','System.Windows.Forms.dll',
+              'System.Web.Extensions.dll') | ForEach-Object { "/r:$($refDir.FullName)\$_" }
+    $bauArgs = @($csc.FullName,'/nologo','/nostdlib+','/target:exe','/platform:x64',
+                 "/out:$exe",'/codepage:65001','/langversion:latest') + $refs +
+               @((Join-Path $root 'src\History.cs'), (Join-Path $root 'src\AppLog.cs'),
+                 (Join-Path $root 'tests\HistoryProbe.cs'))
+    $bauOut = & dotnet @bauArgs 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        $hits += "Probe liess sich nicht uebersetzen: " + (($bauOut | Select-Object -First 2) -join ' | ')
+    } else {
+        & $exe
+        if ($LASTEXITCODE -ne 0) { $hits += "mindestens eine Teilpruefung des Verlaufs ist rot" }
+        Remove-Item $exe -ErrorAction SilentlyContinue
+    }
+}
+Test-Result "Verlauf ueberlebt einen Absturz beim Schreiben" ($hits.Count -eq 0) $hits
+
 Write-Host "`nFunktionsumfang" -ForegroundColor Cyan
 
 # Jeder Befehl, den der Host versteht, muss von der Oberflaeche auch ausloesbar sein.

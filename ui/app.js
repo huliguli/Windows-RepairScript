@@ -51,6 +51,9 @@ const S = {
   post: 'none',         // was nach dem letzten Lauf passieren soll
   selfStart: false,     // startet die App mit dem PC?
   admin: true,
+  fremdesKonto: false,  // laeuft unter einem anderen Konto als dem angemeldeten
+  laeuftAls: '',
+  angemeldet: '',
   version: '',
 };
 
@@ -156,6 +159,26 @@ function renderStart(){
   $('#admin-line').innerHTML = S.admin
     ? svg('shield') + '<span>Läuft mit Administratorrechten. Vor Änderungen legen wir einen Sicherungspunkt an.</span>'
     : svg('alert') + '<span>Ohne Administratorrechte. Prüfen geht, Reparieren nicht. Bitte starten Sie das Programm über die rechte Maustaste als Administrator.</span>';
+
+  kontoHinweis(box);
+}
+
+/* Läuft das Programm unter einem anderen Konto als der angemeldete Mensch?
+   Dann zeigen mehrere Ansichten dessen Profil statt seines eigenen. Das ist nicht
+   gefährlich, aber verwirrend, und Verwirrung ist bei dieser Zielgruppe teuer.
+   Deshalb steht es da, wo es auffällt, und nicht im Kleingedruckten. */
+function kontoHinweis(box){
+  if(!S.fremdesKonto || !box) return;
+  const k = el('div','catnote');
+  k.style.marginTop = '11px';
+  k.innerHTML = svg('alert') +
+    '<div><b>Sie arbeiten gerade unter dem Konto „' + esc(S.laeuftAls) + '“.</b><br>' +
+    'Angemeldet ist aber „' + esc(S.angemeldet) + '“. Weil das Programm Administratorrechte ' +
+    'braucht, läuft es unter dem Konto, dessen Kennwort eingegeben wurde. Alles, was zu ' +
+    '„Ihren“ Dateien und Programmen gehört, zeigen wir deshalb für „' + esc(S.laeuftAls) + '“: ' +
+    'Startprogramme, Verlauf, der belegte Speicherplatz und die Einträge der Registrierung.<br>' +
+    'Am PC selbst wird trotzdem alles richtig repariert.</div>';
+  box.appendChild(k);
 }
 
 function areaRow(c){
@@ -888,6 +911,9 @@ function onHost(m){
 
     case 'admin':
       S.admin = !!m.on;
+      S.fremdesKonto = !!m.fremdesKonto;
+      S.laeuftAls = m.laeuftAls || '';
+      S.angemeldet = m.angemeldet || '';
       renderStart();
       break;
 
@@ -1036,7 +1062,12 @@ function onHost(m){
     case 'restorePoints':renderRestore(m.items); break;
     case 'powerPlans':   renderPower(m.items); break;
     case 'bloatPackages':renderApps(m.items); break;
-    case 'autostart':    renderAutostart(m.items); break;
+    case 'autostart':
+      renderAutostart(m.items);
+      if(m.fehlgeschlagen) toast('Ließ sich nicht umstellen',
+        'Windows hat die Änderung nicht angenommen. Der Schalter steht wieder so, wie es ' +
+        'wirklich ist.', 'bad');
+      break;
     case 'selfstart':
       S.selfStart = !!m.on;
       { const i = $('#as-self'); if(i) i.checked = S.selfStart; }
@@ -1078,6 +1109,17 @@ function onHost(m){
     }
     case 'updated':
       toast('Aktualisiert', 'Das Programm läuft jetzt in der Fassung ' + m.version + '.', 'good');
+      break;
+
+    case 'updateFailedSilently':
+      // Ohne diese Meldung wäre für den Nutzer nach dem Klick auf „Jetzt aktualisieren“
+      // einfach nichts passiert, und er hätte keine Ahnung, warum.
+      infoModal('Die Aktualisierung wurde rückgängig gemacht',
+        'Beim Austauschen der Programmdateien ist etwas schiefgegangen, deshalb haben wir ' +
+        'die bisherige Fassung wiederhergestellt. Ihr PC hat davon keinen Schaden genommen ' +
+        'und das Programm läuft normal weiter.\n\n' +
+        'Sie können es später noch einmal versuchen. Klappt es wieder nicht, laden Sie die ' +
+        'Fassung ' + m.version + ' am besten von Hand herunter.', 'warn');
       break;
 
     case 'shutdownScheduled':

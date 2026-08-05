@@ -1,5 +1,36 @@
 # Changelog
 
+## [7.2.0] - 2026-08-05
+
+Die letzten offenen Punkte aus der großen Prüfung von v7.0. Nichts davon fällt im Alltag auf,
+solange alles gutgeht. Genau darum ging es: dass es auch dann stimmt, wenn etwas schiefläuft.
+
+### Sicherer
+
+- **Der Verlauf überlebt jetzt einen Absturz.** Bisher wurde die Verlaufsdatei beim
+  Schreiben zuerst geleert und dann neu gefüllt. Ging in genau diesem Moment der Strom aus
+  oder stürzte etwas ab, blieb eine halbe Datei zurück, die sich nicht mehr lesen ließ, und
+  der gesamte Verlauf war stillschweigend weg. Jetzt wird daneben geschrieben und erst am
+  Ende getauscht, und von der vorherigen Fassung bleibt eine Sicherungskopie liegen. Ist die
+  Hauptdatei beschädigt, wird sie benutzt.
+- **Ein misslungenes Update wird rückgängig gemacht.** Vor dem Austauschen der
+  Programmdateien legen wir die bisherige Fassung zur Seite. Bricht das Kopieren mittendrin
+  ab, wird sie zurückgeholt, statt eine halb ersetzte Installation zu starten. Lässt sich
+  die Sicherung nicht anlegen, wird gar nichts angefasst.
+- **Ein misslungenes Update sagt es Ihnen auch.** Vorher passierte nach dem Klick auf
+  „Jetzt aktualisieren“ scheinbar einfach nichts.
+- **Ein Schalter, der nichts bewirkt hat, springt zurück.** Ließ sich ein Startprogramm
+  nicht umschalten, zeigte die Liste die Änderung trotzdem an. Man war also überzeugt, das
+  Programm starte nicht mehr mit, während es weiter mitstartete.
+
+### Neu
+
+- **Das Programm sagt Ihnen, wenn es unter einem anderen Konto läuft.** Wer die
+  Administratorrechte über ein anderes Benutzerkonto holt, sieht ab da dessen Startprogramme,
+  dessen Verlauf, dessen Speicherplatz und dessen Registrierungs-Einträge, nicht die eigenen.
+  Das ist ungefährlich, aber verwirrend. Jetzt steht es auf dem Startbildschirm, mit beiden
+  Kontonamen. Am PC selbst wird trotzdem alles richtig repariert.
+
 ## [7.1.1] - 2026-08-05
 
 Zwei Nachbesserungen an den neuen Ansichten aus 7.1.0.

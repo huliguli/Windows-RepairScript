@@ -12,8 +12,17 @@ namespace WartungsToolbox
         static readonly object _lock = new object();
         const int Max = 200;
 
+        /// <summary>
+        /// Nur fuer die Probe in tests/: verlegt den Verlauf in einen Wegwerf-Ordner.
+        /// Ohne das muesste ein Test den echten Verlauf des Nutzers anfassen, und ein Test,
+        /// der die Daten kaputtmachen kann, die er schuetzen soll, ist keiner.
+        /// Im laufenden Programm bleibt das Feld immer null.
+        /// </summary>
+        internal static string PfadFuerProbe;
+
         static string FilePath()
         {
+            if (!string.IsNullOrEmpty(PfadFuerProbe)) return PfadFuerProbe;
             return Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "WindowsWartung", "history.json");
@@ -27,20 +36,36 @@ namespace WartungsToolbox
 
         static List<object> Load()
         {
-            List<object> list = new List<object>();
+            // Erst die richtige Datei, dann die Sicherungskopie. Ist die Hauptdatei kaputt
+            // (Absturz oder Stromausfall mitten im Schreiben), war der Verlauf frueher
+            // ersatzlos weg: der leere catch lieferte einfach eine leere Liste, und der
+            // naechste Eintrag hat den Rest ueberschrieben.
+            List<object> list = Lies(FilePath());
+            if (list == null) list = Lies(FilePath() + ".alt");
+            return list ?? new List<object>();
+        }
+
+        /// <summary>Liest eine Verlaufsdatei. null heisst "nicht lesbar", eine leere Liste "leer".</summary>
+        static List<object> Lies(string pfad)
+        {
             try
             {
-                string p = FilePath();
-                if (!File.Exists(p)) return list;
-                string json = File.ReadAllText(p);
-                if (string.IsNullOrEmpty(json)) return list;
+                if (!File.Exists(pfad)) return null;
+                string json = File.ReadAllText(pfad);
+                if (string.IsNullOrEmpty(json)) return null;
                 JavaScriptSerializer js = new JavaScriptSerializer();
                 object[] arr = js.DeserializeObject(json) as object[];
-                if (arr != null)
-                    foreach (object o in arr) list.Add(o);
+                if (arr == null) return null;
+
+                List<object> list = new List<object>();
+                foreach (object o in arr) list.Add(o);
+                return list;
             }
-            catch { }
-            return list;
+            catch (Exception ex)
+            {
+                AppLog.Warn("Verlauf '" + Path.GetFileName(pfad) + "' ist nicht lesbar: " + ex.Message);
+                return null;
+            }
         }
 
         // Einen Lauf protokollieren. kind ist der UI-Kind-String ("good"/"bad"/"warn"/"norm").
@@ -62,12 +87,38 @@ namespace WartungsToolbox
                     list.Insert(0, entry);
                     while (list.Count > Max) list.RemoveAt(list.Count - 1);
 
-                    string dir = Path.GetDirectoryName(FilePath());
-                    Directory.CreateDirectory(dir);
                     JavaScriptSerializer js = new JavaScriptSerializer();
-                    File.WriteAllText(FilePath(), js.Serialize(list));
+                    SchreibeSicher(js.Serialize(list));
                 }
-                catch { }
+                catch (Exception ex) { AppLog.Warn("Verlauf konnte nicht geschrieben werden: " + ex.Message); }
+            }
+        }
+
+        /// <summary>
+        /// Schreibt den Verlauf so, dass es keinen Zwischenzustand gibt.
+        ///
+        /// File.WriteAllText kuerzt die Zieldatei zuerst auf null und schreibt dann. Wer in
+        /// genau diesem Moment den Strom verliert, hat hinterher eine halbe Datei - und die
+        /// ist als JSON unlesbar, also war der gesamte Verlauf verloren. Stattdessen wird
+        /// daneben geschrieben und erst dann getauscht: File.Replace ist auf NTFS unteilbar
+        /// und legt die vorherige Fassung als .alt daneben.
+        /// </summary>
+        static void SchreibeSicher(string json)
+        {
+            string ziel = FilePath();
+            Directory.CreateDirectory(Path.GetDirectoryName(ziel));
+            string neu = ziel + ".neu";
+            string alt = ziel + ".alt";
+
+            File.WriteAllText(neu, json);
+            if (File.Exists(ziel))
+            {
+                File.Replace(neu, ziel, alt, true);
+            }
+            else
+            {
+                // Erster Lauf: es gibt noch nichts zu ersetzen.
+                File.Move(neu, ziel);
             }
         }
 
@@ -75,8 +126,13 @@ namespace WartungsToolbox
         {
             lock (_lock)
             {
-                try { string p = FilePath(); if (File.Exists(p)) File.Delete(p); }
-                catch { }
+                // Auch die Sicherungskopie muss weg: sonst taucht der geleerte Verlauf
+                // beim naechsten unsauberen Schreibvorgang wieder auf.
+                foreach (string p in new[] { FilePath(), FilePath() + ".alt", FilePath() + ".neu" })
+                {
+                    try { if (File.Exists(p)) File.Delete(p); }
+                    catch (Exception ex) { AppLog.Warn("Verlauf '" + Path.GetFileName(p) + "' liess sich nicht loeschen: " + ex.Message); }
+                }
             }
         }
     }

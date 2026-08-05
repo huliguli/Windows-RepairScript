@@ -88,7 +88,16 @@ namespace WartungsToolbox
             catch { return true; }
         }
 
-        public static void SetEnabled(string loc, string key, bool enabled)
+        /// <summary>
+        /// Schaltet ein Startprogramm an oder aus. Rueckgabe false heisst: es hat NICHT
+        /// geklappt.
+        ///
+        /// Frueher verschwand ein Fehlschlag hier spurlos. Die Oberflaeche zeigte den
+        /// Schalter danach trotzdem in der neuen Stellung - der Nutzer war also ueberzeugt,
+        /// das Programm starte nicht mehr mit, waehrend es weiterhin mitstartete. Eine
+        /// stille Falschaussage ist schlimmer als eine sichtbare Fehlermeldung.
+        /// </summary>
+        public static bool SetEnabled(string loc, string key, bool enabled)
         {
             RegistryKey root; string approved;
             switch (loc)
@@ -98,7 +107,7 @@ namespace WartungsToolbox
                 case "hklm_run32":     root = Registry.LocalMachine; approved = ApprovedRun32;  break;
                 case "startup_user":   root = Registry.CurrentUser;  approved = ApprovedFolder; break;
                 case "startup_common": root = Registry.LocalMachine; approved = ApprovedFolder; break;
-                default: return;
+                default: return false;
             }
             try
             {
@@ -114,8 +123,13 @@ namespace WartungsToolbox
                     }
                     k.SetValue(key, b, RegistryValueKind.Binary);
                 }
+                return true;
             }
-            catch { }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Startprogramm '" + key + "' liess sich nicht umschalten: " + ex.Message);
+                return false;
+            }
         }
     }
 }
