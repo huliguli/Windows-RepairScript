@@ -1223,12 +1223,29 @@ namespace WartungsToolbox
             return steps;
         }
 
+        // Grenzen der Wartezeit: 5 Sekunden bis 24 Stunden. Die Oberflaeche bietet 1 Minute
+        // bis 24 Stunden an; die 5 Sekunden hier sind der aeltere, weitere Rahmen.
+        const int MinDelay = 5;
+        const int MaxDelay = 86400;
+
         void ReadPost(Dictionary<string, object> m)
         {
             _pendingPost = Str(m, "post");
             if (_pendingPost != "shutdown" && _pendingPost != "restart") _pendingPost = "none";
+
             int d = ToInt(m, "delay");
-            _pendingDelay = (d >= 5 && d <= 86400) ? d : 60;
+            if (d >= MinDelay && d <= MaxDelay)
+            {
+                _pendingDelay = d;
+            }
+            else
+            {
+                // Nicht stillschweigend korrigieren: Wer eine Wartezeit waehlt und eine
+                // andere bekommt, soll das wenigstens im Protokoll wiederfinden.
+                if (_pendingPost != "none")
+                    AppLog.Warn("Wartezeit " + d + "s liegt ausserhalb von " + MinDelay + "-" + MaxDelay
+                                + "s, es gilt " + _pendingDelay + "s.");
+            }
         }
 
         void ScheduleShutdown()
