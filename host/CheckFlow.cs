@@ -75,6 +75,7 @@ namespace WartungsToolbox
             catch (Exception ex)
             {
                 AppLog.Error("Pruefung fehlgeschlagen", ex);
+                _pendingPost = "none";   // nach einem Fehlschlag nichts abschalten
                 UiPost(new { type = "flowError",
                              message = "Die Prüfung konnte nicht abgeschlossen werden. Bitte starten Sie den PC neu und versuchen Sie es noch einmal." });
             }
@@ -145,6 +146,7 @@ namespace WartungsToolbox
             catch (Exception ex)
             {
                 AppLog.Error("Reparatur fehlgeschlagen", ex);
+                _pendingPost = "none";   // nach einem Fehlschlag nichts abschalten
                 UiPost(new { type = "flowError",
                              message = "Die Reparatur konnte nicht abgeschlossen werden. Bitte starten Sie den PC neu und versuchen Sie es noch einmal." });
             }
@@ -160,7 +162,35 @@ namespace WartungsToolbox
         void FlowCancelled()
         {
             AppLog.Info("Ablauf abgebrochen.");
+            // Wer abbricht, will erst recht nicht, dass der PC gleich ausgeht.
+            _pendingPost = "none";
             UiPost(new { type = "flowCancelled" });
+        }
+
+        /// <summary>
+        /// Fuehrt aus, was der Nutzer fuer "wenn alles fertig ist" gewaehlt hat.
+        ///
+        /// Bis 7.2.0 gab es das nur im Werkzeugkasten: Wer den Hauptweg benutzt hat - also
+        /// genau die Zielgruppe -, konnte den PC nicht nach der Reparatur abschalten
+        /// lassen, obwohl der Lauf zehn Minuten und laenger dauert. Ausgerechnet dort ist
+        /// der Wunsch am groessten.
+        ///
+        /// Der Countdown laeuft im Oberflaechen-Thread an, weil er dem Nutzer ein Banner
+        /// zum Abbrechen anzeigt.
+        /// </summary>
+        void NachlaufStarten()
+        {
+            if (_pendingPost == "none") return;
+            if (_web == null || !_web.IsHandleCreated) return;
+            try
+            {
+                _web.BeginInvoke((Action)delegate
+                {
+                    ScheduleShutdown();
+                    _pendingPost = "none";
+                });
+            }
+            catch (Exception ex) { AppLog.Warn("Nachlauf liess sich nicht starten: " + ex.Message); }
         }
 
         public void CancelFlow()
@@ -351,6 +381,8 @@ namespace WartungsToolbox
                             new System.Globalization.CultureInfo("de-DE")),
                 checks = all.Select(c => c.ToJson()).ToArray(),
             });
+
+            NachlaufStarten();
         }
 
         /// <summary>Der aktuelle Befund fuer die Startansicht (ohne neue Pruefung).</summary>

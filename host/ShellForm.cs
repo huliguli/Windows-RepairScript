@@ -1022,6 +1022,10 @@ namespace WartungsToolbox
             // Ein Editor mit Administratorrechten koennte jede Datei des Systems
             // ueberschreiben - deshalb ueber die Oberflaeche des Nutzers oeffnen.
             else if (type == "openLog") Shell.OeffneImNutzerkontext(AppLog.PfadZumOeffnen());
+            // Der Wunsch "danach herunterfahren" laesst sich auch NACH dem Start noch
+            // aendern - genau dann faellt die Entscheidung ja, wenn der Lauf schon
+            // begonnen hat und man weggehen will.
+            else if (type == "setPost") ReadPost(m);
             else if (type == "restartNow") { _pendingPost = "restart"; _pendingDelay = 60; ScheduleShutdown(); _pendingPost = "none"; }
             // --- Speicher- und Registrierungs-Suche ----------------------------
             else if (type == "storageScan") StartStorageScan();
@@ -1186,7 +1190,10 @@ namespace WartungsToolbox
         bool OnScheduledRunRequested()
         {
             if (_runner == null) return false;
-            if (_runner.Running)
+            // FlowRunning gehoert mit in die Pruefung: Waehrend des Hauptwegs laufen DISM und
+            // SFC bereits: startet die geplante Wartung jetzt zusaetzlich, laufen zwei
+            // DISM-Instanzen gleichzeitig auf dasselbe Windows-Abbild.
+            if (_runner.Running || FlowRunning)
             {
                 // Laufende Aktion nicht stoeren - die Wartung startet direkt danach.
                 if (!_autoRunPending)

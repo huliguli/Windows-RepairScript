@@ -49,6 +49,7 @@ const S = {
   result: null,
   queue: [],            // vorgemerkte Aktionen (Werkzeugkasten)
   post: 'none',         // was nach dem letzten Lauf passieren soll
+  delay: 60,            // Sekunden zum Abbrechen, bevor es passiert
   selfStart: false,     // startet die App mit dem PC?
   admin: true,
   fremdesKonto: false,  // laeuft unter einem anderen Konto als dem angemeldeten
@@ -241,8 +242,12 @@ function startFlow(mode){
       ? 'Sie können abbrechen. Was bereits repariert wurde, bleibt erhalten.'
       : 'Sie können jederzeit abbrechen. Die Prüfung verändert nichts an Ihrem PC.') + '</span>';
 
+  renderPostChoice();
   show('run');
   send({ type: mode === 'fix' ? 'startFix' : 'startCheck' });
+  // Der Hauptweg schickt seine Wahl getrennt: startCheck/startFix tragen sie nicht mit,
+  // und der Nutzer darf sie waehrend des Laufs noch aendern.
+  send({ type:'setPost', post:S.post, delay:S.delay });
 }
 
 function setBar(pct){
@@ -531,9 +536,22 @@ function renderQueueBar(){
   bar.appendChild(go);
 }
 
-/* „Wenn alles fertig ist“: gilt für Einzelaktionen wie für die Liste. */
+/* „Wenn alles fertig ist“: gilt für den Hauptweg, für Einzelaktionen und für die Liste.
+
+   Sie steht bewusst AUCH auf dem Ablauf-Bildschirm. Dort trifft man die Entscheidung
+   nämlich wirklich: Der Lauf hat begonnen, dauert eine Viertelstunde, und jetzt will man
+   weggehen. Vorher, auf dem Startbildschirm, hätte sie nur die eine große Schaltfläche
+   zugestellt.
+
+   Die Wartezeit ist keine Schikane: Sie ist das Zeitfenster, in dem sich das Herunterfahren
+   über das Banner noch abbrechen lässt. Deshalb heißt sie auch so. */
+const POST_ZEITEN = [[60,'1 Minute'],[300,'5 Minuten'],[900,'15 Minuten'],[1800,'30 Minuten']];
+
 function renderPostChoice(){
-  const box = $('#post-choice');
+  ['#post-choice','#run-post'].forEach(sel => zeichnePostWahl($(sel)));
+}
+
+function zeichnePostWahl(box){
   if(!box) return;
   const wahl = [['none','Nichts weiter','check'],['shutdown','PC herunterfahren','power'],
                 ['restart','PC neu starten','refresh']];
@@ -544,10 +562,34 @@ function renderPostChoice(){
     const b = el('button','tab', svg(w[2]) + w[1]);
     b.type = 'button';
     b.setAttribute('aria-selected', String(S.post === w[0]));
-    b.onclick = () => { S.post = w[0]; renderPostChoice(); };
+    b.onclick = () => { S.post = w[0]; postGeaendert(); };
     seg.appendChild(b);
   });
   box.appendChild(seg);
+
+  if(S.post === 'none') return;
+
+  const zeile = el('span','post-label');
+  zeile.textContent = 'Vorher noch Zeit zum Abbrechen:';
+  box.appendChild(zeile);
+
+  const seg2 = el('div','tabs');
+  seg2.style.margin = '0';
+  POST_ZEITEN.forEach(z => {
+    const b = el('button','tab', z[1]);
+    b.type = 'button';
+    b.setAttribute('aria-selected', String(S.delay === z[0]));
+    b.onclick = () => { S.delay = z[0]; postGeaendert(); };
+    seg2.appendChild(b);
+  });
+  box.appendChild(seg2);
+}
+
+/* Läuft gerade etwas, muss der Host die neue Wahl sofort erfahren: Bei einem Lauf, der
+   schon gestartet ist, kommt sie sonst nirgends mehr an. */
+function postGeaendert(){
+  renderPostChoice();
+  if(S.screen === 'run') send({type:'setPost', post:S.post, delay:S.delay});
 }
 
 function startQueue(){
@@ -570,7 +612,7 @@ function startQueue(){
     renderSteps();
     setBar(-1);
     show('run');
-    send({ type:'runQueue', ids:ids, restore:true, post:S.post, delay:60 });
+    send({ type:'runQueue', ids:ids, restore:true, post:S.post, delay:S.delay });
     S.queue = [];
     renderQueueBar();
   };
@@ -615,7 +657,7 @@ function runAction(a){
 
   const start = () => {
     prepareSingleRun(a);
-    send({ type:'run', id:a.id, restore:true, post:S.post, delay:60 });
+    send({ type:'run', id:a.id, restore:true, post:S.post, delay:S.delay });
   };
 
   if(a.danger || SET.confirm){
@@ -630,6 +672,7 @@ function runAction(a){
 
 /* Bereitet den Ablauf-Bildschirm für eine einzelne Aktion vor. */
 function prepareSingleRun(a){
+  renderPostChoice();
   $('#console-body').innerHTML = '';
   S.mode = 'action';
   S.steps = [a.title];
@@ -1123,7 +1166,7 @@ function onHost(m){
       break;
 
     case 'shutdownScheduled':
-      $('#sb-text').textContent = 'Der PC wird in ' + m.delay + ' Sekunden ' +
+      $('#sb-text').textContent = 'Der PC wird in ' + dauer(m.delay) + ' ' +
         (m.mode === 'restart' ? 'neu gestartet' : 'heruntergefahren') + '.';
       $('#shutdown-bar').classList.add('show','alarm');
       break;
@@ -1372,6 +1415,14 @@ function renderSchedule(m){
   };
 }
 const DAY = {MON:'Montag',TUE:'Dienstag',WED:'Mittwoch',THU:'Donnerstag',FRI:'Freitag',SAT:'Samstag',SUN:'Sonntag'};
+
+/* Wartezeiten in Alltagssprache. „in 1800 Sekunden“ rechnet niemand im Kopf um. */
+function dauer(sekunden){
+  const s = Number(sekunden) || 0;
+  if(s < 90) return s + ' Sekunden';
+  const m = Math.round(s / 60);
+  return m === 1 ? 'einer Minute' : m + ' Minuten';
+}
 
 /* Größen in Alltagsschreibweise. Die Einzelposten bringt der Host schon fertig mit;
    für Summen, die erst hier entstehen, wird dieselbe Staffelung nachgebildet. */

@@ -1,5 +1,32 @@
 # Changelog
 
+## [7.3.0] - 2026-08-05
+
+### Neu
+
+- **„Wenn alles fertig ist“ gibt es jetzt auch bei der Prüfung und der Reparatur.** Bisher
+  stand die Wahl nur im Werkzeugkasten. Ausgerechnet beim Hauptweg fehlte sie, also genau
+  dort, wo ein Lauf zehn Minuten und länger dauert und man derweil weggehen möchte.
+- **Sie können jetzt selbst bestimmen, wie lange vorher gewartet wird:** 1, 5, 15 oder 30
+  Minuten. Bisher war es immer eine Minute, ohne dass sich daran etwas ändern ließ. Diese
+  Zeit ist Ihr Fenster zum Abbrechen: Solange läuft unten das Banner, mit dem Sie das
+  Herunterfahren noch stoppen können.
+- **Die Wahl lässt sich noch während des Laufs treffen.** Sie müssen sich also nicht vorher
+  entscheiden, sondern erst dann, wenn Sie tatsächlich gehen wollen.
+
+### Geändert
+
+- **Abgebrochen heißt abgebrochen.** Brechen Sie einen Lauf ab oder geht dabei etwas schief,
+  wird der PC nicht mehr heruntergefahren, auch wenn Sie es vorher so gewählt hatten.
+- **Das Banner sagt die Zeit in Minuten.** Vorher stand dort „Der PC wird in 900 Sekunden
+  heruntergefahren“.
+
+### Behoben
+
+- **Die automatische Wartung startet nicht mehr mitten in einen laufenden Prüfvorgang
+  hinein.** Bisher wurde nur auf Einzelaktionen Rücksicht genommen. Fiel der Termin während
+  einer Prüfung oder Reparatur, liefen deren Windows-Werkzeuge doppelt.
+
 ## [7.2.0] - 2026-08-05
 
 Die letzten offenen Punkte aus der großen Prüfung von v7.0. Nichts davon fällt im Alltag auf,
