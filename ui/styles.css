@@ -371,6 +371,9 @@ details.disc > summary b{font-weight:600;color:var(--text)}
 
 .post-choice{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px}
 .post-label{font-size:13px;color:var(--text-2)}
+/* Freie Eingabe der Wartezeit neben den Vorgaben. */
+.post-frei{display:inline-flex;align-items:center;gap:8px}
+.post-min{width:80px;text-align:right}
 
 /* Das Pluszeichen ist dauerhaft sichtbar, nicht erst bei Maus-Hover: wer mit
    Tastatur oder Finger bedient, faende es sonst nie. */

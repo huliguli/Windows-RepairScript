@@ -544,8 +544,15 @@ function renderQueueBar(){
    zugestellt.
 
    Die Wartezeit ist keine Schikane: Sie ist das Zeitfenster, in dem sich das Herunterfahren
-   über das Banner noch abbrechen lässt. Deshalb heißt sie auch so. */
+   über das Banner noch abbrechen lässt. Deshalb heißt sie auch so.
+
+   Die vier Vorgaben sind nur Abkürzungen für das Übliche. Daneben steht ein freies Feld:
+   Wer 45 Minuten braucht, weil der Kaffee so lange dauert, soll 45 eintragen dürfen und
+   nicht auf 30 oder 60 gedrängt werden. Grenzen sind 1 Minute bis 24 Stunden, das ist der
+   Bereich, den Windows selbst annimmt. */
 const POST_ZEITEN = [[60,'1 Minute'],[300,'5 Minuten'],[900,'15 Minuten'],[1800,'30 Minuten']];
+const POST_MIN_MINUTEN = 1;
+const POST_MAX_MINUTEN = 1440;
 
 function renderPostChoice(){
   ['#post-choice','#run-post'].forEach(sel => zeichnePostWahl($(sel)));
@@ -578,11 +585,58 @@ function zeichnePostWahl(box){
   POST_ZEITEN.forEach(z => {
     const b = el('button','tab', z[1]);
     b.type = 'button';
+    b.dataset.sek = String(z[0]);
     b.setAttribute('aria-selected', String(S.delay === z[0]));
     b.onclick = () => { S.delay = z[0]; postGeaendert(); };
     seg2.appendChild(b);
   });
   box.appendChild(seg2);
+
+  // Freie Eingabe daneben. Sie wird beim Tippen NICHT neu aufgebaut, sonst verliert das
+  // Feld nach jedem Zeichen den Fokus; aktualisiert werden nur die Vorgabe-Schaltflächen.
+  const frei = el('span','post-frei');
+  frei.appendChild(el('span','post-label','oder'));
+
+  const feld = el('input','post-min');
+  feld.type = 'number';
+  feld.min = String(POST_MIN_MINUTEN);
+  feld.max = String(POST_MAX_MINUTEN);
+  feld.step = '1';
+  feld.value = String(Math.round(S.delay / 60));
+  feld.setAttribute('aria-label', 'Wartezeit in Minuten, ' + POST_MIN_MINUTEN + ' bis ' + POST_MAX_MINUTEN);
+
+  const uebernimm = (minuten) => {
+    S.delay = minuten * 60;
+    markiereZeiten();
+    if(S.screen === 'run') send({type:'setPost', post:S.post, delay:S.delay});
+  };
+
+  // Beim Tippen zählt nur, was schon gültig ist. Zwischenstände wie die leere Eingabe
+  // werden übergangen, damit nichts flackert.
+  feld.oninput = () => {
+    const m = parseInt(feld.value, 10);
+    if(m >= POST_MIN_MINUTEN && m <= POST_MAX_MINUTEN) uebernimm(m);
+  };
+
+  // Beim Verlassen wird der GETIPPTE Wert in die Grenzen gezogen, nicht der letzte
+  // zufällig gültige Zwischenstand genommen. Wer 9999 tippt, hätte sonst 999 bekommen,
+  // weil beim Tippen kurz "999" dastand. Über dem Maximum gibt es das Maximum.
+  feld.onchange = () => {
+    let m = parseInt(feld.value, 10);
+    if(!isFinite(m)) m = Math.round(S.delay / 60);
+    m = Math.min(POST_MAX_MINUTEN, Math.max(POST_MIN_MINUTEN, m));
+    feld.value = String(m);
+    uebernimm(m);
+  };
+
+  frei.appendChild(feld);
+  frei.appendChild(el('span','post-label','Minuten'));
+  box.appendChild(frei);
+}
+
+/* Nur die Auswahl-Markierung der Vorgaben auffrischen, ohne das Eingabefeld anzufassen. */
+function markiereZeiten(){
+  $$('[data-sek]').forEach(b => b.setAttribute('aria-selected', String(S.delay === Number(b.dataset.sek))));
 }
 
 /* Läuft gerade etwas, muss der Host die neue Wahl sofort erfahren: Bei einem Lauf, der

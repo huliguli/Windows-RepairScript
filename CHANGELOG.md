@@ -1,5 +1,18 @@
 # Changelog
 
+## [7.3.1] - 2026-08-05
+
+### Neu
+
+- **Die Wartezeit lässt sich jetzt frei eintragen.** Die vier Vorgaben aus 7.3.0 sind nur
+  Abkürzungen für das Übliche; wer 45 Minuten braucht, trägt daneben einfach 45 ein.
+  Möglich ist alles von einer Minute bis zu 24 Stunden. Vorgaben und Eingabefeld halten
+  sich gegenseitig aktuell: Klicken Sie eine Vorgabe an, steht sie im Feld, und tippen Sie
+  einen eigenen Wert, ist keine Vorgabe mehr hervorgehoben.
+- Tragen Sie mehr ein als möglich ist, bekommen Sie beim Verlassen des Feldes den
+  Höchstwert, tragen Sie weniger ein, den Mindestwert. Im Feld steht danach genau das, was
+  auch wirklich gilt.
+
 ## [7.3.0] - 2026-08-05
 
 ### Neu
