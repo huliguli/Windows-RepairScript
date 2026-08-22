@@ -1,5 +1,33 @@
 # Changelog
 
+## [7.3.2] - 2026-08-22
+
+### Behoben
+
+- **Der Bildschirm bleibt nicht mehr stehen, wenn die geplante Wartung dazwischenkommt.**
+  Lief die Wartung nach Zeitplan, während Sie „Beheben“ oder „PC prüfen“ angeklickt haben,
+  passierte Folgendes: Die App schaltete auf den Ablauf-Bildschirm um, verwarf Ihren Klick
+  aber stillschweigend, weil sie schon beschäftigt war. Der Fortschrittsbalken wurde noch
+  von der Wartung weitergezogen und blieb dann für immer stehen – bei uns bei 70 %, über
+  fünf Stunden. In Wahrheit war längst alles fertig. Jetzt sagt Ihnen die App, was gerade
+  läuft, und bringt Sie zurück zum Start.
+- **Die Fertigmeldung räumt den Bildschirm jetzt in jedem Fall auf.** Bisher tat sie das
+  nur bei Werkzeugen, die Sie selbst gestartet hatten. Startete die App einen Lauf von
+  sich aus, stand unter „Technische Details“ schon „Fertig“, während oben noch der
+  Fortschritt lief.
+- **„Abbrechen“ funktioniert wieder in jeder Lage.** Zwei Fälle machten den Knopf
+  wirkungslos: wenn im Hintergrund gar nichts mehr lief, und nach jedem fertigen Werkzeug –
+  danach blätterte er nur noch weiter, ohne etwas abzubrechen.
+- **Kein Schritt kann den Lauf mehr endlos festhalten.** Bleibt ein Windows-Werkzeug
+  hängen, wird es nach 45 Minuten beendet und der Lauf geht weiter. Vorher konnte ein
+  einziger solcher Schritt alles Weitere blockieren.
+
+### Gut zu wissen
+
+- Die geplante Wartung schreibt jetzt Anfang und Ende ins Protokoll. Vorher lief sie zehn
+  Minuten lang über Ihr System, ohne dort eine Spur zu hinterlassen – beim Nachsehen sah
+  es aus, als sei nichts geschehen.
+
 ## [7.3.1] - 2026-08-05
 
 ### Neu

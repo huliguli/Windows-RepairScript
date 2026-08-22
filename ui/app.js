@@ -98,6 +98,10 @@ $$('details.disc > summary > span[aria-hidden]').forEach(s => s.innerHTML = svg(
 const SCREENS = { start:'#s-start', run:'#s-run', result:'#s-result', tools:'#s-tools', sub:'#s-sub' };
 function show(name){
   S.screen = name;
+  // Ein fertiger Lauf lässt den Abbrechen-Knopf als „Zurück“ zurück. Wer den
+  // Ablauf-Bildschirm über einen anderen Weg verlässt, nimmt diesen Zustand sonst mit
+  // in den nächsten Lauf - und drückt dort „Zurück“, wo „Abbrechen“ stehen müsste.
+  if(name === 'run'){ $('#btn-cancel').textContent = 'Abbrechen'; $('#btn-cancel').onclick = cancelClick; }
   Object.keys(SCREENS).forEach(k => $(SCREENS[k]).classList.toggle('on', k === name));
   const box = $(SCREENS[name]);
   const h = box.querySelector('h1');
@@ -280,13 +284,19 @@ function renderSteps(){
   });
 }
 
-$('#btn-cancel').onclick = () => {
+/* Nach einem fertigen Lauf wird derselbe Knopf vorübergehend zu „Zurück“. Vorher wurde
+   dabei nur die Beschriftung zurückgesetzt, nicht der Klick-Griff: Ab dem ersten fertigen
+   Werkzeug führte „Abbrechen“ danach lautlos in den Werkzeugkasten, OHNE etwas
+   abzubrechen - der Lauf lief unsichtbar weiter. Deshalb hat der Griff jetzt einen Namen,
+   auf den zurückgeschaltet werden kann. */
+function cancelClick(){
   confirmModal('Vorgang abbrechen?',
     S.mode === 'fix'
       ? 'Was bereits repariert wurde, bleibt erhalten. Den Rest können Sie später erneut starten.'
       : 'Die Prüfung wird beendet. Ihrem PC passiert dabei nichts.',
     'Abbrechen', () => { send({type:'cancel'}); });
-};
+}
+$('#btn-cancel').onclick = cancelClick;
 
 /* =====================================================================
    Ergebnis
@@ -1062,6 +1072,21 @@ function onHost(m){
       go('start');
       break;
 
+    case 'flowBusy':
+      // Der Host hat den Start abgelehnt, weil schon etwas anderes läuft. Ohne diese
+      // Antwort blieb die Oberfläche auf dem Ablauf-Bildschirm hängen, den startFlow()
+      // bereits angezeigt hatte - mit einem Balken, der nie wieder etwas tat.
+      infoModal('Das geht gerade noch nicht',
+        m.message + '\n\nBitte warten Sie, bis das fertig ist, und starten Sie es dann ' +
+        'erneut. Was gerade läuft, sehen Sie unten unter „Technische Details“.', 'warn');
+      go('start');
+      break;
+
+    case 'flowIdle':
+      // „Abbrechen“ auf einem Bildschirm, hinter dem gar nichts mehr lief.
+      go('start');
+      break;
+
     // --- Einzelaktionen aus dem Werkzeugkasten ---
     case 'log':
       appendLine(m.text, m.kind);
@@ -1072,16 +1097,32 @@ function onHost(m){
       break;
 
     case 'state':
-      if(!m.running && S.mode === 'action'){ S.stepIndex = 2; renderSteps(); }
+      // Gleiche Begründung wie bei 'done': maßgeblich ist der sichtbare Bildschirm,
+      // nicht der Modus.
+      if(!m.running && S.screen === 'run'){ S.stepIndex = (S.steps.length || 1) + 1; renderSteps(); }
       break;
 
     case 'done':
-      if(S.mode === 'action'){
-        S.stepIndex = 2; renderSteps(); setBar(100);
+      // Dieser Zweig hing früher an S.mode === 'action'. Startet der Host einen Lauf von
+      // sich aus (geplante Wartung aus dem Zeitplan), steht S.mode aber noch auf 'check'
+      // oder 'fix' - die Fertigmeldung lief damit ins Leere, und der Ablauf-Bildschirm
+      // blieb für immer stehen, während im Protokollfenster darunter schon „Fertig in
+      // 615,3s“ stand. Genau das ist am 22.08.2026 passiert. Maßgeblich ist deshalb, ob
+      // der Ablauf-Bildschirm sichtbar ist, nicht wer den Lauf gestartet hat.
+      if(S.screen === 'run'){
+        S.stepIndex = (S.steps.length || 1) + 1;
+        renderSteps();
+        setBar(100);
         $('#run-status').textContent = m.message;
         $('#run-foot').innerHTML = svg(m.kind === 'good' ? 'check' : 'alert') + '<span>' + esc(m.message) + '</span>';
+        // Ein Lauf aus dem Werkzeugkasten führt dorthin zurück, alles andere zum Start.
+        const ziel = S.mode === 'action' ? 'tools' : 'start';
         $('#btn-cancel').textContent = 'Zurück';
-        $('#btn-cancel').onclick = () => { $('#btn-cancel').textContent = 'Abbrechen'; go('tools'); };
+        $('#btn-cancel').onclick = () => {
+          $('#btn-cancel').textContent = 'Abbrechen';
+          $('#btn-cancel').onclick = cancelClick;
+          go(ziel);
+        };
       }
       if(SET.notify) toast(m.title, m.message, m.kind);
       break;

@@ -30,14 +30,55 @@ namespace WartungsToolbox
 
         bool FlowRunning { get { return _flowThread != null && _flowThread.IsAlive; } }
 
+        /// <summary>
+        /// Laeuft irgendwo schon etwas? Der Hauptweg, die beiden Suchlaeufe und der
+        /// CommandRunner (Werkzeugkasten, Warteschlange, geplante Wartung) greifen auf
+        /// denselben PC zu - zwei DISM-Instanzen auf demselben Windows-Abbild waeren fatal.
+        ///
+        /// ScanRunning gehoert mit hinein: sonst kann der Nutzer waehrend eines laufenden
+        /// Aufraeumens hierher wechseln, dort "Abbrechen" druecken - und das Abbrechen
+        /// trifft ueber CancelScan den Suchlauf, den er gar nicht gemeint hat.
+        /// </summary>
+        bool EtwasLaeuft
+        {
+            get { return FlowRunning || ScanRunning || (_runner != null && _runner.Running); }
+        }
+
+        /// <summary>
+        /// Meldet true, wenn jetzt NICHT gestartet werden darf - und sagt der Oberflaeche
+        /// dann auch, warum.
+        ///
+        /// Hier stand frueher ein blosses "return". Das war der Fehler vom 22.08.2026:
+        /// startFlow() in app.js zeigt den Ablauf-Bildschirm, BEVOR es startCheck/startFix
+        /// sendet. Lief in dem Moment die geplante Wartung, verwarf der Host den Klick
+        /// lautlos - kein Protokolleintrag, keine Meldung. Der Nutzer sass danach vor
+        /// einem Fortschrittsbalken, den die Wartung noch auf 70 Prozent hochzog und der
+        /// dort fuer immer stehenblieb. Eine stille Ablehnung ist bei einer Oberflaeche,
+        /// die vorher umschaltet, immer eine Sackgasse.
+        /// </summary>
+        bool StartAbgelehnt(string was)
+        {
+            string grund;
+            if (FlowRunning)
+                grund = "Es läuft bereits eine Prüfung oder Reparatur.";
+            else if (ScanRunning)
+                grund = "Es wird gerade nach Speicherfressern oder ungültigen Einträgen gesucht.";
+            else if (_runner != null && _runner.Running)
+                grund = "Gerade läuft: " +
+                        (string.IsNullOrEmpty(_runner.Title) ? "eine andere Aufgabe" : _runner.Title) + ".";
+            else
+                return false;
+
+            AppLog.Info(was + " nicht gestartet: " + grund);
+            UiPost(new { type = "flowBusy", message = grund });
+            return true;
+        }
+
         // ---------------------------------------------------------------- Pruefen
 
         void StartCheck()
         {
-            // ScanRunning gehoert mit in die Sperre: sonst kann der Nutzer waehrend eines
-            // laufenden Aufraeumens hierher wechseln, dort "Abbrechen" druecken - und das
-            // Abbrechen trifft ueber CancelScan den Suchlauf, den er gar nicht gemeint hat.
-            if (FlowRunning || ScanRunning || (_runner != null && _runner.Running)) return;
+            if (StartAbgelehnt("Prüfung")) return;
             _flowCancel = false;
             _filesState = Diagnostics.Unknown;
             _filesSummary = null;
@@ -85,7 +126,7 @@ namespace WartungsToolbox
 
         void StartFix()
         {
-            if (FlowRunning || ScanRunning || (_runner != null && _runner.Running)) return;
+            if (StartAbgelehnt("Reparatur")) return;
             _flowCancel = false;
 
             AppLog.Info("Reparatur gestartet.");
@@ -199,6 +240,18 @@ namespace WartungsToolbox
             _flowCancel = true;
             int pid = _flowPid;
             if (pid > 0) Shell.KillTree(pid);
+        }
+
+        /// <summary>
+        /// „Abbrechen“ gedrueckt, obwohl gar nichts (mehr) lief. Alle drei Abbrecher
+        /// (_runner.Cancel, CancelFlow, CancelScan) steigen in dem Fall still aus - der
+        /// Knopf war damit tot, und wer auf dem Ablauf-Bildschirm festhing, kam ohne
+        /// Neustart der App nicht mehr weg. Jetzt kommt immer eine Antwort zurueck.
+        /// </summary>
+        void FlowIdle()
+        {
+            AppLog.Info("Abbrechen gedrückt, es lief nichts mehr - Oberfläche zurückgesetzt.");
+            UiPost(new { type = "flowIdle" });
         }
 
         volatile int _flowPid;

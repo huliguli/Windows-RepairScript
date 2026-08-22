@@ -35,6 +35,22 @@ namespace WartungsToolbox
 
         public bool Running { get; private set; }
 
+        /// <summary>
+        /// Titel des gerade laufenden Auftrags ("Geplante Wartung", ein Werkzeugname, ...).
+        /// Der Hauptweg nennt ihn dem Nutzer, wenn er einen Start ablehnen muss: "es laeuft
+        /// gerade etwas" ohne zu sagen WAS ist eine Auskunft, mit der niemand etwas anfangen
+        /// kann - schon gar nicht bei einem Lauf, den der Zeitplan von selbst gestartet hat.
+        /// </summary>
+        public string Title { get; private set; }
+
+        // Zeitgrenze je Schritt, dieselbe wie im AutoRunner. Ohne sie haelt ein einziger
+        // haengender Befehl den ganzen Lauf fuer immer fest: ReadWithProgress blockiert in
+        // rdr.Read(), und WaitForExit() ohne Argument wartet zusaetzlich darauf, dass die
+        // Ausgabe-Leser das Dateiende sehen - was ein ueberlebender Enkelprozess (DISM
+        // startet DismHost.exe) beliebig lange verhindern kann. Der Nutzer saehe dann einen
+        // Balken, der bei irgendeiner Prozentzahl stehenbleibt, und keine Zeile im Protokoll.
+        const int StepTimeoutMs = 45 * 60 * 1000;
+
         public CommandRunner(Control ui, Action<string, LogKind> log, Action<bool> onState,
                              Action<string, LogKind, string, double> onComplete, Action<int> onProgress)
         {
@@ -86,6 +102,7 @@ namespace WartungsToolbox
         {
             if (Running) return;
             Running = true;
+            Title = overallTitle;
             _cancel = false;
             _onState(true);
 
@@ -126,6 +143,7 @@ namespace WartungsToolbox
                 Log("", LogKind.Normal);
 
                 Running = false;
+                Title = null;
                 _current = null;
                 string ftitle = overallTitle;
                 if (_ui != null && _ui.IsHandleCreated)
@@ -192,9 +210,30 @@ namespace WartungsToolbox
                     _current = proc;
                     proc.Start();
                     proc.BeginErrorReadLine();
-                    if (s.Progress) ReadWithProgress(proc);
-                    else proc.BeginOutputReadLine();
-                    proc.WaitForExit();
+
+                    // Der Wachhund beendet den Schritt samt Kindern (taskkill /T erwischt
+                    // auch DismHost.exe, das DISM hinterlaesst). Erst dadurch sieht der
+                    // Leser sein Dateiende und WaitForExit kehrt ueberhaupt zurueck.
+                    // System.Threading.Timer voll ausgeschrieben: System.Windows.Forms
+                    // bringt einen gleichnamigen Typ mit, beide sind hier eingebunden.
+                    using (var wachhund = new System.Threading.Timer(delegate
+                    {
+                        try
+                        {
+                            if (proc.HasExited) return;
+                            AppLog.Warn("Zeitgrenze erreicht, Schritt wird beendet: " + s.File + " " + s.Args);
+                            Log("   Zeitgrenze von " + (StepTimeoutMs / 60000) +
+                                " Minuten erreicht - dieser Schritt wurde beendet.", LogKind.Bad);
+                            KillTree(proc.Id);
+                        }
+                        catch { }
+                    }, null, StepTimeoutMs, System.Threading.Timeout.Infinite))
+                    {
+                        if (s.Progress) ReadWithProgress(proc);
+                        else proc.BeginOutputReadLine();
+                        proc.WaitForExit();
+                    }
+
                     int code = proc.ExitCode;
                     _current = null;
 

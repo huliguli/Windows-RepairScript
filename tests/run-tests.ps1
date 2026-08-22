@@ -518,6 +518,81 @@ if ($cancelZweig.Success) {
 }
 Test-Result "Abbrechen stoppt Ablauf UND Einzelaktion" ($hits.Count -eq 0) $hits
 
+# Die Gegenrichtung des Tests darueber - und die wichtigere. Jede Nachricht, die der Host
+# an die Oberflaeche schickt, muss dort auch einen Zweig haben. Fehlt er, passiert schlicht
+# nichts. Hat die Oberflaeche vorher schon auf einen Wartebildschirm umgeschaltet, haengt
+# sie dort fuer immer.
+#
+# Real passiert am 22.08.2026: 'done' wurde nur im Werkzeugkasten-Modus ausgewertet. Die
+# geplante Wartung lief in der offenen App, meldete sich nach 615 s ordnungsgemaess fertig -
+# und der Ablauf-Bildschirm blieb bei 70 Prozent stehen, fuenfeinhalb Stunden lang.
+$hostAll = ($csFiles | ForEach-Object { [IO.File]::ReadAllText($_.FullName, [Text.Encoding]::UTF8) }) -join "`n"
+$nachrichten = [regex]::Matches($hostAll, 'type\s=\s"([a-zA-Z]+)"') |
+               ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
+$hits = @()
+foreach ($n in $nachrichten) {
+    if ($jsText2 -notmatch ("case\s+'" + $n + "'")) {
+        $hits += "Der Host sendet '$n' - ui\app.js hat dafuer keinen case-Zweig"
+    }
+}
+Test-Result "Jede Host-Nachricht wird in der Oberflaeche behandelt ($($nachrichten.Count) Nachrichten)" ($hits.Count -eq 0) $hits
+
+# Der Hauptweg darf einen Start nie stumm verwerfen. startFlow() in app.js zeigt den
+# Ablauf-Bildschirm, BEVOR es startCheck/startFix sendet - ein blosses "return" im Host
+# laesst den Nutzer vor einem Balken sitzen, der sich nie wieder bewegt.
+$flowText = [IO.File]::ReadAllText((Join-Path $root 'host\CheckFlow.cs'), [Text.Encoding]::UTF8)
+$hits = @()
+if ($flowText -match 'if \(FlowRunning \|\| ScanRunning[^\r\n]*\) return;') {
+    $hits += "Ein Start wird noch stumm mit 'return' verworfen"
+}
+foreach ($m in @('StartCheck', 'StartFix')) {
+    if ($flowText -notmatch ($m + '\(\)\s*\r?\n\s*\{\s*\r?\n\s*if \(StartAbgelehnt')) {
+        $hits += "$m ruft StartAbgelehnt nicht als erstes auf"
+    }
+}
+if ($flowText -notmatch 'type = "flowBusy"') { $hits += "Der Host sendet nie 'flowBusy'" }
+Test-Result "Der Hauptweg lehnt einen Start nie stumm ab" ($hits.Count -eq 0) $hits
+
+# Abbrechen muss in JEDEM Zustand wirken. Zwei Wege, auf denen der Knopf tot war:
+# 1. Es lief nichts mehr - alle drei Abbrecher stiegen still aus, keine Antwort.
+# 2. Nach einem fertigen Werkzeug wurde nur die Beschriftung von "Zurueck" auf
+#    "Abbrechen" zurueckgesetzt, nicht der Klick-Griff. Der Knopf blaetterte danach nur
+#    noch in den Werkzeugkasten, waehrend DISM unsichtbar weiterlief.
+$hits = @()
+if ($shellText3 -notmatch 'if \(!lief\) FlowIdle\(\)') { $hits += "'cancel' antwortet nicht, wenn nichts mehr lief" }
+if ($jsText2 -notmatch "case 'flowIdle'")             { $hits += "ui\app.js behandelt 'flowIdle' nicht" }
+if (([regex]::Matches($jsText2, 'onclick = cancelClick')).Count -lt 2) {
+    $hits += "Der Klick-Griff des Abbrechen-Knopfes wird nirgends zurueckgesetzt"
+}
+Test-Result "Abbrechen bleibt in jedem Zustand wirksam" ($hits.Count -eq 0) $hits
+
+# Der eigentliche Fehler vom 22.08.2026 war KEIN fehlender case-Zweig - 'done' gab es.
+# Er war nur an S.mode === 'action' gebunden. Startet der Host einen Lauf von sich aus
+# (geplante Wartung aus dem Zeitplan), steht S.mode aber noch auf 'check' oder 'fix', und
+# die Fertigmeldung lief ins Leere. Massgeblich ist der sichtbare Bildschirm.
+$hits = @()
+$doneZweig = [regex]::Match($jsText2, "case 'done':(?s).{0,1400}?break;")
+if (-not $doneZweig.Success) { $hits += "Der 'done'-Zweig ist nicht auffindbar" }
+else {
+    if ($doneZweig.Value -notmatch "S\.screen === 'run'")      { $hits += "'done' fragt nicht den sichtbaren Bildschirm ab" }
+    if ($doneZweig.Value -match "if\(S\.mode === 'action'\)\{") { $hits += "'done' haengt wieder am Modus statt am Bildschirm" }
+}
+$stateZweig = [regex]::Match($jsText2, "case 'state':(?s).{0,600}?break;")
+if ($stateZweig.Success -and $stateZweig.Value -notmatch "S\.screen === 'run'") {
+    $hits += "'state' fragt nicht den sichtbaren Bildschirm ab"
+}
+Test-Result "Die Fertigmeldung raeumt den Ablauf-Bildschirm" ($hits.Count -eq 0) $hits
+
+# Ein einzelner haengender Befehl darf den Lauf nicht fuer immer festhalten. WaitForExit()
+# ohne Argument wartet zusaetzlich auf das Dateiende der Ausgabe - das kann ein
+# ueberlebender Enkelprozess (DISM startet DismHost.exe) beliebig lange verhindern.
+$runnerText = [IO.File]::ReadAllText((Join-Path $root 'src\CommandRunner.cs'), [Text.Encoding]::UTF8)
+$hits = @()
+if ($runnerText -notmatch 'StepTimeoutMs')            { $hits += "Der CommandRunner kennt keine Zeitgrenze je Schritt" }
+if ($runnerText -notmatch 'System\.Threading\.Timer') { $hits += "Es gibt keinen Wachhund, der den Schritt beendet" }
+if ($runnerText -notmatch 'KillTree\(proc\.Id\)')     { $hits += "Der Wachhund beendet den Prozessbaum nicht" }
+Test-Result "Jeder Schritt im CommandRunner hat eine Zeitgrenze" ($hits.Count -eq 0) $hits
+
 Write-Host ""
 Write-Host ("Ergebnis: {0} bestanden, {1} fehlgeschlagen" -f $passed, $failed) -ForegroundColor $(if ($failed) { 'Red' } else { 'Green' })
 if ($failed) { exit 1 }

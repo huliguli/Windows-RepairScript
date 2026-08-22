@@ -1038,7 +1038,7 @@ namespace WartungsToolbox
             // Stoppt alles drei: den Pruef-/Reparaturablauf, eine Einzelaktion aus dem
             // Werkzeugkasten und einen Suchlauf. Die laufen in verschiedenen Threads,
             // ein Aufruf allein liesse die jeweils anderen weiterlaufen.
-            else if (type == "cancel") { if (_runner != null) _runner.Cancel(); CancelFlow(); CancelScan(); }
+            else if (type == "cancel") { bool lief = EtwasLaeuft; if (_runner != null) _runner.Cancel(); CancelFlow(); CancelScan(); if (!lief) FlowIdle(); }
             else if (type == "cancelShutdown") CancelShutdown();
             else if (type == "ready") OnReady();
             else if (type == "openUpdate") OpenUpdate();
@@ -1160,6 +1160,7 @@ namespace WartungsToolbox
         void OnProgress(int pct) { Post(new { type = "progress", percent = pct }); }
         void Done(string title, LogKind k, string message, double seconds)
         {
+            AppLog.Info("Lauf beendet: " + title + " - " + message + ".");
             History.Add(title, KindStr(k), message, seconds);
             Post(new { type = "done", title = title, kind = KindStr(k), message = message });
 
@@ -1211,6 +1212,11 @@ namespace WartungsToolbox
         {
             List<Job> jobs = new List<Job>();
             jobs.Add(new Job { Title = "Geplante Wartung", Steps = Catalog.AutoSet(Scheduler.ReadActions()) });
+            // Ins Protokoll, nicht nur ins Fenster: Bei der Fehlersuche am 22.08.2026 war
+            // genau diese Luecke die teuerste. Die geplante Wartung war zehn Minuten lang
+            // mit DISM und SFC ueber das System gelaufen, ohne in app.log eine einzige
+            // Zeile zu hinterlassen - im Protokoll sah es aus, als sei nichts geschehen.
+            AppLog.Info("Geplante Wartung gestartet (Zeitplan, in der offenen App).");
             Log("●  Geplante Wartung wird jetzt automatisch ausgeführt (Zeitplan).", LogKind.Warn);
             _runner.RunJobs("Geplante Wartung", jobs);
         }
