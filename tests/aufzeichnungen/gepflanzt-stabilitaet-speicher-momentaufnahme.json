@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "aufgezeichnet": "2026-09-11T16:00:00Z",
+  "erhoeht": false,
+  "sprache": { "lcid": 1031, "mui": ["de-DE"] },
+  "leistung": {
+    "ramGesamtKB": 16630000,
+    "ramFreiKB": 310000,
+    "verfuegbarMB": [300],
+    "commitPct": [85],
+    "auslagerungMB": 2432,
+    "prozesse": [
+      { "pid": 4321, "name": "speicherfresser", "pfad": "C:\\Program Files\\Fresser\\speicherfresser.exe", "arbeitsspeicherBytes": 9126805504, "cpuPct": 12.5 }
+    ]
+  },
+  "fehlerliste": [
+    { "quelle": "perf.speicher", "art": "zeit", "text": "gepflanzt: nur eine Messung" }
+  ]
+}

@@ -1,0 +1,110 @@
+{
+  "schema": 1,
+  "aufgezeichnet": "2026-09-11T16:00:00Z",
+  "erhoeht": true,
+  "sprache": {
+    "lcid": 1031,
+    "mui": [
+      "de-DE"
+    ]
+  },
+  "windows": {
+    "caption": "Microsoft Windows 11 Pro",
+    "edition": "Professional",
+    "build": 26200,
+    "ubr": 9445,
+    "displayVersion": "25H2",
+    "produktTyp": 1,
+    "x64": true
+  },
+  "hardware": {
+    "uefi": true,
+    "systemTyp": 1
+  },
+  "ereignisse": {
+    "beginnSystem": "2026-05-01T00:00:00Z",
+    "beginnApplication": "2026-05-01T00:00:00Z",
+    "tage": 90,
+    "eintraege": []
+  },
+  "sicherheit": {
+    "defender": {
+      "dienstAn": true,
+      "echtzeit": true,
+      "verhalten": true,
+      "signaturAlterTage": 0,
+      "schnellscanAlterTage": 2,
+      "vollscanAlterTage": 20,
+      "tamper": true,
+      "modus": "Normal",
+      "ausschluesseSichtbar": false,
+      "ausschlussPfade": [],
+      "ausschlussProzesse": [],
+      "ausschlussEndungen": [],
+      "funde": []
+    },
+    "drittAv": [],
+    "firewall": [
+      {
+        "profil": 1,
+        "an": true,
+        "eingehend": 0
+      },
+      {
+        "profil": 2,
+        "an": true,
+        "eingehend": 0
+      },
+      {
+        "profil": 4,
+        "an": true,
+        "eingehend": 0
+      }
+    ],
+    "enableLua": 1,
+    "consentAdmin": 5,
+    "secureDesktop": 1,
+    "smartScreen": "Warn",
+    "secureBoot": true,
+    "tpmVorhanden": true,
+    "tpmVersion": 2,
+    "konten": [
+      {
+        "name": "Administrator",
+        "rid": 500,
+        "deaktiviert": true,
+        "kennwortNoetig": true,
+        "admin": true,
+        "microsoftKonto": null
+      },
+      {
+        "name": "Gast",
+        "rid": 501,
+        "deaktiviert": true,
+        "kennwortNoetig": false,
+        "admin": false,
+        "microsoftKonto": null
+      },
+      {
+        "name": "KONTO1001",
+        "rid": 1001,
+        "deaktiviert": false,
+        "kennwortNoetig": true,
+        "admin": true,
+        "microsoftKonto": null
+      }
+    ],
+    "rdpAn": false,
+    "rdpNla": true,
+    "smb1Client": 2,
+    "smb1Server": 2,
+    "werDeaktiviert": false
+  },
+  "fehlerliste": [
+    {
+      "quelle": "wmi.defender.exclusions",
+      "art": "zeit",
+      "text": "WMI-Abfrage überschritt 5000 ms: root\\Microsoft\\Windows\\Defender / SELECT * FROM MSFT_MpPreference"
+    }
+  ]
+}

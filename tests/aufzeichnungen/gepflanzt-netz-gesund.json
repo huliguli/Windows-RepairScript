@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "aufgezeichnet": "2026-09-11T16:00:00Z",
+  "erhoeht": false,
+  "sprache": { "lcid": 1031 },
+  "netz": {
+    "adapter": [
+      { "name": "Ethernet", "beschreibung": "Beispiel Gigabit-Netzwerkkarte", "pnpId": "PCI\\VEN_0000&DEV_0001\\1", "index": 8,
+        "opStatus": 1, "medien": 1, "empfangBitS": 1000000000, "physisch": true, "virtuell": false,
+        "treiberVersion": "1.0.0.0", "treiberDatum": "2025-09-03T00:00:00Z", "dhcp": true },
+      { "name": "WLAN", "beschreibung": "Beispiel WLAN-Karte", "pnpId": "PCI\\VEN_0000&DEV_0002\\1", "index": 7,
+        "opStatus": 2, "medien": 2, "physisch": true, "virtuell": false, "dhcp": true },
+      { "name": "vEthernet (Default Switch)", "beschreibung": "Hyper-V Virtual Ethernet Adapter", "index": 34,
+        "opStatus": 1, "medien": 1, "empfangBitS": 10000000000, "physisch": false, "virtuell": true, "dhcp": false }
+    ],
+    "ipAdressen": [
+      { "adapterIndex": 8, "adresse": "192.168.1.20", "familie": 2, "herkunft": 3, "zustand": 4 },
+      { "adapterIndex": 8, "adresse": "fe80::1:2:3:4%8", "familie": 23, "herkunft": 2, "zustand": 4 },
+      { "adapterIndex": 34, "adresse": "172.27.32.1", "familie": 2, "herkunft": 1, "zustand": 4 },
+      { "adapterIndex": 7, "adresse": "169.254.98.5", "familie": 2, "herkunft": 2, "zustand": 1 },
+      { "adapterIndex": 1, "adresse": "127.0.0.1", "familie": 2, "herkunft": 2, "zustand": 4 }
+    ],
+    "gateways": ["192.168.1.1", "fe80::1"],
+    "dns": [
+      { "adapterIndex": 8, "familie": 2, "server": ["192.168.1.1"], "statisch": false, "dhcpServer": ["192.168.1.1"] }
+    ],
+    "profile": [ { "name": "Netzwerk", "kategorie": 0, "ipv4": 4, "ipv6": 4 } ],
+    "proxy": { "winInetAktiv": false, "autoDetect": true, "winHttpTyp": 1 },
+    "hosts": [
+      { "ip": "127.0.0.1", "host": "host.docker.internal" }
+    ],
+    "sonden": { "gateway": true, "dns": true, "ncsi": true, "ncsiInhaltStimmt": true, "tcp443": true, "dauerMs": 410 }
+  }
+}

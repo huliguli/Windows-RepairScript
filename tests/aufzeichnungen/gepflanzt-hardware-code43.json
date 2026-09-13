@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "aufgezeichnet": "2026-09-11T16:00:00Z",
+  "erhoeht": false,
+  "sprache": { "lcid": 1031, "mui": ["de-DE"] },
+  "windows": { "caption": "Microsoft Windows 11 Pro", "edition": "Professional", "build": 26200, "ubr": 9445, "displayVersion": "25H2", "produktTyp": 1, "x64": true },
+  "hardware": { "hersteller": "Testhersteller", "modell": "Testmodell", "systemTyp": 1, "uefi": true, "gehaeuseTypen": [3] },
+  "geraete": [
+    {
+      "instanzId": "USB\\VID_046D&PID_C52B\\5&2A1B3C4D&0&3",
+      "klasseGuid": "{36fc9e60-c465-11cf-8056-444553540000}",
+      "klasse": "USB",
+      "name": "USB-Verbundgerät",
+      "present": true,
+      "problemCode": 43,
+      "problemStatus": 3221225473,
+      "devNodeStatus": 25165824,
+      "parent": "USB\\ROOT_HUB30\\4&1D2E3F4A&0&0",
+      "treiberVersion": "10.0.26100.1",
+      "treiberDatum": "2006-06-21T00:00:00Z",
+      "treiberAnbieter": "Microsoft",
+      "treiberInf": "usb.inf"
+    },
+    {
+      "instanzId": "PCI\\VEN_8086&DEV_125C&SUBSYS_88731043&REV_04\\4&3B2C1D0E&0&00E4",
+      "klasseGuid": "{4d36e972-e325-11ce-bfc1-08002be10318}",
+      "klasse": "Net",
+      "name": "Intel(R) Ethernet Controller I226-V",
+      "present": true,
+      "problemCode": 10,
+      "problemStatus": 3221225473,
+      "devNodeStatus": 25165824,
+      "parent": "PCI\\VEN_1022&DEV_14DD&SUBSYS_88771043&REV_00\\3&11583659&0&51",
+      "treiberVersion": "2.1.4.3",
+      "treiberDatum": "2025-01-15T00:00:00Z",
+      "treiberAnbieter": "Intel",
+      "treiberInf": "oem42.inf"
+    },
+    { "instanzId": "USB\\ROOT_HUB30\\4&1D2E3F4A&0&0", "klasseGuid": "{36fc9e60-c465-11cf-8056-444553540000}", "klasse": "USB", "name": "USB-Root-Hub (USB 3.0)", "present": true, "problemCode": 0 },
+    { "instanzId": "PCI\\VEN_10DE&DEV_2684&SUBSYS_88E61043&REV_A1\\4&285F7309&0&000C", "klasseGuid": "{4d36e968-e325-11ce-bfc1-08002be10318}", "klasse": "Display", "name": "NVIDIA GeForce RTX 4090", "present": true, "problemCode": 0 },
+    { "instanzId": "ACPI\\PNP0B00\\4&11544EA4&0", "klasseGuid": "{4d36e97d-e325-11ce-bfc1-08002be10318}", "klasse": "System", "name": "System CMOS/Echtzeituhr", "present": true, "problemCode": 0 }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "aufgezeichnet": "2026-09-11T16:00:00Z",
+  "erhoeht": false,
+  "sprache": { "lcid": 1031, "mui": ["de-DE"] },
+  "geraete": [
+    { "instanzId": "USB\\VID_05AC&PID_12A8&MI_00\\SERIENNUMMER", "klasse": "WPD", "name": "Apple iPhone", "present": false, "problemCode": 0 }
+  ],
+  "ereignisse": {
+    "beginnSystem": "2026-06-01T00:00:00Z",
+    "beginnApplication": "2026-05-28T00:00:00Z",
+    "tage": 90,
+    "eintraege": [
+      { "log": "System", "anbieter": "Microsoft-Windows-Kernel-PnP", "id": 219, "level": 3, "zeit": "2026-09-01T10:00:00Z", "felder": { "DriverNameLength": "34", "DriverName": "USB\\VID_05AC&PID_12A8&MI_00\\SERIENNUMMER", "Status": "3221226341", "FailureNameLength": "14", "FailureName": "\\Driver\\WudfRd", "Version": "0" } },
+      { "log": "System", "anbieter": "Microsoft-Windows-Kernel-PnP", "id": 219, "level": 3, "zeit": "2026-09-04T10:00:00Z", "felder": { "DriverNameLength": "34", "DriverName": "USB\\VID_05AC&PID_12A8&MI_00\\SERIENNUMMER", "Status": "3221226341", "FailureNameLength": "14", "FailureName": "\\Driver\\WudfRd", "Version": "0" } },
+      { "log": "System", "anbieter": "Microsoft-Windows-Kernel-PnP", "id": 219, "level": 3, "zeit": "2026-09-08T10:00:00Z", "felder": { "DriverNameLength": "34", "DriverName": "USB\\VID_05AC&PID_12A8&MI_00\\SERIENNUMMER", "Status": "3221226341", "FailureNameLength": "14", "FailureName": "\\Driver\\WudfRd", "Version": "0" } },
+      { "log": "System", "anbieter": "Microsoft-Windows-Kernel-PnP", "id": 219, "level": 3, "zeit": "2026-09-02T10:00:00Z", "felder": { "DriverNameLength": "30", "DriverName": "USB\\VID_1234&PID_5678\\SERIENNUMMER", "Status": "3221226341", "FailureNameLength": "14", "FailureName": "\\Driver\\WudfRd", "Version": "0" } },
+      { "log": "System", "anbieter": "Microsoft-Windows-Kernel-PnP", "id": 219, "level": 3, "zeit": "2026-09-06T10:00:00Z", "felder": { "DriverNameLength": "30", "DriverName": "USB\\VID_1234&PID_5678\\SERIENNUMMER", "Status": "3221226341", "FailureNameLength": "14", "FailureName": "\\Driver\\WudfRd", "Version": "0" } },
+      { "log": "System", "anbieter": "Microsoft-Windows-Kernel-PnP", "id": 219, "level": 3, "zeit": "2026-07-20T10:00:00Z", "felder": { "DriverNameLength": "30", "DriverName": "USB\\VID_1234&PID_5678\\SERIENNUMMER", "Status": "3221226341", "FailureNameLength": "14", "FailureName": "\\Driver\\WudfRd", "Version": "0" } }
+    ]
+  }
+}

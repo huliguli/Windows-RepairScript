@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "aufgezeichnet": "2026-09-11T16:00:00Z",
+  "erhoeht": false,
+  "sprache": { "lcid": 1031, "mui": ["de-DE"] },
+  "hardware": { "uefi": true, "gehaeuseTypen": [3] },
+  "geraete": [],
+  "fehlerliste": [
+    { "quelle": "wmi.pnp", "art": "zeit", "text": "WMI-Abfrage ueberschritt 15000 ms: root\\cimv2 / SELECT DeviceID,ClassGuid,PNPClass,Name,Present,ConfigManagerErrorCode FROM Win32_PnPEntity" },
+    { "quelle": "registry.currentversion", "art": "ausnahme", "text": "InvalidOperationException: CurrentBuild nicht lesbar" }
+  ]
+}

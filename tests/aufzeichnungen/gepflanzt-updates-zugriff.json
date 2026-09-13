@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "aufgezeichnet": "2026-09-11T16:00:00Z",
+  "erhoeht": false,
+  "sprache": {
+    "lcid": 1031
+  },
+  "windowsUpdate": {
+    "verlauf": [],
+    "verborgen": [],
+    "ausstehend": [],
+    "fehlschlaegeLog": [],
+    "erfolgeLog": [],
+    "dienste": {}
+  },
+  "fehlerliste": [
+    {
+      "quelle": "com.windowsupdate.verlauf",
+      "art": "zugriff",
+      "text": "Zugriff verweigert (0x80070005)"
+    },
+    {
+      "quelle": "com.windowsupdate.suche.ausstehend",
+      "art": "zugriff",
+      "text": "Zugriff verweigert (0x80070005)"
+    },
+    {
+      "quelle": "com.windowsupdate.suche.verborgen",
+      "art": "zugriff",
+      "text": "Zugriff verweigert (0x80070005)"
+    },
+    {
+      "quelle": "com.windowsupdate.autoupdate",
+      "art": "zugriff",
+      "text": "Zugriff verweigert (0x80070005)"
+    },
+    {
+      "quelle": "registry.windowsupdate.neustart",
+      "art": "zugriff",
+      "text": "Zugriff verweigert"
+    },
+    {
+      "quelle": "wmi.service.windowsupdate",
+      "art": "zeit",
+      "text": "WMI-Abfrage überschritt 5000 ms"
+    },
+    {
+      "quelle": "wmi.qfe",
+      "art": "zeit",
+      "text": "WMI-Abfrage überschritt 15000 ms"
+    },
+    {
+      "quelle": "log.system.windowsupdateclient",
+      "art": "zugriff",
+      "text": "Protokoll gesperrt"
+    }
+  ]
+}

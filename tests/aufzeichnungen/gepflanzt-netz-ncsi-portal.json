@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "aufgezeichnet": "2026-09-11T16:00:00Z",
+  "erhoeht": false,
+  "sprache": { "lcid": 1031 },
+  "netz": {
+    "adapter": [
+      { "name": "WLAN", "beschreibung": "Beispiel WLAN-Karte", "pnpId": "PCI\\VEN_0000&DEV_0002\\1", "index": 7,
+        "opStatus": 1, "medien": 1, "empfangBitS": 866700000, "physisch": true, "virtuell": false, "dhcp": true }
+    ],
+    "ipAdressen": [
+      { "adapterIndex": 7, "adresse": "10.20.30.40", "familie": 2, "herkunft": 3, "zustand": 4 }
+    ],
+    "gateways": ["10.20.30.1"],
+    "dns": [
+      { "adapterIndex": 7, "familie": 2, "server": ["10.20.30.1"], "statisch": false, "dhcpServer": ["10.20.30.1"] }
+    ],
+    "profile": [ { "name": "Hotel-WLAN", "kategorie": 0, "ipv4": 3, "ipv6": 1 } ],
+    "proxy": { "winInetAktiv": false, "autoDetect": true, "winHttpTyp": 1 },
+    "hosts": [],
+    "sonden": { "gateway": true, "dns": true, "ncsi": true, "ncsiInhaltStimmt": false, "tcp443": true, "dauerMs": 900 }
+  }
+}

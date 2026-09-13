@@ -71,10 +71,15 @@ Push-Location $root
 try {
     # /nostdlib+ schaltet die implizite mscorlib des SDK ab; die 4.8-Variante wird
     # unten explizit referenziert. Ohne das mischt Roslyn die .NET-Core-Basisklassen dazu.
+    # System.Management, System.ServiceProcess, System.Runtime.Serialization und System.Xml sind
+    # seit v8 fuer Kern und Sammler dabei: WMI, Dienste und JSON laufen im eigenen Prozess,
+    # ohne powershell.exe. Alle vier liegen in den net48-Referenzassemblies.
     $frameworkRefs = @(
         'mscorlib.dll', 'System.dll', 'System.Core.dll', 'System.Drawing.dll',
         'System.Windows.Forms.dll', 'System.Web.Extensions.dll',
-        'System.IO.Compression.dll', 'System.IO.Compression.FileSystem.dll'
+        'System.IO.Compression.dll', 'System.IO.Compression.FileSystem.dll',
+        'System.Management.dll', 'System.ServiceProcess.dll',
+        'System.Runtime.Serialization.dll', 'System.Xml.dll'
     ) | ForEach-Object { "/reference:$ref\$_" }
 
     $localRefs = @(
@@ -82,14 +87,21 @@ try {
         '/reference:libs\Microsoft.Web.WebView2.WinForms.dll'
     )
 
+    # kern\ und sammler\ kommen als Ordner - eine neue Regel- oder Quellendatei ist automatisch
+    # dabei. AufzeichnenCli.cs hat einen eigenen Main und gehoert nur zur Kommandozeile
+    # (tools\bau-kern.ps1). src\Diagnostics.cs ist seit v8 durch kern\Regeln ersetzt.
     $sources = @(
         'host\Program.cs','host\ShellForm.cs','host\CheckFlow.cs','host\ScanFlow.cs','host\Autostart.cs',
         'src\ActionCatalog.cs','src\MaintenanceAction.cs','src\CommandRunner.cs',
         'src\NativeMethods.cs','src\History.cs','src\RestorePoints.cs','src\PowerPlans.cs',
         'src\AppxCleaner.cs','src\Explain.cs','src\Scheduler.cs','src\AutoRunner.cs',
         'src\AppLog.cs','src\Shell.cs','src\UpdateTrust.cs','src\StorageScan.cs','src\RegistryScan.cs',
-        'src\Nutzerkontext.cs','src\Diagnostics.cs','src\AssemblyInfo.cs'
+        'src\Nutzerkontext.cs','src\AssemblyInfo.cs'
     )
+    $sources += Get-ChildItem 'kern\*.cs' | ForEach-Object { 'kern\' + $_.Name }
+    $sources += Get-ChildItem 'kern\Regeln\*.cs' | ForEach-Object { 'kern\Regeln\' + $_.Name }
+    $sources += Get-ChildItem 'sammler\*.cs' | Where-Object { $_.Name -ne 'AufzeichnenCli.cs' } | ForEach-Object { 'sammler\' + $_.Name }
+    $sources += Get-ChildItem 'sammler\Quellen\*.cs' | ForEach-Object { 'sammler\Quellen\' + $_.Name }
 
     $argList = @(
         $csc.FullName,

@@ -1,4 +1,4 @@
-# Pruefungen, die bei jedem Bau und in der CI laufen.
+# Pruefungen, die in der CI (Tag, Push auf main, Handstart) und vor jedem Release laufen; build.ps1 ruft sie nicht auf.
 #
 # Hintergrund: Regeln, die nur in einem Dokument stehen, werden ueberlesen. Genau so sind
 # die Farbwolken, das Korn und die falsch geschlossenen Anfuehrungszeichen ins Projekt
@@ -25,7 +25,7 @@ function Test-Result([string]$name, [bool]$ok, [string[]]$details) {
 
 # Alle nutzersichtbaren Quellen. bin\ ist nur eine Kopie und wird ausgelassen.
 $uiFiles  = Get-ChildItem (Join-Path $root 'ui') -File -Include *.js,*.css,*.html -Recurse
-$csFiles  = Get-ChildItem (Join-Path $root 'src'),(Join-Path $root 'host') -File -Filter *.cs -Recurse
+$csFiles  = Get-ChildItem (Join-Path $root 'src'),(Join-Path $root 'host'),(Join-Path $root 'kern'),(Join-Path $root 'sammler') -File -Filter *.cs -Recurse
 # README und CHANGELOG sind kundennahe Texte: der Changelog wird woertlich zur
 # Release-Beschreibung auf GitHub. Sie gehoeren damit in die Sprachpruefung.
 $docFiles = @(Get-Item (Join-Path $root 'README.md')) + @(Get-Item (Join-Path $root 'CHANGELOG.md'))
@@ -159,7 +159,9 @@ Test-Result "Tell 1: kein Geviertstrich (U+2014)" ($hits.Count -eq 0) $hits
 # Tell 3: deutsches Anfuehrungspaar korrekt geschlossen.
 # Falsch:  "Text"  (unten geoeffnet, gerade geschlossen)   Richtig:  "Text"
 $hits = @()
-$rx = [regex]("" + [char]0x201E + "[^" + [char]0x201C + [char]0x201E + "]{0,160}?" + [char]0x0022)
+# Ausgenommen ist das Verkettungs-Idiom  "„" + name + "“"  - dort folgt auf „ sofort das Ende
+# des C#-Literals und ein Pluszeichen; ein echter Fehler haette Text zwischen „ und ".
+$rx = [regex]("" + [char]0x201E + '(?!' + [char]0x0022 + '\s*\+)' + "[^" + [char]0x201C + [char]0x201E + "]{0,160}?" + [char]0x0022)
 foreach ($f in $allFiles) {
     $i = 0
     foreach ($line in [IO.File]::ReadAllLines($f.FullName, [Text.Encoding]::UTF8)) {
@@ -174,16 +176,22 @@ Write-Host "`nDeutsche Sprache" -ForegroundColor Cyan
 # Umlaute statt ae/oe/ue in nutzersichtbaren C#-Zeichenketten.
 # Der Bau nutzt /codepage:65001 - die alte ASCII-Regel ist hinfaellig. Geprueft werden nur
 # Zeichenketten, die als Anzeige-Text gedacht sind (keine Befehle, keine Pfade, kein PowerShell).
-$ersatz = 'Aufraeum|aufraeum|gruen|Gruen|uebersprung|Verknuepf|zuruecksetz|Zuruecksetz|waehlen|Waehlen|fuer das|moeglich|noetig|schliessen'
+$ersatz = 'Aufraeum|aufraeum|gruen|Gruen|uebersprung|Verknuepf|zuruecksetz|Zuruecksetz|waehlen|Waehlen|fuer |moeglich|noetig|schliessen|Geraet|Gehaeus|ueberschritt|Datentraeger |Zaehler|gueltig|traegt|laeuft|Schluessel|verfuegbar|unvollstaendig|Laenge'
 $hits = @()
 foreach ($f in $csFiles) {
     $i = 0
     foreach ($line in [IO.File]::ReadAllLines($f.FullName, [Text.Encoding]::UTF8)) {
         $i++
         if ($line -match '^\s*//') { continue }                         # Kommentare duerfen ASCII sein
-        if ($line -match 'powershell|cmd\.exe|Args =|Join-Path|HKLM|\$env:') { continue }  # Befehle
+        if ($line -match 'powershell|cmd\.exe|Args =|Join-Path|HKLM|\$env:|Ps\("|CmdBE\(') { continue }  # Befehle (die PowerShell-Ausgaben des Werkzeugkastens bleiben v7-Stil)
         foreach ($m in [regex]::Matches($line, '"([^"]{4,})"')) {
-            if ($m.Groups[1].Value -match $ersatz) { $hits += "$($f.Name):$i  $($m.Groups[1].Value)" }
+            $w = $m.Groups[1].Value
+            # Kennungen und JSON-Feldnamen (klein beginnend, ohne Leerzeichen: "speicher.aufraeumen",
+            # "kennwortNoetig") sind Schluessel, keine Anzeige-Texte - die bleiben ASCII.
+            if ($w -cmatch '^[a-z][A-Za-z0-9._:-]*$') { continue }
+            # Code ZWISCHEN zwei Literalen (" + x.Wert + ") ist kein Text.
+            if ($w -match '^\s*[+,)]|[+(]\s*$') { continue }
+            if ($w -match $ersatz) { $hits += "$($f.Name):$i  $w" }
         }
     }
 }
@@ -196,6 +204,7 @@ foreach ($f in $docFiles) {
     $i = 0
     foreach ($line in [IO.File]::ReadAllLines($f.FullName, [Text.Encoding]::UTF8)) {
         $i++
+        $line = $line -replace '`[^`]*`', ''                      # Code-Spans (`--pruefen`) sind Bezeichner, keine Prosa
         foreach ($w in ([regex]::Matches($line, '\b[A-Za-zÄÖÜäöüß]{4,}\b') | ForEach-Object { $_.Value })) {
             if ($w -match '(?i)(laeuft|oeffn|pruef|geraet|kuenft|ausloes|haette|oberflaech|veroeff|aufraeum|gruen|zuruecksetz|moeglich|noetig|waehl|fuer[a-z])') {
                 $hits += "$($f.Name):$i  $w"
@@ -592,6 +601,188 @@ if ($runnerText -notmatch 'StepTimeoutMs')            { $hits += "Der CommandRun
 if ($runnerText -notmatch 'System\.Threading\.Timer') { $hits += "Es gibt keinen Wachhund, der den Schritt beendet" }
 if ($runnerText -notmatch 'KillTree\(proc\.Id\)')     { $hits += "Der Wachhund beendet den Prozessbaum nicht" }
 Test-Result "Jeder Schritt im CommandRunner hat eine Zeitgrenze" ($hits.Count -eq 0) $hits
+
+# Jeder PowerShell-Schritt des Werkzeugkastens laeuft als  powershell -Command "<text>".
+# Ein doppeltes Anfuehrungszeichen IM Text beendet den Befehl, der Rest ist ein Parsefehler,
+# powershell.exe endet mit 1 und der Schritt hat nichts getan. Aktion 6 (Wiederherstellen
+# der ausgeblendeten Updates) hatte genau das bis 8.0.0. Deshalb: den Katalog uebersetzen,
+# jeden Schritt ausgeben und mit dem PowerShell-Parser pruefen - vor dem Release, nicht
+# beim Nutzer.
+$hits = @()
+$exe = Join-Path $env:TEMP ('WW_KatalogProbe_' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.exe')
+try {
+    $bauOut = & (Join-Path $root 'tools\csc.ps1') -Out $exe -Target exe `
+        -Sources 'src\ActionCatalog.cs','src\MaintenanceAction.cs','tests\KatalogProbe.cs' 2>&1
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $exe)) { $hits += "Katalog liess sich nicht uebersetzen: " + (($bauOut | Select-Object -Last 3) -join ' | ') }
+    else {
+        $anzahl = [int](& $exe)
+        if ($anzahl -lt 25) { $hits += "Nur $anzahl Aktionen im Katalog - erwartet werden mindestens 25" }
+        $psSchritte = 0
+        for ($id = 0; $id -lt $anzahl; $id++) {
+            $txt = (& $exe $id) -join "`n"
+            $titel = ($txt -split "`n")[0]
+            $teile = $txt -split '<<STEP powershell.exe>>' | Select-Object -Skip 1
+            $k = 0
+            foreach ($s in $teile) {
+                $k++
+                $cmd = ($s -split '<<END>>')[0].Trim()
+                if ($cmd -notmatch '(?s)^-NoProfile -ExecutionPolicy Bypass -Command "(.*)"$') { $hits += "$titel, PowerShell-Schritt ${k}: unerwartete Argumentform"; continue }
+                $inner = $Matches[1]
+                $psSchritte++
+                if ($inner.Contains('"')) { $hits += "$titel, PowerShell-Schritt ${k}: doppeltes Anfuehrungszeichen im -Command-Text (beendet den Befehl)" }
+                $err = $null
+                [System.Management.Automation.Language.Parser]::ParseInput($inner, [ref]$null, [ref]$err) | Out-Null
+                if ($err.Count -gt 0) { $hits += "$titel, PowerShell-Schritt ${k}: Parsefehler: " + $err[0].Message }
+            }
+        }
+        if ($psSchritte -lt 10) { $hits += "Nur $psSchritte PowerShell-Schritte gefunden - die Probe hat den Katalog nicht gelesen" }
+    }
+}
+finally { Remove-Item $exe -ErrorAction SilentlyContinue }
+Test-Result "Jeder PowerShell-Schritt im Werkzeugkasten ist fehlerfrei lesbar ($psSchritte Schritte)" ($hits.Count -eq 0) $hits
+
+Write-Host "`nv8: Kern, Sammler, Regeln" -ForegroundColor Cyan
+
+# Schichtregel (Konzept 3.2): der Kern haengt von nichts ab. Kein WinForms, kein WMI, kein
+# Prozessstart, kein WebView2. Nur so laufen die Regeln in den Proben ohne Rechte und ohne
+# Fenster. Der harte Beweis ist lauf-proben.ps1 (uebersetzt NUR kern\); dieser Grep faengt
+# den Verstoss frueher und benennt die Zeile.
+$hits = @()
+foreach ($f in (Get-ChildItem (Join-Path $root 'kern') -File -Filter *.cs -Recurse)) {
+    $i = 0
+    foreach ($line in [IO.File]::ReadAllLines($f.FullName, [Text.Encoding]::UTF8)) {
+        $i++
+        if ($line -match '^\s*//') { continue }
+        # -cmatch: "registry.autostart" ist ein Quellname in der fehlerliste, "Registry." die Win32-API.
+        if ($line -cmatch 'System\.Windows\.Forms|System\.Management|System\.Diagnostics\.Process|ProcessStartInfo|new Process\b|Process\.Start|\.Start\(|StartInfo|using System\.Diagnostics;|Microsoft\.Web\.|System\.Web\.|Registry\.|EventLogReader|DllImport|GetTypeFromProgID|Win32_Process\b|ShellExecute|CreateProcess') {
+            $hits += "$($f.Name):$i  $($line.Trim())"
+        }
+    }
+}
+Test-Result "Schichtregel: kern\ haengt von nichts ab" ($hits.Count -eq 0) $hits
+
+# Der Sammler startet keinen einzigen Prozess: kein powershell.exe, kein cmd.exe. Das ist die
+# Antwort auf Defender und ClickFix (Konzept 3.8) UND auf die Geschwindigkeit (v7: sieben
+# PowerShell-Kaltstarts je Lauf).
+$hits = @()
+foreach ($f in (Get-ChildItem (Join-Path $root 'sammler') -File -Filter *.cs -Recurse)) {
+    $i = 0
+    foreach ($line in [IO.File]::ReadAllLines($f.FullName, [Text.Encoding]::UTF8)) {
+        $i++
+        if ($line -match '^\s*//' -or $line -match '^\s*///') { continue }
+        # Eine Namensliste bekannter Host-Programme (rundll32, powershell ...) ist kein Aufruf; sie
+        # traegt den Vermerk "Namensliste, kein Prozessstart" auf derselben Zeile.
+        if ($line -match 'Namensliste, kein Prozessstart') { continue }
+        if ($line -match '(?i)powershell|cmd\.exe|Process\.Start|ProcessStartInfo|-EncodedCommand|Invoke-Expression|pwsh|WScript\.Shell|Shell\.Application|ShellExecute|CreateProcess|Win32_Process\b|new Process\b') {
+            $hits += "$($f.Name):$i  $($line.Trim())"
+        }
+    }
+}
+Test-Result "Sammler startet keinen Prozess (kein PowerShell, kein cmd)" ($hits.Count -eq 0) $hits
+
+# Kein lokalisierter Text wird gedeutet (Konzept 3.7). Die Fallen, an denen v7 haengen blieb:
+# "Healthy" als Wort, "is dirty" aus fsutil, FormatDescription() (Ereignistext), findstr
+# LISTENING (auf deutschem Windows: ABHOEREN).
+$hits = @()
+foreach ($f in (Get-ChildItem (Join-Path $root 'kern'),(Join-Path $root 'sammler') -File -Filter *.cs -Recurse)) {
+    $i = 0
+    foreach ($line in [IO.File]::ReadAllLines($f.FullName, [Text.Encoding]::UTF8)) {
+        $i++
+        if ($line -match '^\s*//' -or $line -match '^\s*///') { continue }
+        if ($line -match 'Contains\("Healthy"\)|"is dirty"|"is not dirty"|FormatDescription\(\)|findstr|"LISTENING"|Contains\("OK"\)') {
+            $hits += "$($f.Name):$i  $($line.Trim())"
+        }
+    }
+}
+Test-Result "Kein lokalisierter Text wird ausgewertet" ($hits.Count -eq 0) $hits
+
+# Die Kernproben: Regeln gegen aufgezeichnete Systembilder mit gepflanzten Fehlerfaellen
+# (deaktiviertes Geraet darf kein Fehler sein, SMART-Warnung muss gemeldet werden, deutsches
+# und englisches Bild liefern dasselbe). Rueckgabewert entscheidet, und es muss etwas gelaufen
+# sein: eine leere Antwort ist kein bestandener Lauf.
+$hits = @()
+$probenOut = & (Join-Path $root 'tools\lauf-proben.ps1') 2>&1
+$probenCode = $LASTEXITCODE
+$probenText = ($probenOut | Out-String)
+if ($probenCode -ne 0) { $hits += "Kernproben rot (ExitCode $probenCode)"; $hits += ($probenOut | Where-Object { "$_" -match 'FEHL|rot:|error' } | Select-Object -First 12 | ForEach-Object { "$_" }) }
+$zahl = 0
+if ($probenText -match 'Ergebnis: (\d+) bestanden') { $zahl = [int]$Matches[1] }
+if ($zahl -lt 1500) { $hits += "Nur $zahl Zusicherungen gelaufen - erwartet werden mindestens 1500 (Grundmenge, Stand 12.09.2026: 2172)" }
+if ($probenText -notmatch ', 8 Probenklassen') { $hits += "Nicht 8 Probenklassen gelaufen (eine Datei fehlt oder 'Laufen' ist nicht mehr public static)" }
+$bilder = @(Get-ChildItem (Join-Path $root 'tests\aufzeichnungen') -Filter 'gepflanzt-*.json' -ErrorAction SilentlyContinue)
+if ($bilder.Count -lt 70) { $hits += "Nur $($bilder.Count) gepflanzte Testbilder - erwartet werden mindestens 70 (Stand 12.09.2026: 80)" }
+Test-Result "Kernproben gruen ($zahl Zusicherungen, $($bilder.Count) gepflanzte Bilder)" ($hits.Count -eq 0) $hits
+
+# Die Sammlerprobe: der echte Sammler laeuft auf diesem Rechner (nicht erhoeht in der CI ist
+# er erhoeht - beides ist erlaubt), schreibt ein redigiertes Systembild und prueft die
+# Redaktion selbst (ExitCode 2 = Rechnername, Benutzername, MAC oder private IP noch drin).
+# Grundmengen: Schema 1, Aufzeichnungszeit, mindestens ein Geraet und ein Datentraeger.
+$hits = @()
+$exe = Join-Path $env:TEMP ('WW_aufzeichnen_' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.exe')
+$bild = Join-Path $env:TEMP ('WW_bild_' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.json')
+try {
+    $bauOut = & (Join-Path $root 'tools\bau-kern.ps1') -Out $exe 2>&1
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $exe)) { $hits += "Kommandozeile liess sich nicht bauen: " + (($bauOut | Select-Object -Last 3) -join ' | ') }
+    else {
+        # Das Prozessverbot am Verhalten messen, nicht nur am Wortlaut: waehrend der Sammler laeuft,
+        # darf er keinen einzigen Kindprozess haben (kein powershell.exe, kein cmd.exe, nichts).
+        $aufLog = Join-Path $env:TEMP ('WW_aufz_' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.txt')
+        $proc = Start-Process -FilePath $exe -ArgumentList @('--aufzeichnen', ('"' + $bild + '"')) -PassThru -NoNewWindow -RedirectStandardOutput $aufLog
+        $kinder = @{}
+        while (-not $proc.HasExited) {
+            foreach ($k in (Get-CimInstance Win32_Process -Filter "ParentProcessId = $($proc.Id)" -ErrorAction SilentlyContinue)) { $kinder[$k.Name] = $true }
+            Start-Sleep -Milliseconds 300
+        }
+        $aufCode = $proc.ExitCode
+        $aufOut = @(Get-Content $aufLog -ErrorAction SilentlyContinue)
+        Remove-Item $aufLog -ErrorAction SilentlyContinue
+        if ($kinder.Count -gt 0) { $hits += "Der Sammler hat Kindprozesse gestartet: " + (($kinder.Keys | Sort-Object) -join ', ') }
+        if ($aufCode -eq 2) { $hits += "Redaktion unvollstaendig: " + (($aufOut | Where-Object { "$_" -match 'REDAKTION' }) -join ' ') }
+        elseif ($aufCode -ne 0) { $hits += "Aufzeichnen schlug fehl (ExitCode $aufCode): " + (($aufOut | Select-Object -Last 3) -join ' | ') }
+        elseif (-not (Test-Path $bild)) { $hits += "Aufzeichnung wurde nicht geschrieben" }
+        else {
+            $j = Get-Content $bild -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($j.schema -ne 1) { $hits += "Schema ist $($j.schema), erwartet 1" }
+            if (-not $j.aufgezeichnet) { $hits += "Aufzeichnungszeit fehlt" }
+            if (@($j.geraete).Count -lt 1) { $hits += "Keine Geraete im Systembild" }
+            if (@($j.datentraeger).Count -lt 1) { $hits += "Kein Datentraeger im Systembild" }
+            if (@($j.volumes).Count -lt 1) { $hits += "Kein Volume im Systembild" }
+            # Jede Quelle liefert Daten ODER einen Fehlereintrag (Konzept 3.3). Ohne Rechte MUSS
+            # der Zaehler-Zugriff als "zugriff" eingetragen sein - nie stille Leere.
+            if (-not $j.erhoeht) {
+                $z = @($j.fehlerliste | Where-Object { $_.art -eq 'zugriff' })
+                if ($z.Count -lt 1) { $hits += "Nicht erhoeht, aber kein einziger 'zugriff'-Eintrag in der fehlerliste" }
+            }
+            $pruefOut = & $exe --pruefen $bild 2>&1
+            if ($LASTEXITCODE -ne 0) { $hits += "Regeln ueber die Aufzeichnung schlugen fehl: " + (($pruefOut | Select-Object -Last 3) -join ' | ') }
+        }
+    }
+}
+finally {
+    Remove-Item $exe, $bild -ErrorAction SilentlyContinue
+}
+Test-Result "Sammler laeuft, redigiert und meldet fehlende Rechte" ($hits.Count -eq 0) $hits
+
+# Jede Frage des Systems muss in der Oberflaeche beantwortbar sein: die Karte schickt
+# 'antwort' mit 'absicht' oder 'reparieren', der Host merkt es sich (Entscheidungen) und
+# rechnet die Regeln neu. Fehlt ein Glied, sieht der Nutzer eine Frage ohne Knopf.
+$hits = @()
+$jsText3 = [IO.File]::ReadAllText((Join-Path $root 'ui\app.js'), [Text.Encoding]::UTF8)
+$cfText  = [IO.File]::ReadAllText((Join-Path $root 'host\CheckFlow.cs'), [Text.Encoding]::UTF8)
+if ($jsText3 -notmatch "type:'antwort'") { $hits += "app.js schickt keine 'antwort'" }
+if ($jsText3 -notmatch "wert:'absicht'" -or $jsText3 -notmatch "wert:'reparieren'") { $hits += "app.js kennt nicht beide Antworten" }
+if ($cfText -notmatch 'Entscheidungen\.Setze\(') { $hits += "CheckFlow merkt sich die Antwort nicht" }
+if ($cfText -notmatch 'Entscheidungen\.Speichern\(') { $hits += "CheckFlow speichert die Antwort nicht" }
+if ($cfText -notmatch 'Alle\.Pruefen\(_bild, Entscheidungen\)') { $hits += "CheckFlow rechnet die Regeln nach der Antwort nicht neu" }
+Test-Result "Fragen sind beantwortbar und werden gemerkt" ($hits.Count -eq 0) $hits
+
+# Keine Reparatur ohne Befund (Grundsatz 4): StartFix darf nur laufen, wenn die
+# Tiefenpruefung beschaedigte Windows-Dateien gefunden hat.
+$hits = @()
+$fixBlock = [regex]::Match($cfText, "void StartFix\(\)(?s).{0,1800}?_flowThread\.Start\(\);")
+if (-not $fixBlock.Success) { $hits += "StartFix nicht auffindbar" }
+elseif ($fixBlock.Value -notmatch '_filesState == Zustand\.Bad \|\| _filesState == Zustand\.Warn') { $hits += "StartFix prueft nicht, ob ein Befund vorliegt" }
+Test-Result "Keine Reparatur ohne Befund" ($hits.Count -eq 0) $hits
 
 Write-Host ""
 Write-Host ("Ergebnis: {0} bestanden, {1} fehlgeschlagen" -f $passed, $failed) -ForegroundColor $(if ($failed) { 'Red' } else { 'Green' })

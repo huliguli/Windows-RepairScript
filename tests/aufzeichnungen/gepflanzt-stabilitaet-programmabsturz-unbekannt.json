@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "aufgezeichnet": "2026-09-11T16:00:00Z",
+  "erhoeht": false,
+  "sprache": { "lcid": 1031, "mui": ["de-DE"] },
+  "ereignisse": {
+    "beginnSystem": "2026-06-01T00:00:00Z",
+    "beginnApplication": "2026-05-28T00:00:00Z",
+    "tage": 90,
+    "eintraege": [
+      {
+        "log": "Application", "anbieter": "Application Error", "id": 1000, "level": 2, "zeit": "2026-09-05T20:31:00Z",
+        "felder": { "AppName": "bad_module_info", "AppVersion": "0.0.0.0", "AppTimeStamp": "00000000", "ModuleName": "bad_module_info", "ModuleVersion": "0.0.0.0", "ModuleTimeStamp": "00000000", "ExceptionCode": "00000000", "FaultingOffset": "0000000000000000", "ProcessId": "0x2f40", "ProcessCreationTime": "0x1dc2000", "AppPath": "bad_module_info", "ModulePath": "bad_module_info", "IntegratorReportId": "00000000-0000-0000-0000-000000000021", "PackageFullName": "", "PackageRelativeAppId": "" }
+      },
+      {
+        "log": "Application", "anbieter": "Application Error", "id": 1000, "level": 2, "zeit": "2026-08-29T18:02:00Z",
+        "felder": { "AppName": "bad_module_info", "AppVersion": "0.0.0.0", "AppTimeStamp": "00000000", "ModuleName": "bad_module_info", "ModuleVersion": "0.0.0.0", "ModuleTimeStamp": "00000000", "ExceptionCode": "00000000", "FaultingOffset": "0000000000000000", "ProcessId": "0x1a10", "ProcessCreationTime": "0x1dc2001", "AppPath": "bad_module_info", "ModulePath": "bad_module_info", "IntegratorReportId": "00000000-0000-0000-0000-000000000022", "PackageFullName": "", "PackageRelativeAppId": "" }
+      },
+      {
+        "log": "Application", "anbieter": "Application Error", "id": 1000, "level": 2, "zeit": "2026-08-20T21:55:00Z",
+        "felder": { "AppName": "bad_module_info", "AppVersion": "0.0.0.0", "AppTimeStamp": "00000000", "ModuleName": "bad_module_info", "ModuleVersion": "0.0.0.0", "ModuleTimeStamp": "00000000", "ExceptionCode": "00000000", "FaultingOffset": "0000000000000000", "ProcessId": "0x3b8c", "ProcessCreationTime": "0x1dc2002", "AppPath": "bad_module_info", "ModulePath": "bad_module_info", "IntegratorReportId": "00000000-0000-0000-0000-000000000023", "PackageFullName": "", "PackageRelativeAppId": "" }
+      },
+      {
+        "log": "Application", "anbieter": "Application Hang", "id": 1002, "level": 2, "zeit": "2026-09-01T12:00:00Z",
+        "felder": { "AppName": "bad_module_info", "AppVersion": "0.0.0.0", "ProcessId": "0x2f40", "StartTime": "0x1dc2000", "TerminationTime": "12", "ExeFileName": "bad_module_info", "ReportId": "00000000-0000-0000-0000-000000000024", "PackageFullName": "", "PackageRelativeAppId": "", "HangType": "Unknown" }
+      }
+    ]
+  }
+}

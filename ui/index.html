@@ -36,7 +36,7 @@
 
     <div class="mainrow">
       <button class="btn btn-primary" id="btn-check">PC jetzt prüfen</button>
-      <span class="hint" id="start-hint">Dauert meist 5 bis 10 Minuten. Sie können den PC währenddessen weiter benutzen.</span>
+      <span class="hint" id="start-hint">Dauert wenige Sekunden und verändert nichts.</span>
     </div>
 
     <div class="areas" id="start-areas" aria-label="Zustand der geprüften Bereiche"></div>
@@ -45,15 +45,17 @@
       <summary><span aria-hidden="true"></span> <b>Was passiert bei der Prüfung?</b>
         <span style="color:var(--text-3)">Die Schritte im Einzelnen</span></summary>
       <div class="disc-body">
-        <p><b>1. Bestandsaufnahme.</b> Wir lesen aus, wie viel Platz frei ist, ob der Virenschutz
-          läuft, wie es Ihren Festplatten geht und ob Windows aktuell ist. Dabei wird nichts verändert.</p>
-        <p><b>2. Grundbestandteile von Windows.</b> Wir lassen Windows nachsehen, ob seine eigenen
-          Bausteine vollständig sind.</p>
-        <p><b>3. Windows-Dateien.</b> Wir lassen Windows seine wichtigen Dateien auf Beschädigungen
-          prüfen. Auch dieser Schritt meldet nur, er repariert noch nichts.</p>
-        <p>Erst wenn Sie danach auf „Gefundene Probleme beheben“ klicken, wird tatsächlich etwas
-          verändert. Vorher legen wir automatisch einen Sicherungspunkt an, damit sich alles
-          rückgängig machen lässt.</p>
+        <p><b>1. Lesen.</b> Das Programm liest in wenigen Sekunden aus, was in diesem PC steckt und
+          wie es ihm geht: Festplatten und ihre Selbstdiagnose, Geräte und Treiber, Abstürze der
+          letzten 90 Tage, Windows-Updates, Netzwerk, Virenschutz und Firewall, freier Platz.
+          Dabei wird nichts verändert.</p>
+        <p><b>2. Bewerten.</b> Zu jedem Punkt steht der Messwert, woher er kommt und ab welcher
+          Grenze er als Problem gilt. Was auf diesem PC nicht zutrifft, wird nicht vorgeschlagen.
+          Ist etwas abgeschaltet, das Absicht sein kann, fragt das Programm, statt es zu ändern.</p>
+        <p><b>3. Tiefenprüfung (auf Wunsch).</b> Danach können Sie die Windows-Dateien selbst
+          durchsehen lassen. Das dauert 5 bis 10 Minuten und meldet nur, es repariert noch nichts.</p>
+        <p>Erst wenn Sie eine Reparatur ausdrücklich starten, wird etwas verändert. Vorher legt das
+          Programm einen Sicherungspunkt an.</p>
       </div>
     </details>
 

@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "aufgezeichnet": "2026-09-11T16:00:00Z",
+  "erhoeht": false,
+  "sprache": { "lcid": 1031 },
+  "netz": {
+    "adapter": [
+      { "name": "Ethernet", "beschreibung": "Beispiel Gigabit-Netzwerkkarte", "pnpId": "PCI\\VEN_0000&DEV_0001\\1", "index": 8,
+        "opStatus": 1, "medien": 1, "empfangBitS": 1000000000, "physisch": true, "virtuell": false, "dhcp": true }
+    ],
+    "ipAdressen": [
+      { "adapterIndex": 8, "adresse": "192.168.1.20", "familie": 2, "herkunft": 3, "zustand": 4 }
+    ],
+    "gateways": ["192.168.1.1"],
+    "dns": [
+      { "adapterIndex": 8, "familie": 2, "server": ["192.168.1.1"], "statisch": false, "dhcpServer": ["192.168.1.1"] }
+    ],
+    "profile": [ { "name": "Netzwerk", "kategorie": 1, "ipv4": 4, "ipv6": 4 } ],
+    "proxy": { "winInetAktiv": false, "autoDetect": true, "winHttpTyp": 1 },
+    "hosts": [
+      { "ip": "0.0.0.0", "host": "windowsupdate.microsoft.com" },
+      { "ip": "127.0.0.1", "host": "host.docker.internal" },
+      { "ip": "127.0.0.1", "host": "gateway.docker.internal" },
+      { "ip": "192.168.65.254", "host": "kubernetes.docker.internal" },
+      { "ip": "203.0.113.7", "host": "fake-download.example" },
+      { "ip": "203.0.113.9", "host": "download.eset.com" }
+    ],
+    "sonden": { "gateway": true, "dns": true, "ncsi": true, "ncsiInhaltStimmt": true, "tcp443": true, "dauerMs": 420 }
+  }
+}

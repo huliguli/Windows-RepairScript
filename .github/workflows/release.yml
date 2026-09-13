@@ -13,6 +13,9 @@ name: Build and Release
 on:
   push:
     tags: ["v*"]
+    # Auch jeder Push auf main baut und prueft (ohne Release): eine rote Probe faellt
+    # so vor dem Tag auf, nicht erst beim Release-Lauf.
+    branches: ["main"]
   workflow_dispatch:
 
 permissions:

@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "aufgezeichnet": "2026-09-13T10:00:00Z",
+  "erhoeht": false,
+  "sprache": { "lcid": 1031 },
+  "netz": {
+    "adapter": [
+      { "name": "Ethernet", "beschreibung": "Beispiel Gigabit-Netzwerkkarte", "pnpId": "PCI\\VEN_0000&DEV_0001\\1", "index": 8,
+        "opStatus": 1, "medien": 1, "empfangBitS": 1000000000, "physisch": true, "virtuell": false, "dhcp": true }
+    ],
+    "ipAdressen": [
+      { "adapterIndex": 8, "adresse": "192.168.1.20", "familie": 2, "herkunft": 3, "zustand": 4 }
+    ],
+    "gateways": ["192.168.1.1"],
+    "standardrouteOnLink": false,
+    "dns": [
+      { "adapterIndex": 8, "familie": 2, "server": ["192.168.1.1"], "statisch": false, "dhcpServer": ["192.168.1.1"] }
+    ],
+    "profile": [ { "name": "Netzwerk", "kategorie": 1, "ipv4": 4, "ipv6": 4 } ],
+    "proxy": { "winInetAktiv": false, "autoDetect": true, "winHttpTyp": 1 },
+    "hosts": [
+      { "ip": "0.0.0.0", "host": "www.msftconnecttest.com" }
+    ],
+    "sonden": { "gateway": true, "dns": true, "ncsi": true, "ncsiInhaltStimmt": true, "tcp443": true, "dauerMs": 420 }
+  }
+}

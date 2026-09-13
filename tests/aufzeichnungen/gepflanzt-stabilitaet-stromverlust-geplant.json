@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "aufgezeichnet": "2026-09-11T16:00:00Z",
+  "erhoeht": false,
+  "sprache": { "lcid": 1031, "mui": ["de-DE"] },
+  "ereignisse": {
+    "beginnSystem": "2026-06-01T00:00:00Z",
+    "beginnApplication": "2026-05-28T00:00:00Z",
+    "tage": 90,
+    "eintraege": [
+      {
+        "log": "System", "anbieter": "User32", "id": 1074, "level": 4, "zeit": "2026-09-01T09:58:00Z",
+        "felder": { "0": "C:\\WINDOWS\\system32\\winlogon.exe (RECHNER)", "1": "RECHNER", "2": "Betriebssystem: Aktualisierung (geplant)", "3": "0x80020003", "4": "neu starten", "5": "", "6": "NT-AUTORITÄT\\SYSTEM" }
+      },
+      {
+        "log": "System", "anbieter": "Microsoft-Windows-Kernel-Power", "id": 41, "level": 1, "zeit": "2026-09-01T10:00:00Z",
+        "felder": { "BugcheckCode": "0", "BugcheckParameter1": "0x0", "BugcheckParameter2": "0x0", "BugcheckParameter3": "0x0", "BugcheckParameter4": "0x0", "SleepInProgress": "0", "PowerButtonTimestamp": "0" }
+      },
+      {
+        "log": "System", "anbieter": "User32", "id": 1074, "level": 4, "zeit": "2026-09-05T07:58:00Z",
+        "felder": { "0": "C:\\WINDOWS\\system32\\shutdown.exe (RECHNER)", "1": "RECHNER", "2": "Kein Titel für diesen Grund gefunden", "3": "0x800000ff", "4": "neu starten", "5": "", "6": "RECHNER\\NUTZER" }
+      },
+      {
+        "log": "System", "anbieter": "Microsoft-Windows-Kernel-Power", "id": 41, "level": 1, "zeit": "2026-09-05T08:00:00Z",
+        "felder": { "BugcheckCode": "0", "BugcheckParameter1": "0x0", "BugcheckParameter2": "0x0", "BugcheckParameter3": "0x0", "BugcheckParameter4": "0x0", "SleepInProgress": "0", "PowerButtonTimestamp": "0" }
+      }
+    ]
+  }
+}

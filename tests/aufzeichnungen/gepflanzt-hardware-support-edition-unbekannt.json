@@ -1,0 +1,55 @@
+{
+  "schema": 1,
+  "aufgezeichnet": "2026-09-11T16:00:00Z",
+  "erhoeht": false,
+  "sprache": {
+    "lcid": 1031,
+    "mui": [
+      "de-DE"
+    ]
+  },
+  "windows": {
+    "caption": "Microsoft Windows 11 Enterprise Evaluation",
+    "edition": "EnterpriseSEval",
+    "build": 22631,
+    "ubr": 5335,
+    "displayVersion": "23H2",
+    "produktTyp": 1,
+    "x64": true
+  },
+  "hardware": {
+    "hersteller": "Testhersteller",
+    "modell": "Testmodell",
+    "systemTyp": 1,
+    "uefi": true,
+    "gehaeuseTypen": [
+      3
+    ]
+  },
+  "geraete": [
+    {
+      "instanzId": "PCI\\VEN_10DE&DEV_2684&SUBSYS_88E61043&REV_A1\\4&285F7309&0&000C",
+      "klasseGuid": "{4d36e968-e325-11ce-bfc1-08002be10318}",
+      "klasse": "Display",
+      "name": "NVIDIA GeForce RTX 4090",
+      "present": true,
+      "problemCode": 0
+    },
+    {
+      "instanzId": "ACPI\\PNP0B00\\4&11544EA4&0",
+      "klasseGuid": "{4d36e97d-e325-11ce-bfc1-08002be10318}",
+      "klasse": "System",
+      "name": "System CMOS/Echtzeituhr",
+      "present": true,
+      "problemCode": 0
+    },
+    {
+      "instanzId": "USB\\ROOT_HUB30\\4&1D2E3F4A&0&0",
+      "klasseGuid": "{36fc9e60-c465-11cf-8056-444553540000}",
+      "klasse": "USB",
+      "name": "USB-Root-Hub (USB 3.0)",
+      "present": true,
+      "problemCode": 0
+    }
+  ]
+}

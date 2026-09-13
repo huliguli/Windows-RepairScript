@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "aufgezeichnet": "2026-09-13T10:00:00Z",
+  "erhoeht": false,
+  "sprache": { "lcid": 1031 },
+  "netz": {
+    "adapter": [
+      { "name": "Ethernet", "beschreibung": "Beispiel Gigabit-Netzwerkkarte", "pnpId": "PCI\\VEN_0000&DEV_0001\\1", "index": 8,
+        "opStatus": 1, "medien": 1, "empfangBitS": 1000000000, "physisch": true, "virtuell": false, "dhcp": false }
+    ],
+    "ipAdressen": [
+      { "adapterIndex": 8, "adresse": "203.0.113.45", "familie": 2, "herkunft": 1, "zustand": 4 }
+    ],
+    "gateways": [],
+    "standardrouteOnLink": true,
+    "dns": [
+      { "adapterIndex": 8, "familie": 2, "server": ["203.0.113.1"], "statisch": true, "dhcpServer": [] }
+    ],
+    "profile": [ { "name": "Breitbandverbindung", "kategorie": 0, "ipv4": 4, "ipv6": 1 } ],
+    "proxy": { "winInetAktiv": false, "autoDetect": true, "winHttpTyp": 1 },
+    "hosts": [],
+    "sonden": { "dns": true, "ncsi": true, "ncsiInhaltStimmt": true, "tcp443": true, "dauerMs": 640 }
+  }
+}

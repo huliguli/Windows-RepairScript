@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "aufgezeichnet": "2026-09-11T16:00:00Z",
+  "erhoeht": false,
+  "sprache": { "lcid": 1031, "mui": ["de-DE"] },
+  "leistung": { "auslagerungMB": 3968 },
+  "ereignisse": {
+    "beginnSystem": "2026-06-01T00:00:00Z",
+    "beginnApplication": "2026-05-28T00:00:00Z",
+    "tage": 90,
+    "eintraege": [
+      {
+        "log": "System", "anbieter": "Microsoft-Windows-Kernel-Power", "id": 41, "level": 1, "zeit": "2026-09-01T10:00:00Z",
+        "felder": { "BugcheckCode": "0", "BugcheckParameter1": "0x0", "SleepInProgress": "0", "PowerButtonTimestamp": "0" }
+      },
+      {
+        "log": "System", "anbieter": "Microsoft-Windows-Kernel-Boot", "id": 20, "level": 4, "zeit": "2026-09-01T10:00:01Z",
+        "felder": { "LastShutdownGood": "false", "LastBootGood": "true", "LastBootId": "120", "BootStatusPolicy": "0" }
+      },
+      {
+        "log": "System", "anbieter": "EventLog", "id": 6008, "level": 2, "zeit": "2026-09-01T10:00:30Z",
+        "felder": { "0": "21:15:08", "1": "\u200e31.\u200e08.\u200e2026", "2": "", "3": "", "4": "7225", "5": "", "6": "", "Binary": "EA0708000500070015000F000800CF00EA0708000500070013000F000800CF00", "zeitBinaerUtc": "2026-08-31T19:15:08Z" }
+      },
+      {
+        "log": "System", "anbieter": "Microsoft-Windows-Kernel-Power", "id": 41, "level": 1, "zeit": "2026-09-05T08:00:00Z",
+        "felder": { "BugcheckCode": "0", "SleepInProgress": "0", "PowerButtonTimestamp": "0" }
+      },
+      {
+        "log": "System", "anbieter": "Microsoft-Windows-Kernel-Boot", "id": 20, "level": 4, "zeit": "2026-09-05T08:00:01Z",
+        "felder": { "LastShutdownGood": "false", "LastBootGood": "true", "LastBootId": "121", "BootStatusPolicy": "0" }
+      },
+      {
+        "log": "System", "anbieter": "volmgr", "id": 46, "level": 2, "zeit": "2026-09-05T08:00:02Z",
+        "felder": { "0": "\\Device\\HarddiskVolume3", "Binary": "00000000" }
+      },
+      {
+        "log": "System", "anbieter": "Microsoft-Windows-Kernel-Power", "id": 41, "level": 1, "zeit": "2026-09-08T19:30:00Z",
+        "felder": { "BugcheckCode": "0", "SleepInProgress": "0", "PowerButtonTimestamp": "0" }
+      },
+      {
+        "log": "System", "anbieter": "Microsoft-Windows-Kernel-Boot", "id": 20, "level": 4, "zeit": "2026-09-08T19:30:01Z",
+        "felder": { "LastShutdownGood": "false", "LastBootGood": "true", "LastBootId": "122", "BootStatusPolicy": "0" }
+      },
+      {
+        "log": "System", "anbieter": "Microsoft-Windows-Kernel-Power", "id": 41, "level": 1, "zeit": "2026-07-01T12:00:00Z",
+        "felder": { "BugcheckCode": "0", "SleepInProgress": "0", "PowerButtonTimestamp": "0" }
+      },
+      {
+        "log": "System", "anbieter": "User32", "id": 1074, "level": 4, "zeit": "2026-08-15T18:00:00Z",
+        "felder": { "0": "C:\\WINDOWS\\system32\\winlogon.exe (RECHNER)", "1": "RECHNER", "2": "Betriebssystem: Aktualisierung (geplant)", "3": "0x80020003", "4": "neu starten", "5": "", "6": "NT-AUTORITÄT\\SYSTEM" }
+      }
+    ]
+  }
+}

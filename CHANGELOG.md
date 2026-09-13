@@ -1,5 +1,68 @@
 # Changelog
 
+## [8.0.0] - 2026-09-12
+
+Eine neue Diagnose im vertrauten Gehäuse. Alles, was Sie bisher hatten (die Werkzeuge, die
+beiden Suchläufe, die geplante Wartung, das Update), bleibt. Neu ist, wie das Programm Ihren
+PC ansieht.
+
+### Neu
+
+- **Die Prüfung dauert Sekunden, nicht Minuten.** Das Programm liest den PC jetzt direkt über
+  die Schnittstellen von Windows aus, ohne ein einziges PowerShell-Fenster zu starten. Auf
+  dem Entwicklungsrechner: rund zehn Sekunden für alle acht Bereiche. Die Prüfung verändert
+  dabei nichts.
+- **Jeder Punkt sagt, was gemessen wurde und woher der Wert kommt.** Hinter jedem Befund
+  steht unter „Fachlich“ der Messwert, die Grenze, ab der er zum Problem wird, und die
+  Quelle. Ein Techniker sieht damit auf einen Blick, worauf sich die Aussage stützt.
+- **Fragen statt reparieren.** Ist an Ihrem PC etwas abgeschaltet, das Absicht sein kann
+  (zum Beispiel ein Gerät im Geräte-Manager), fragt das Programm einmal nach: „Haben Sie
+  das so eingerichtet?“ Ihre Antwort wird gemerkt und gilt, bis sich der Zustand ändert.
+  Nichts wird repariert, was Sie selbst so gewollt haben.
+- **Acht Bereiche mit dokumentierten Grenzen:** Sicherheit, Zustand der Festplatten (bei
+  NVMe samt Gesundheitsprotokoll und Herstellergrenzen für die Temperatur), freier
+  Speicherplatz, Stabilität (Blauschirme mit Fehlercode, Stromausfälle, Programmabstürze,
+  Hardwarefehler), Windows-Updates (auch Updates, die sich immer wieder installieren),
+  Geräte und Treiber, Arbeitsspeicher und Startprogramme, Netzwerk.
+- **Beim Öffnen sehen Sie sofort, wie es dem PC geht.** Der erste Blick läuft von selbst
+  und braucht keinen Klick.
+- **Die Tiefenprüfung ist ein eigener Schritt.** Windows seine eigenen Dateien durchsehen
+  zu lassen dauert 5 bis 10 Minuten; das startet nur, wenn Sie es wollen, und wird
+  vorher gesagt. Sie liest nur, sie verändert nichts.
+- **Beheben gibt es nur, wenn ein Befund es benennt.** Hat die Tiefenprüfung nichts
+  gefunden, gibt es nichts zu reparieren, und das Programm sagt das auch so. Vor jeder
+  Reparatur wird ein Sicherungspunkt angelegt, und das Programm prüft nach, ob er wirklich
+  entstanden ist.
+- **Ein Protokoll für zwei Leser.** Jeder Lauf schreibt mit: eine Zeile in Alltagssprache
+  für Sie, das Fachliche daneben für den Techniker. „Bericht speichern“ legt beides als
+  Textdatei ab.
+- **Was sich nicht feststellen ließ, wird so genannt.** Fehlen Rechte oder Daten, steht
+  „ließ sich nicht prüfen“ samt Grund da. Nie wird eine leere Antwort als „in Ordnung“
+  ausgegeben.
+- **Für Helfer:** `WindowsWartung.exe --aufzeichnen bild.json` nimmt das Systembild eines
+  fremden Rechners auf (Rechnername, Benutzername, Seriennummern und Adressen werden
+  entfernt), `--pruefen bild.json` schreibt die Befunde daneben.
+
+### Behoben
+
+- **„Abstürze anzeigen“ zeigt jetzt die Abstürze.** Bisher verdrängten die vielen normalen
+  Neustarts die echten Vorfälle, und Meldungen anderer Quellen mit derselben Nummer wurden
+  als Absturz mitgezählt. Jetzt wird jede Nummer nur bei ihrer echten Quelle gelesen, und
+  normale Neustarts stehen getrennt am Ende.
+- **Der Windows-Update-Reset vergisst keine ausgeblendeten Updates mehr.** Vor dem Reset
+  werden sie gesichert und danach wieder ausgeblendet. Vorher kam ein bewusst ausgeblendetes
+  Update nach dem Reset immer wieder.
+- **Ein Microsoft-Konto ohne lokales Kennwort ist kein Problem mehr.** Bei einem
+  Microsoft-Konto läuft die Anmeldung über das Microsoft-Konto; nur rein lokale Konten ohne
+  Kennwort werden gemeldet.
+
+### Gut zu wissen
+
+- Das Programm braucht in dieser Fassung weiterhin Administratorrechte beim Start. Die
+  Trennung in einen Teil ohne Rechte und einen Helfer mit Rechten folgt mit 8.1.
+- Die Antworten auf Fragen und die Protokolle liegen unter `C:\ProgramData\WindowsWartung`,
+  weil sie den PC betreffen und nicht das Konto, das das Programm gerade bedient.
+
 ## [7.3.2] - 2026-08-22
 
 ### Behoben

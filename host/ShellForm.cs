@@ -60,6 +60,12 @@ namespace WartungsToolbox
         public ShellForm(string shotPath, string view, int shotWaitMs = 950)
         {
             _shotPath = shotPath;
+            // Belegaufnahmen schreiben nie in den Absichtsspeicher des Rechners: eigene Datei
+            // neben dem Shot-Datenordner, damit ein Screenshot-Lauf keine echte Antwort hinterlaesst.
+            if (shotPath != null)
+                Kern.Entscheidungen.PfadFuerProbe = System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "WindowsWartung", "WebView2_shot", "entscheidungen.json");
             _view = view ?? "";
             _shotWaitMs = shotWaitMs < 200 ? 200 : shotWaitMs;
 
@@ -264,6 +270,9 @@ namespace WartungsToolbox
                 {
                     type = "catalog",
                     version = typeof(ShellForm).Assembly.GetName().Version.ToString(3),
+                    // Belegaufnahme (--shot): nur dann darf die Oberflaeche ihre Haken fuer
+                    // Screenshots ziehen (Pruefung von selbst starten, Frage beantworten).
+                    shot = _shotPath != null,
                     categories = Catalog.Categories,
                     notes = Catalog.CategoryNotes,
                     actions = _actions.Select(a => new
@@ -301,7 +310,7 @@ namespace WartungsToolbox
             catch (Exception ex) { AppLog.Warn("Kontopruefung fehlgeschlagen: " + ex.Message); }
 
             if (fremd)
-                AppLog.Info("Laeuft als '" + laeuftAls + "', angemeldet ist '" + angemeldet + "'.");
+                AppLog.Info("Läuft als '" + laeuftAls + "', angemeldet ist '" + angemeldet + "'.");
 
             try
             {
@@ -916,7 +925,7 @@ namespace WartungsToolbox
                     // schiefgegangen und die bisherige Fassung wurde wiederhergestellt.
                     // Frueher blieb das voellig stumm - der Nutzer klickte auf
                     // "Jetzt aktualisieren" und danach war scheinbar nichts passiert.
-                    AppLog.Warn("Update auf " + tag + " wurde nicht wirksam, es laeuft weiter " + cur + ".");
+                    AppLog.Warn("Update auf " + tag + " wurde nicht wirksam, es läuft weiter " + cur + ".");
                     string ftag = tag;
                     try
                     {
@@ -1018,7 +1027,10 @@ namespace WartungsToolbox
             }
             // --- Hauptweg -------------------------------------------------------
             else if (type == "startCheck") StartCheck();
+            else if (type == "startDeepCheck") StartDeepCheck();
             else if (type == "startFix") StartFix();
+            // Antwort auf eine Frage des Systems ("so lassen" oder "reparieren"), Grundsatz 1.
+            else if (type == "antwort") Antwort(Str(m, "id"), Str(m, "wert"));
             // Ein Editor mit Administratorrechten koennte jede Datei des Systems
             // ueberschreiben - deshalb ueber die Oberflaeche des Nutzers oeffnen.
             else if (type == "openLog") Shell.OeffneImNutzerkontext(AppLog.PfadZumOeffnen());
@@ -1301,10 +1313,10 @@ namespace WartungsToolbox
             using (SaveFileDialog d = new SaveFileDialog())
             {
                 d.Filter = "Textdatei (*.txt)|*.txt";
-                d.FileName = "wartung-log.txt";
+                d.FileName = "wartung-bericht.txt";
                 if (d.ShowDialog(this) == DialogResult.OK)
                 {
-                    try { File.WriteAllText(d.FileName, _log.ToString()); }
+                    try { File.WriteAllText(d.FileName, BerichtText(), new UTF8Encoding(true)); }
                     catch (Exception ex) { MessageBox.Show(this, ex.Message, "Fehler"); }
                 }
             }
@@ -1522,7 +1534,7 @@ namespace WartungsToolbox
             string folder;
             using (FolderBrowserDialog d = new FolderBrowserDialog())
             {
-                d.Description = "Ordner fuer die Treiber-Sicherung aussuchen";
+                d.Description = "Ordner für die Treiber-Sicherung aussuchen";
                 d.ShowNewFolderButton = true;
                 if (d.ShowDialog(this) != DialogResult.OK) return;
                 folder = d.SelectedPath;

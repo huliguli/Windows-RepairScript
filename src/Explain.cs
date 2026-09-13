@@ -68,6 +68,10 @@ namespace WartungsToolbox
                     good = true;
                     return "Verständlich gesagt: Alle geschützten Systemdateien sind in Ordnung – nichts zu reparieren.";
                 }
+                // /verifyonly meldet Funde ohne Reparaturversuch: "hat Integritätsverletzungen gefunden"
+                // (nach der "keine"-Pruefung, sonst traefe es auch den guten Fall).
+                if (t.Contains("integritätsverletzungen gefunden") || t.Contains("found integrity violations"))
+                    return "Verständlich gesagt: Es wurden beschädigte Systemdateien gefunden (nur geprüft, noch nicht repariert). → Die Reparatur der Windows-Dateien laufen lassen.";
                 if (t.Contains("reparaturdienst nicht starten") || t.Contains("could not start the repair service"))
                     return "Verständlich gesagt: Der Windows-Reparaturdienst ließ sich nicht starten. → Den PC neu starten und die Aktion wiederholen.";
                 return null;
@@ -85,9 +89,14 @@ namespace WartungsToolbox
                     good = true;
                     return "Verständlich gesagt: Der Windows-Komponentenspeicher ist gesund – keine Beschädigung gefunden.";
                 }
-                if (t.Contains("ist reparierbar") || t.Contains("store is repairable"))
+                // Windows 11 (26200, deutsch) schreibt "Der Komponentenspeicher kann repariert werden." /
+                // "... kann nicht repariert werden." und "Der Wiederherstellungsvorgang wurde erfolgreich
+                // abgeschlossen." - die aelteren Muster ("ist reparierbar", "Wiederherstellung wurde
+                // abgeschlossen") bleiben fuer aeltere Fassungen stehen.
+                if (t.Contains("kann nicht repariert werden") || t.Contains("store is not repairable")) return null;
+                if (t.Contains("ist reparierbar") || t.Contains("kann repariert werden") || t.Contains("store is repairable"))
                     return "Verständlich gesagt: Es wurden reparierbare Beschädigungen gefunden. → Als Nächstes die Aktion DISM RestoreHealth ausführen.";
-                if (t.Contains("wiederherstellung wurde abgeschlossen") || t.Contains("restore operation completed"))
+                if (t.Contains("wiederherstellung wurde abgeschlossen") || t.Contains("wiederherstellungsvorgang wurde erfolgreich abgeschlossen") || t.Contains("restore operation completed"))
                 {
                     good = true;
                     return "Verständlich gesagt: Die Reparatur des Komponentenspeichers wurde abgeschlossen.";

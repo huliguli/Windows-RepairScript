@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "aufgezeichnet": "2026-09-13T10:00:00Z",
+  "erhoeht": true,
+  "sprache": { "lcid": 1031, "mui": ["de-DE"] },
+  "sicherheit": { "secureBoot": true },
+  "autostart": {
+    "eintraege": [
+      { "quelle": "HKLM\\Run", "name": "Fremd01", "befehl": "\"C:\\Program Files\\Fremd\\fremd01.exe\" /start", "aktiviert": true, "signierer": "CN=Fremd GmbH, O=Fremd GmbH, C=DE", "microsoft": false, "dateiVorhanden": true },
+      { "quelle": "HKCU\\Run", "name": "Fremd02", "befehl": "C:\\Users\\NUTZER\\AppData\\Local\\Fremd\\fremd02.exe", "aktiviert": true, "signierer": null, "microsoft": false, "dateiVorhanden": true },
+      { "quelle": "HKLM\\Run", "name": "SecurityHealth", "befehl": "%windir%\\system32\\SecurityHealthSystray.exe", "aktiviert": true, "signierer": "CN=Microsoft Windows, O=Microsoft Corporation, L=Redmond, S=Washington, C=US", "microsoft": true, "dateiVorhanden": true }
+    ],
+    "aufgaben": [
+      { "pfad": "\\FremdUpdater", "autor": "Fremd GmbH", "zustand": 3, "logon": true, "boot": false, "letzterLauf": "2026-09-11T06:00:00Z", "letztesErgebnis": 0 }
+    ],
+    "aufgabenVollstaendig": true,
+    "dienste": [
+      { "name": "wuauserv", "anzeige": "Windows Update", "startart": "Auto", "zustand": "Running", "pfad": "C:\\WINDOWS\\system32\\svchost.exe -k netsvcs -p", "verzoegert": false, "signierer": "CN=Microsoft Windows Publisher, O=Microsoft Corporation, L=Redmond, S=Washington, C=US", "microsoft": true }
+    ],
+    "shell": "explorer.exe",
+    "userinit": "C:\\WINDOWS\\system32\\userinit.exe,",
+    "appInitDlls": "",
+    "appInitDlls32": "",
+    "loadAppInitDlls": false
+  },
+  "fehlerliste": [
+    { "quelle": "com.aufgaben", "art": "zeit", "text": "gepflanzt: Aufgabenplanung: 10 s überschritten" }
+  ]
+}

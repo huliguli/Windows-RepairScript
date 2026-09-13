@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "aufgezeichnet": "2026-09-11T16:00:00Z",
+  "erhoeht": false,
+  "sprache": { "lcid": 1031, "mui": ["de-DE"] },
+  "ereignisse": {
+    "beginnSystem": "2026-08-22T16:00:00Z",
+    "beginnApplication": "2026-08-22T16:00:00Z",
+    "tage": 90,
+    "eintraege": []
+  },
+  "zuverlaessigkeit": { "index": 9.382, "zeit": "2026-09-11T15:00:00Z" }
+}

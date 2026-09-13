@@ -2,8 +2,8 @@ using System.Reflection;
 
 [assembly: AssemblyTitle("Windows-Wartung")]
 [assembly: AssemblyProduct("Windows-Wartung")]
-[assembly: AssemblyDescription("Wartung und Reparatur für Windows, in einfachen Worten")]
+[assembly: AssemblyDescription("PC-Reparatur-System: misst, zeigt, fragt, repariert nachvollziehbar")]
 [assembly: AssemblyCompany("Jonas")]
 [assembly: AssemblyCopyright("© 2026 Jonas")]
-[assembly: AssemblyVersion("7.3.2.0")]
-[assembly: AssemblyFileVersion("7.3.2.0")]
+[assembly: AssemblyVersion("8.0.0.0")]
+[assembly: AssemblyFileVersion("8.0.0.0")]

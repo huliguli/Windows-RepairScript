@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "aufgezeichnet": "2026-09-11T16:00:00Z",
+  "erhoeht": false,
+  "sprache": { "lcid": 1031, "mui": ["de-DE"] },
+  "sicherheit": { "secureBoot": false },
+  "autostart": {
+    "eintraege": [
+      { "quelle": "HKLM\\Run", "name": "SecurityHealth", "befehl": "%windir%\\system32\\SecurityHealthSystray.exe", "aktiviert": true, "signierer": "CN=Microsoft Windows, O=Microsoft Corporation, L=Redmond, S=Washington, C=US" }
+    ],
+    "shell": "cmd.exe",
+    "userinit": "C:\\WINDOWS\\system32\\userinit.exe,",
+    "appInitDlls": "C:\\Users\\Public\\hook.dll",
+    "appInitDlls32": "",
+    "loadAppInitDlls": true
+  }
+}

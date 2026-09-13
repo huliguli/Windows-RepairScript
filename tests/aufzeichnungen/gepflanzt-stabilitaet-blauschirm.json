@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "aufgezeichnet": "2026-09-11T16:00:00Z",
+  "erhoeht": false,
+  "sprache": { "lcid": 1031, "mui": ["de-DE"] },
+  "windows": { "caption": "Microsoft Windows 11 Pro", "edition": "Professional", "build": 26200, "ubr": 9445, "displayVersion": "25H2", "produktTyp": 1, "x64": true },
+  "geraete": [
+    { "instanzId": "PCI\\VEN_10DE&DEV_2684&SUBSYS_00000000&REV_A1\\4&1a2b3c4d&0&0008", "klasse": "Display", "name": "Grafikkarte (Beispiel)", "present": true, "problemCode": 0 }
+  ],
+  "ereignisse": {
+    "beginnSystem": "2026-06-01T00:00:00Z",
+    "beginnApplication": "2026-05-28T00:00:00Z",
+    "tage": 90,
+    "eintraege": [
+      {
+        "log": "System", "anbieter": "Microsoft-Windows-Kernel-Power", "id": 41, "level": 1, "zeit": "2026-09-01T10:00:00Z",
+        "felder": {
+          "BugcheckCode": "159",
+          "BugcheckParameter1": "0x3",
+          "BugcheckParameter2": "0xffffe00012345678",
+          "BugcheckParameter3": "0xfffff80012345678",
+          "BugcheckParameter4": "0xffffe00087654321",
+          "SleepInProgress": "0",
+          "PowerButtonTimestamp": "0",
+          "BootAppStatus": "0"
+        }
+      },
+      {
+        "log": "System", "anbieter": "Microsoft-Windows-WER-SystemErrorReporting", "id": 1001, "level": 2, "zeit": "2026-09-01T10:01:00Z",
+        "felder": { "param1": "0x0000009f (0x0000000000000003, 0xffffe00012345678, 0xfffff80012345678, 0xffffe00087654321)", "param2": "C:\\WINDOWS\\MEMORY.DMP", "param3": "abcdef01-0000-0000-0000-000000000000" }
+      },
+      {
+        "log": "System", "anbieter": "User32", "id": 1074, "level": 4, "zeit": "2026-08-20T18:00:00Z",
+        "felder": { "0": "C:\\WINDOWS\\system32\\winlogon.exe (RECHNER)", "1": "RECHNER", "2": "Betriebssystem: Aktualisierung (geplant)", "3": "0x80020003", "4": "neu starten", "5": "", "6": "NT-AUTORITÄT\\SYSTEM" }
+      },
+      {
+        "log": "System", "anbieter": "Microsoft-Windows-Kernel-General", "id": 12, "level": 4, "zeit": "2026-09-01T10:00:05Z",
+        "felder": { "MajorVersion": "10", "MinorVersion": "0", "BuildVersion": "26100", "QfeVersion": "9444", "StartTime": "2026-09-01T10:00:05.0000000Z" }
+      }
+    ]
+  },
+  "zuverlaessigkeit": { "index": 7.5, "zeit": "2026-09-11T15:00:00Z" }
+}

@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "aufgezeichnet": "2026-09-11T16:00:00Z",
+  "erhoeht": false,
+  "sprache": { "lcid": 1033, "mui": ["en-US"] },
+  "netz": {
+    "adapter": [
+      { "name": "Ethernet", "beschreibung": "Sample Gigabit Network Connection", "pnpId": "PCI\\VEN_0000&DEV_0001\\1", "index": 8,
+        "opStatus": 1, "medien": 1, "empfangBitS": 1000000000, "physisch": true, "virtuell": false,
+        "treiberVersion": "1.0.0.0", "treiberDatum": "2025-09-03T00:00:00Z", "dhcp": true },
+      { "name": "Wi-Fi", "beschreibung": "Sample Wireless LAN Card", "pnpId": "PCI\\VEN_0000&DEV_0002\\1", "index": 7,
+        "opStatus": 2, "medien": 2, "physisch": true, "virtuell": false, "dhcp": true }
+    ],
+    "ipAdressen": [
+      { "adapterIndex": 8, "adresse": "169.254.34.9", "familie": 2, "herkunft": 2, "zustand": 4 },
+      { "adapterIndex": 8, "adresse": "fe80::1:2:3:4%8", "familie": 23, "herkunft": 2, "zustand": 4 },
+      { "adapterIndex": 1, "adresse": "127.0.0.1", "familie": 2, "herkunft": 2, "zustand": 4 }
+    ],
+    "gateways": [],
+    "dns": [],
+    "profile": [],
+    "proxy": { "winInetAktiv": false, "autoDetect": true, "winHttpTyp": 1 },
+    "hosts": [],
+    "sonden": { "dns": false, "dnsFehler": "timeout", "ncsi": false, "ncsiInhaltStimmt": false, "tcp443": false, "dauerMs": 6400 }
+  }
+}

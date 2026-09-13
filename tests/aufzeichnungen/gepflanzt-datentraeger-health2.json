@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "aufgezeichnet": "2026-09-11T16:00:00Z",
+  "erhoeht": true,
+  "sprache": {
+    "lcid": 1031
+  },
+  "datentraeger": [
+    {
+      "nummer": 0,
+      "name": "Muster NVMe 1TB",
+      "medienTyp": 4,
+      "busTyp": 17,
+      "health": 2,
+      "opStatus": [
+        6
+      ],
+      "groesseBytes": 1000204886016,
+      "firmware": "1.0",
+      "trim": true,
+      "tempWarn": 90,
+      "tempKritisch": 94,
+      "nvme": {
+        "criticalWarning": 0,
+        "spare": 100,
+        "spareSchwelle": 10,
+        "usedPct": 1,
+        "tempC": 39,
+        "stunden": 3921,
+        "unsafeShutdowns": 66,
+        "medienFehler": 0
+      }
+    }
+  ],
+  "volumes": [
+    {
+      "pfad": "\\\\?\\Volume{00000000-0000-0000-0000-000000000001}\\",
+      "dateisystem": "NTFS",
+      "typ": 3,
+      "groesseBytes": 536870912000,
+      "freiBytes": 214748364800,
+      "health": 0,
+      "opStatus": [
+        2
+      ],
+      "gptTyp": "{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}",
+      "versteckt": false,
+      "system": false,
+      "boot": true,
+      "buchstabe": "C",
+      "dirty": false,
+      "label": "Windows"
+    }
+  ],
+  "ereignisse": {
+    "beginnSystem": "2026-05-01T00:00:00Z",
+    "beginnApplication": "2026-05-01T00:00:00Z",
+    "tage": 90,
+    "eintraege": []
+  },
+  "systemschutz": {
+    "diskPercent": 15,
+    "sessionInterval": 1,
+    "policyAus": false,
+    "punkte": [
+      {
+        "nummer": 41,
+        "beschreibung": "Windows Update",
+        "typ": 0,
+        "zeit": "2026-09-08T10:00:00Z"
+      },
+      {
+        "nummer": 40,
+        "beschreibung": "Vor Wartung",
+        "typ": 0,
+        "zeit": "2026-09-01T09:00:00Z"
+      }
+    ],
+    "schattenBelegt": 17671159808,
+    "schattenMax": 19982712832
+  },
+  "fehlerliste": []
+}

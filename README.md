@@ -1,39 +1,58 @@
 # Windows-Wartung
 
-Ein Wartungs- und Reparaturwerkzeug für Windows, gebaut für Menschen **ohne** PC-Kenntnisse.
+Ein PC-Reparatur-System für Windows 10 und 11, gebaut für Menschen **ohne** PC-Kenntnisse
+und für die, die ihnen helfen.
 
 Beim Öffnen sieht man, wie es dem PC geht, und darunter genau eine Schaltfläche:
-**PC jetzt prüfen**. Die Prüfung liest nur, sie verändert nichts. Danach steht in
-Alltagssprache da, was gefunden wurde, was behoben wurde und was noch zu tun ist.
+**PC jetzt prüfen**. Die Prüfung liest in wenigen Sekunden aus, was in diesem PC steckt und
+wie es ihm geht. Sie verändert nichts. Danach steht zu jedem Punkt in Alltagssprache, was
+gemessen wurde, woher der Wert kommt, ab wann er ein Problem ist und was zu tun ist.
 
-Wer mehr will, findet hinter **Alle Werkzeuge** die 28 Einzelaktionen, die dieses Programm
+Wer mehr will, findet hinter **Alle Werkzeuge** die Einzelaktionen, die dieses Programm
 seit jeher bündelt: die Befehle, die man sonst einzeln in ein schwarzes Fenster tippt.
 
 Die Oberfläche ist HTML/CSS und läuft in einem schlanken **WebView2**-Fenster, die Logik
-steckt in C#. Das Ergebnis ist eine rund 190 KB kleine `.exe`, die **ohne jede
-Laufzeit-Installation** auf jedem Windows 11 startet.
+steckt in C#. Das Ergebnis ist eine kleine `.exe`, die **ohne jede Laufzeit-Installation**
+auf jedem Windows 10 und 11 startet.
 
 ## Der Hauptweg
 
-**Prüfen** (verändert nichts): sieben lesende Prüfungen plus die beiden Windows-eigenen
-Werkzeuge für Bausteine und Systemdateien:
+**Prüfen** (verändert nichts, dauert Sekunden): Das Programm liest den PC im eigenen Prozess
+über die Schnittstellen von Windows aus, ohne ein einziges PowerShell-Fenster zu starten, und
+bewertet die Messwerte nach dokumentierten Grenzen:
 
-| Bereich | Was geprüft wird |
+| Bereich | Was gemessen wird |
 | --- | --- |
-| Windows-Dateien | ob wichtige Dateien von Windows beschädigt sind |
-| Freier Speicherplatz | ob genug Platz für Updates und zum Arbeiten bleibt |
-| Sicherheit | Virenschutz, Alter der Erkennungsdaten, Firewall, Verschlüsselung |
-| Zustand der Festplatten | Selbstdiagnose, Verschleiß, Betriebsstunden |
-| Ordnung auf der Festplatte | ob Windows eine Festplattenprüfung vorgemerkt hat |
-| Windows-Updates | ausstehender Neustart, Alter des letzten Updates |
-| Stabilität | Abstürze und unerwartete Neustarts der letzten 14 Tage |
-| Akku | verbliebene Kapazität gegenüber dem Neuzustand (nur bei Laptops) |
+| Sicherheit | Virenschutz (auch Fremdprogramme), Erkennungsdaten, letzter Scan, Firewall je Netz, Benutzerkontensteuerung, SmartScreen, Secure Boot, Konten ohne Kennwort |
+| Zustand der Festplatten | Selbstdiagnose des Laufwerks, bei NVMe das Gesundheitsprotokoll (Reserve, Verbrauch, Medienfehler), Temperatur gegen die Grenzen des Herstellers, TRIM, Dateisystem-Zustand, Fehlermeldungen der letzten 90 Tage |
+| Freier Speicherplatz | frei und gesamt je Laufwerk |
+| Stabilität | Blauschirme mit Fehlercode, Stromausfälle, Programmabstürze je Programm, Hardwarefehler, alles aus dem Ereignisprotokoll der letzten 90 Tage |
+| Windows-Updates | ausstehender Neustart, fehlgeschlagene Updates mit Fehlercode, Updates, die sich immer wieder installieren, Alter des letzten Sicherheitsupdates, ausgeblendete Updates |
+| Geräte und Treiber | jedes Gerät mit Problemcode, eingestuft in Defekt, vorübergehend oder gewollt; Treiberversion und -datum |
+| Arbeitsspeicher und Auslastung | freier Speicher über drei Messungen, Speicherfresser, Anzahl der Programme, die mit dem PC starten |
+| Netzwerk | Adapter, Adresse, Router, Namensauflösung, Internet über die Windows-eigene Prüfadresse, Proxy, umgeleitete Adressen in der hosts-Datei |
 
-**Beheben**: legt zuerst einen Sicherungspunkt an, holt dann fehlende Windows-Bausteine
-nach, ersetzt beschädigte Dateien und räumt bei Bedarf Datenmüll weg.
+**Fragen statt handeln.** Ist etwas abgeschaltet, das Absicht sein kann (ein Gerät, ein
+Dienst), fragt das Programm einmal und merkt sich die Antwort. Es repariert nichts, was der
+Nutzer selbst so eingerichtet hat.
 
-Was sich **nicht** feststellen ließ, wird auch so genannt. Eine Prüfung ohne Daten wird
-niemals als Problem ausgegeben.
+**Tiefenprüfung** (auf Wunsch, 5 bis 10 Minuten): lässt Windows seine eigenen Dateien und
+Bausteine durchsehen. Meldet nur, repariert nichts.
+
+**Beheben**: gibt es nur für das, was ein Befund benennt. Vorher wird ein Sicherungspunkt
+angelegt; das Programm prüft, ob er wirklich entstanden ist.
+
+Was sich **nicht** feststellen ließ, wird auch so genannt, samt Grund (fehlende Rechte, keine
+Daten). Eine Prüfung ohne Daten wird niemals als Problem ausgegeben, und niemals als „in
+Ordnung“.
+
+**Protokoll für zwei Leser.** Jeder Lauf schreibt ein Protokoll: eine Zeile in Alltagssprache
+für den Nutzer, das Fachliche (Messwert, Quelle, Schwelle, Befehl, Dauer) daneben für den
+Techniker. „Bericht speichern“ legt beides als Textdatei ab.
+
+Auf einem fremden Rechner ohne Klick: `WindowsWartung.exe --aufzeichnen bild.json` nimmt das
+Systembild auf (Rechnername, Benutzername, Seriennummern und Adressen werden entfernt),
+`--pruefen bild.json` schreibt die Befunde daneben.
 
 ## Alle Werkzeuge
 
@@ -104,15 +123,18 @@ ist bewusst eng, weil eine falsche Vermutung hier Programme kaputt macht:
 ## Aufbau
 
 ```
-host/        C#-Host: Fenster, WebView2, Nachrichtenbrücke, Update
-host/CheckFlow.cs   der Hauptweg (prüfen und beheben)
-host/ScanFlow.cs    die beiden Suchläufe (Speicherplatz, Registrierung)
+kern/        Datenmodell (Systembild, Befund), Regeln je Bereich, Entscheidungen, Protokoll
+             hängt von nichts ab: läuft in den Proben ohne Rechte und ohne Fenster
+sammler/     füllt das Systembild im eigenen Prozess (WMI, Ereignisprotokoll, Registry, COM)
+host/        C#-Host: Fenster, WebView2, Nachrichtenbrücke, Hauptweg (CheckFlow), Update
 ui/          Oberfläche in HTML/CSS/JS
-src/         Aktionskatalog, Prüfungen, Befehls-Runner, Protokoll
-tests/       Prüfskript für Sprache, Optik und Sicherheitszusagen
+src/         Werkzeugkasten (Aktionskatalog, Befehls-Runner), Verlauf, Signaturbindung
+tests/       run-tests.ps1, Kernproben (proben/) und aufgezeichnete Testbilder (aufzeichnungen/)
+tools/       Compiler-Aufruf, Kommandozeile (aufzeichnen.exe), Probenläufer
 libs/        WebView2-DLLs (eingecheckt)
 installer/   Setup-Skript (Inno Setup)
 build.ps1    Bau über den Roslyn-Compiler des .NET SDK
+DEPLOYMENT.md  bauen, signieren, veröffentlichen, aktualisieren
 ```
 
 ## Installation
@@ -150,7 +172,10 @@ dort `--shotwait` großzügig setzen.
 
 ## Hinweise
 
-- Die Prüfung braucht je nach System 5 bis 10 Minuten. Der PC bleibt benutzbar.
+- Die Prüfung braucht wenige Sekunden. Die Tiefenprüfung der Windows-Dateien dauert 5 bis
+  10 Minuten; der PC bleibt dabei benutzbar.
+- Das Programm sendet nichts nach außen. Die einzige Verbindung ins Internet ist die
+  Update-Prüfung bei GitHub und, bei der Netzwerkprüfung, die Prüfadresse von Windows selbst.
 - Zurücksetzen der Interneteinstellungen und die Speicherprüfung brauchen danach einen
   Neustart.
 - Programm und Installer sind signiert, allerdings mit einem selbst ausgestellten

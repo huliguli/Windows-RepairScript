@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "aufgezeichnet": "2026-09-11T16:00:00Z",
+  "erhoeht": false,
+  "sprache": { "lcid": 1031, "mui": ["de-DE"] },
+  "sicherheit": { "werDeaktiviert": true },
+  "ereignisse": {
+    "beginnSystem": "2026-06-01T00:00:00Z",
+    "beginnApplication": "2026-05-28T00:00:00Z",
+    "tage": 90,
+    "eintraege": [
+      {
+        "log": "Application", "anbieter": "Application Error", "id": 1000, "level": 2, "zeit": "2026-09-02T12:00:00Z",
+        "felder": { "AppName": "beispiel.exe", "AppVersion": "3.1.0.0", "AppTimeStamp": "66aa0000", "ModuleName": "ntdll.dll", "ModuleVersion": "10.0.26100.9444", "ModuleTimeStamp": "00000000", "ExceptionCode": "c0000374", "FaultingOffset": "00000000000a1234", "ProcessId": "0x1a2b", "ProcessCreationTime": "0x1dc0000", "AppPath": "C:\\Program Files\\Beispiel\\beispiel.exe", "ModulePath": "C:\\WINDOWS\\SYSTEM32\\ntdll.dll", "IntegratorReportId": "00000000-0000-0000-0000-000000000001", "PackageFullName": "", "PackageRelativeAppId": "" }
+      },
+      {
+        "log": "Application", "anbieter": "Application Error", "id": 1000, "level": 2, "zeit": "2026-09-05T12:00:00Z",
+        "felder": { "AppName": "beispiel.exe", "AppVersion": "3.1.0.0", "ModuleName": "beispiel.exe", "ModuleVersion": "3.1.0.0", "ExceptionCode": "c0000005", "FaultingOffset": "0000000000012345", "AppPath": "C:\\Program Files\\Beispiel\\beispiel.exe", "ModulePath": "C:\\Program Files\\Beispiel\\beispiel.exe" }
+      },
+      {
+        "log": "Application", "anbieter": "Application Error", "id": 1000, "level": 2, "zeit": "2026-09-09T12:00:00Z",
+        "felder": { "AppName": "Beispiel.exe", "AppVersion": "3.1.0.0", "ModuleName": "beispiel.exe", "ModuleVersion": "3.1.0.0", "ExceptionCode": "c0000005", "FaultingOffset": "0000000000012345", "AppPath": "C:\\Program Files\\Beispiel\\beispiel.exe", "ModulePath": "C:\\Program Files\\Beispiel\\beispiel.exe" }
+      },
+      {
+        "log": "Application", "anbieter": "Application Error", "id": 1000, "level": 2, "zeit": "2026-07-15T12:00:00Z",
+        "felder": { "AppName": "beispiel.exe", "AppVersion": "3.0.0.0", "ModuleName": "beispiel.exe", "ExceptionCode": "c0000005", "AppPath": "C:\\Program Files\\Beispiel\\beispiel.exe", "ModulePath": "C:\\Program Files\\Beispiel\\beispiel.exe" }
+      },
+      {
+        "log": "Application", "anbieter": "Application Error", "id": 1000, "level": 2, "zeit": "2026-09-03T12:00:00Z",
+        "felder": { "AppName": "zwei.exe", "AppVersion": "1.0.0.0", "ModuleName": "zwei.exe", "ExceptionCode": "c0000005", "AppPath": "C:\\Program Files\\Zwei\\zwei.exe", "ModulePath": "C:\\Program Files\\Zwei\\zwei.exe" }
+      },
+      {
+        "log": "Application", "anbieter": "Application Error", "id": 1000, "level": 2, "zeit": "2026-09-06T12:00:00Z",
+        "felder": { "AppName": "zwei.exe", "AppVersion": "1.0.0.0", "ModuleName": "zwei.exe", "ExceptionCode": "c0000005", "AppPath": "C:\\Program Files\\Zwei\\zwei.exe", "ModulePath": "C:\\Program Files\\Zwei\\zwei.exe" }
+      },
+      {
+        "log": "Application", "anbieter": "Application Error", "id": 1000, "level": 2, "zeit": "2026-08-26T20:10:00Z",
+        "felder": { "AppName": "drei.exe", "AppVersion": "2.5.0.0", "ModuleName": "nvml.dll", "ModuleVersion": "32.0.15.8020", "ExceptionCode": "c0000005", "FaultingOffset": "000000000004ab10", "AppPath": "C:\\Program Files\\Drei\\drei.exe", "ModulePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\nv_dispi.inf_amd64_0123456789abcdef\\nvml.dll" }
+      },
+      {
+        "log": "Application", "anbieter": "Application Error", "id": 1000, "level": 2, "zeit": "2026-09-04T20:10:00Z",
+        "felder": { "AppName": "drei.exe", "AppVersion": "2.5.0.0", "ModuleName": "nvml.dll", "ModuleVersion": "32.0.15.8020", "ExceptionCode": "c0000005", "FaultingOffset": "000000000004ab10", "AppPath": "C:\\Program Files\\Drei\\drei.exe", "ModulePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\nv_dispi.inf_amd64_0123456789abcdef\\nvml.dll" }
+      },
+      {
+        "log": "Application", "anbieter": "Application Error", "id": 1000, "level": 2, "zeit": "2026-09-11T08:10:00Z",
+        "felder": { "AppName": "drei.exe", "AppVersion": "2.5.0.0", "ModuleName": "nvml.dll", "ModuleVersion": "32.0.15.8020", "ExceptionCode": "c0000005", "FaultingOffset": "000000000004ab10", "AppPath": "C:\\Program Files\\Drei\\drei.exe", "ModulePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\nv_dispi.inf_amd64_0123456789abcdef\\nvml.dll" }
+      },
+      {
+        "log": "Application", "anbieter": "Application Hang", "id": 1002, "level": 2, "zeit": "2026-09-07T12:00:00Z",
+        "felder": { "AppName": "beispiel.exe", "AppVersion": "3.1.0.0", "ProcessId": "0x1a2b", "StartTime": "0x1dc0000", "TerminationTime": "12", "ExeFileName": "C:\\Program Files\\Beispiel\\beispiel.exe", "ReportId": "00000000-0000-0000-0000-000000000002", "PackageFullName": "", "PackageRelativeAppId": "", "HangType": "Unknown" }
+      }
+    ]
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "aufgezeichnet": "2026-09-13T10:00:00Z",
+  "erhoeht": false,
+  "sprache": { "lcid": 1031, "mui": ["de-DE"] },
+  "hardware": { "ramGesamtKB": 16777216 },
+  "leistung": {
+    "ramGesamtKB": 16630000,
+    "ramFreiKB": 310000,
+    "verfuegbarMB": [300, 320, 310],
+    "commitPct": [85, 86, 84],
+    "abstandMs": 1000,
+    "speicherQuelle": "wmi",
+    "auslagerungMB": 2432,
+    "prozesse": [
+      { "pid": 4321, "name": "speicherfresser", "pfad": "C:\\Program Files\\Fresser\\speicherfresser.exe", "arbeitsspeicherBytes": 9126805504, "cpuPct": 12.5 }
+    ]
+  },
+  "autostart": {
+    "eintraege": [
+      { "quelle": "HKLM\\Run", "name": "SecurityHealth", "befehl": "%windir%\\system32\\SecurityHealthSystray.exe", "aktiviert": true, "signierer": "CN=Microsoft Windows, O=Microsoft Corporation, L=Redmond, S=Washington, C=US", "microsoft": true, "dateiVorhanden": true }
+    ],
+    "shell": "explorer.exe",
+    "userinit": "C:\\WINDOWS\\system32\\userinit.exe,",
+    "appInitDlls": "",
+    "appInitDlls32": "",
+    "loadAppInitDlls": false
+  },
+  "fehlerliste": [
+    { "quelle": "perf.speicher", "art": "ausnahme", "text": "gepflanzt: Leistungszähler nicht lesbar, Werte aus Win32_PerfFormattedData_PerfOS_Memory" }
+  ]
+}

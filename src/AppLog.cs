@@ -111,7 +111,7 @@ namespace WartungsToolbox
                 string msg =
                     "In Windows-Wartung ist ein unerwarteter Fehler aufgetreten." + Environment.NewLine + Environment.NewLine +
                     "Ihrem PC ist dabei nichts passiert. Bitte starten Sie das Programm neu." + Environment.NewLine + Environment.NewLine +
-                    "Einzelheiten fuer die Fehlersuche stehen in:" + Environment.NewLine + Path;
+                    "Einzelheiten für die Fehlersuche stehen in:" + Environment.NewLine + Path;
                 System.Windows.Forms.MessageBox.Show(msg, "Windows-Wartung",
                     System.Windows.Forms.MessageBoxButtons.OK,
                     System.Windows.Forms.MessageBoxIcon.Error);

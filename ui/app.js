@@ -36,7 +36,9 @@ function el(tag, cls, html){
 /* ---------- Zustand ---------- */
 const S = {
   catalog: null,        // vom Host
-  checks: [],           // letzter Befund
+  checks: [],           // Bereichszeilen des letzten Laufs (Startseite)
+  befunde: [],          // einzelne Befunde des letzten Laufs (Ergebnis)
+  fragen: 0,            // offene Fragen an den Nutzer
   screen: 'start',
   sub: null,            // geoeffnete Nebenansicht
   storage: null,        // letztes Ergebnis "wo steckt der Platz?"
@@ -52,6 +54,8 @@ const S = {
   delay: 60,            // Sekunden zum Abbrechen, bevor es passiert
   selfStart: false,     // startet die App mit dem PC?
   admin: true,
+  shot: false,          // Belegaufnahme (--shot): Haken fuer Screenshots erlaubt
+  glanceFehler: '',     // der Erstbefund ist gescheitert (Text vom Host)
   fremdesKonto: false,  // laeuft unter einem anderen Konto als dem angemeldeten
   laeuftAls: '',
   angemeldet: '',
@@ -121,7 +125,9 @@ function go(where){
 /* =====================================================================
    Startbildschirm
    ===================================================================== */
-const STATE_WORD = { ok:'in Ordnung', warn:'beachten', bad:'Problem', unknown:'keine Daten' };
+/* „absicht“ ist neu in v8: der Zustand ist so gewollt, der Nutzer hat es bestätigt.
+   Er zählt weder als Problem noch als „keine Daten“. */
+const STATE_WORD = { ok:'in Ordnung', warn:'beachten', bad:'Problem', unknown:'keine Daten', absicht:'so gewollt', frage:'Ihre Antwort' };
 
 function renderStart(){
   const ico = $('#start-ico');
@@ -131,32 +137,37 @@ function renderStart(){
     ico.className = 'vico'; ico.innerHTML = svg('shield');
     $('#start-title').textContent = 'Ihr PC wurde noch nicht geprüft';
     $('#start-lead').textContent =
-      'Die Prüfung schaut nach, ob mit Windows etwas nicht stimmt: beschädigte Dateien, ' +
-      'zu wenig freier Speicher, Probleme beim Start. Sie verändert dabei nichts an Ihren ' +
+      'Die Prüfung liest aus, was in diesem PC steckt und wie es ihm geht: Festplatten, ' +
+      'Geräte, Abstürze, Updates, Netzwerk, Schutz. Sie verändert dabei nichts an Ihren ' +
       'Fotos, Dokumenten oder Programmen.';
   } else {
     const n = S.checks.filter(c => c.state === 'warn' || c.state === 'bad').length;
     ico.className = 'vico ' + worst;
     ico.innerHTML = svg(worst === 'ok' ? 'checkCircle' : 'alert');
-    if(worst === 'ok'){
+    if(worst === 'ok' && !S.fragen){
       $('#start-title').textContent = 'Auf den ersten Blick sieht alles gut aus';
       $('#start-lead').textContent =
-        'Wir haben schnell nachgesehen und nichts Auffälliges gefunden. Die vollständige ' +
-        'Prüfung schaut zusätzlich die Dateien von Windows durch, das dauert ein paar Minuten.';
+        'Wir haben den PC gelesen und nichts Auffälliges gefunden. Die Prüfung zeigt jeden ' +
+        'Messwert und bietet danach eine Tiefenprüfung der Windows-Dateien an.';
+    } else if(worst === 'ok' && S.fragen){
+      $('#start-title').textContent = S.fragen === 1 ? 'Eine Frage an Sie' : S.fragen + ' Fragen an Sie';
+      $('#start-lead').textContent =
+        'Etwas an diesem PC ist abgeschaltet oder ungewöhnlich eingestellt. Das kann Absicht sein. ' +
+        'Starten Sie die Prüfung, dann können Sie es beantworten; geändert wird nichts ohne Sie.';
     } else {
       $('#start-title').textContent = n === 1
         ? 'Eine Sache sollten Sie sich ansehen'
         : n + ' Dinge sollten Sie sich ansehen';
       $('#start-lead').textContent =
-        'Das ist ein schneller erster Blick. Die vollständige Prüfung sieht zusätzlich nach, ' +
-        'ob Dateien von Windows beschädigt sind, und kann vieles davon selbst beheben.';
+        'Das ist der erste Blick. Die Prüfung zeigt zu jedem Punkt den Messwert, woher er kommt ' +
+        'und was Sie tun können.';
     }
   }
 
   const box = $('#start-areas');
   box.innerHTML = '';
   if(!S.checks.length){
-    box.appendChild(el('p','hint','Der erste Blick auf Ihren PC wird geladen …'));
+    box.appendChild(el('p','hint', S.glanceFehler ? esc(S.glanceFehler) : 'Der erste Blick auf Ihren PC wird geladen …'));
   } else {
     S.checks.forEach(c => box.appendChild(areaRow(c)));
   }
@@ -233,14 +244,20 @@ function startFlow(mode){
   $('#run-pct').textContent = '';
   setBar(-1);
 
+  /* Drei Läufe: 'check' liest den PC in Sekunden (Sammler + Regeln), 'deep' lässt DISM
+     und SFC lesend über die Windows-Dateien laufen (Minuten), 'fix' repariert nur, was
+     die Tiefenprüfung gefunden hat. */
   $('#run-ico').className = 'vico';
   $('#run-ico').innerHTML = svg(mode === 'fix' ? 'wrench' : 'shield');
-  $('#run-title').textContent = mode === 'fix' ? 'Ihr PC wird repariert' : 'Ihr PC wird geprüft';
+  $('#run-title').textContent = mode === 'fix' ? 'Ihr PC wird repariert'
+                              : (mode === 'deep' ? 'Die Windows-Dateien werden tief geprüft' : 'Ihr PC wird gelesen');
   $('#run-lead').textContent = mode === 'fix'
-    ? 'Wir beheben jetzt, was sich beheben lässt. Bitte lassen Sie den PC dabei eingeschaltet. ' +
-      'Ein Sicherungspunkt ist angelegt, damit sich alles rückgängig machen lässt.'
-    : 'Das dauert einen Moment. Sie können das Fenster ruhig zur Seite legen und weiterarbeiten. ' +
-      'Wir melden uns, wenn wir fertig sind.';
+    ? 'Wir beheben jetzt, was die Tiefenprüfung gefunden hat. Bitte lassen Sie den PC dabei eingeschaltet. ' +
+      'Vorher legen wir einen Sicherungspunkt an.'
+    : (mode === 'deep'
+      ? 'Das dauert 5 bis 10 Minuten. Sie können das Fenster zur Seite legen und weiterarbeiten. ' +
+        'Es wird nur gelesen, nichts verändert.'
+      : 'Das dauert wenige Sekunden. Es wird nur gelesen, nichts verändert.');
   $('#run-foot').innerHTML = svg('info') +
     '<span>' + (mode === 'fix'
       ? 'Sie können abbrechen. Was bereits repariert wurde, bleibt erhalten.'
@@ -248,7 +265,7 @@ function startFlow(mode){
 
   renderPostChoice();
   show('run');
-  send({ type: mode === 'fix' ? 'startFix' : 'startCheck' });
+  send({ type: mode === 'fix' ? 'startFix' : (mode === 'deep' ? 'startDeepCheck' : 'startCheck') });
   // Der Hauptweg schickt seine Wahl getrennt: startCheck/startFix tragen sie nicht mit,
   // und der Nutzer darf sie waehrend des Laufs noch aendern.
   send({ type:'setPost', post:S.post, delay:S.delay });
@@ -325,17 +342,27 @@ function renderResult(r){
       : 'Die Prüfung ist fertig. Diese Punkte sind aufgefallen.';
   }
 
-  // Befunde ausführlich, Unauffälliges zusammengefasst. Sonst rutscht die
-  // Handlungsempfehlung unter den sichtbaren Bereich und wird übersehen.
+  // Seit v8 kommen die Befunde einzeln (r.befunde), jeder mit Messwert, Quelle und Rat.
+  // Die Bereichszeilen (r.checks) bleiben für die Startseite und die Gruppen.
+  // Reihenfolge: Fragen zuerst (sie brauchen den Nutzer), dann bad vor warn.
   const rank = { bad:0, warn:1 };
-  const issues = r.checks.filter(c => c.state === 'bad' || c.state === 'warn')
-                         .sort((a,b) => rank[a.state] - rank[b.state]);
-  const good    = r.checks.filter(c => c.state === 'ok');
-  const unknown = r.checks.filter(c => c.state === 'unknown');
+  const befunde = r.befunde || [];
+  const fragen = befunde.filter(b => b.frage);
+  const issues = befunde.filter(b => !b.frage && (b.state === 'bad' || b.state === 'warn'))
+                        .sort((a,b) => rank[a.state] - rank[b.state]);
+  // Beantwortete Fragen bleiben als eigene Karte sichtbar („so gewollt“): Wer gerade
+  // geantwortet hat, soll sehen, dass die Antwort angekommen ist und was sie bewirkt.
+  const absicht = befunde.filter(b => !b.frage && b.state === 'absicht');
+  const fileIssue = r.checks.find(c => c.key === 'files' && (c.state === 'bad' || c.state === 'warn'));
+  const good    = r.checks.filter(c => c.state === 'ok' || c.state === 'absicht');
+  const unknown = r.checks.filter(c => c.state === 'unknown' && c.key !== 'files');
 
   const box = $('#res-list');
   box.innerHTML = '';
-  issues.forEach(c => box.appendChild(resultCard(c)));
+  fragen.forEach(b => box.appendChild(frageCard(b)));
+  if(fileIssue) box.appendChild(resultCard(fileIssue));
+  issues.forEach(b => box.appendChild(resultCard(b)));
+  absicht.forEach(b => box.appendChild(resultCard(b)));
 
   // Nicht Prüfbares wird getrennt ausgewiesen. Es unter "unauffällig" zu verbuchen
   // wäre eine Behauptung, die wir nicht belegen können.
@@ -350,13 +377,30 @@ function renderResult(r){
   const next = $('#res-next');
   next.hidden = false;
   next.innerHTML = '';
-  if(r.fixable && r.mode === 'check'){
+  if(fragen.length){
     next.appendChild(el('span','next-b',
       '<div class="next-t">Was Sie jetzt tun sollten</div>' +
-      '<div class="next-s">Vieles davon können wir selbst beheben. Vorher legen wir einen ' +
-      'Sicherungspunkt an, damit sich alles rückgängig machen lässt.</div>'));
-    const b = el('button','btn btn-primary btn-md','Gefundene Probleme beheben');
+      '<div class="next-s">' + (fragen.length === 1 ? 'Eine Frage oben braucht Ihre Antwort. '
+                                                    : fragen.length + ' Fragen oben brauchen Ihre Antwort. ') +
+      'Das Programm ändert nichts, was Sie selbst so eingerichtet haben könnten.</div>'));
+  } else if(r.fixable && r.mode !== 'fix'){
+    next.appendChild(el('span','next-b',
+      '<div class="next-t">Was Sie jetzt tun sollten</div>' +
+      '<div class="next-s">Beschädigte Windows-Dateien lassen sich reparieren. Vorher legen wir einen ' +
+      'Sicherungspunkt an. Die Reparatur dauert 10 bis 20 Minuten.</div>'));
+    const b = el('button','btn btn-primary btn-md','Windows-Dateien reparieren');
     b.onclick = () => startFlow('fix');
+    next.appendChild(b);
+  } else if(!r.filesGeprueft && (r.mode === 'check' || r.mode === 'answer') && S.admin){
+    // Die Tiefenprüfung ist ein eigener, bewusster Schritt: sie dauert Minuten.
+    next.appendChild(el('span','next-b',
+      '<div class="next-t">' + (r.problems ? 'Was Sie jetzt tun sollten' : 'Wenn Sie es genau wissen wollen') + '</div>' +
+      '<div class="next-s">' + (r.problems ? 'Die Hinweise oben sagen bei jedem Punkt, was zu tun ist. '
+                                           : 'Nichts Auffälliges gefunden. ') +
+      'Die Windows-Dateien selbst wurden noch nicht durchgesehen; das dauert 5 bis 10 Minuten und ' +
+      'verändert nichts.</div>'));
+    const b = el('button', r.problems ? 'btn btn-ghost' : 'btn btn-primary btn-md', 'Windows-Dateien tief prüfen');
+    b.onclick = () => startFlow('deep');
     next.appendChild(b);
   } else if(r.restart){
     next.appendChild(el('span','next-b',
@@ -408,28 +452,77 @@ function groupCard(state, list, title){
   return card;
 }
 
+/* Eine Karte je Befund (oder je Bereichszeile für die Windows-Dateien). Der Laie liest
+   Titel, Satz und Rat; der Fachmann klappt „Fachlich“ auf: Messwert, Schwelle, Quelle
+   und die Einzelzeilen. */
 function resultCard(c){
   const card = el('div','rcard ' + c.state);
   card.innerHTML =
-    '<span class="rico">' + svg(c.state === 'ok' ? 'check' : (c.state === 'unknown' ? 'info' : 'alert')) + '</span>' +
+    '<span class="rico">' + svg((c.state === 'ok' || c.state === 'absicht') ? 'check' : (c.state === 'unknown' ? 'info' : 'alert')) + '</span>' +
     '<span class="rbody">' +
-      '<span class="rt">' + esc(c.title) + '</span>' +
+      '<span class="rt">' + esc(c.title) + (c.bereichTitel ? ' <span class="rarea">' + esc(c.bereichTitel) + '</span>' : '') +
+        (c.state === 'absicht' ? ' <span class="pill absicht">' + STATE_WORD.absicht + '</span>' : '') + '</span>' +
       '<div class="rs">' + esc(c.summary) + '</div>' +
       (c.advice ? '<div class="radv">' + esc(c.advice) + '</div>' : '') +
     '</span>';
   // Beim Speicherplatz bleibt der Rat sonst abstrakt. Von hier aus geht es dorthin,
   // wo steht, WAS den Platz belegt.
-  if(c.key === 'space' && (c.state === 'warn' || c.state === 'bad')){
+  const speicher = c.key === 'speicherplatz' || (c.key || '').indexOf('speicher.') === 0 || c.bereich === 'speicherplatz';
+  if(speicher && (c.state === 'warn' || c.state === 'bad')){
     const wo = el('button','btn btn-ghost','Wo steckt der Platz?');
     wo.style.marginTop = '10px';
     wo.onclick = () => go('storage');
     card.querySelector('.rbody').appendChild(wo);
   }
-  if(c.detail){
+  const fach = fachText(c);
+  if(fach){
     const d = el('details','disc');
     d.style.marginTop = '0';
-    d.innerHTML = '<summary>' + svg('chevron') + ' <b>Einzelheiten</b></summary>' +
-                  '<div class="disc-body"><p style="white-space:pre-line">' + esc(c.detail) + '</p></div>';
+    d.innerHTML = '<summary>' + svg('chevron') + ' <b>Fachlich</b></summary>' +
+                  '<div class="disc-body"><p class="fach" style="white-space:pre-line">' + esc(fach) + '</p></div>';
+    card.querySelector('.rbody').appendChild(d);
+  }
+  return card;
+}
+
+/* Messwert, Schwelle, Quelle und Einzelzeilen als Text. Für Bereichszeilen (nur detail)
+   und für Befunde (messwert/quelle/detail-Liste) gleichermaßen. */
+function fachText(c){
+  const t = [];
+  if(c.messwert && (c.messwert.wert != null)){
+    t.push('Messwert: ' + c.messwert.wert + (c.messwert.einheit ? ' ' + c.messwert.einheit : '') +
+           (c.messwert.schwelle ? '  (Schwelle ' + c.messwert.schwelle + ')' : ''));
+  }
+  if(c.quelle) t.push('Quelle: ' + c.quelle);
+  if(Array.isArray(c.detail)) c.detail.forEach(z => t.push(z));
+  else if(c.detail) t.push(c.detail);
+  if(c.key && c.key.indexOf('.') > 0) t.push('Kennung: ' + c.key);
+  return t.join('\n');
+}
+
+/* Eine Frage des Systems (Grundsatz 1: Absicht ist kein Fehler). Zwei Antworten, beide
+   werden gemerkt; die Regeln laufen danach erneut, ohne neu zu messen. */
+function frageCard(b){
+  const card = el('div','rcard unknown frage');
+  card.innerHTML =
+    '<span class="rico">' + svg('help') + '</span>' +
+    '<span class="rbody">' +
+      '<span class="rt">' + esc(b.title) + (b.bereichTitel ? ' <span class="rarea">' + esc(b.bereichTitel) + '</span>' : '') + '</span>' +
+      '<div class="rs">' + esc(b.frage.text) + '</div>' +
+    '</span>';
+  const row = el('div','frage-btns');
+  const ja = el('button','btn btn-ghost btn-md', esc(b.frage.ja || 'Ja, so lassen'));
+  ja.onclick = () => { ja.disabled = true; nein.disabled = true; send({type:'antwort', id:b.frage.id, wert:'absicht'}); };
+  const nein = el('button','btn btn-primary btn-md', esc(b.frage.nein || 'Nein, beheben'));
+  nein.onclick = () => { ja.disabled = true; nein.disabled = true; send({type:'antwort', id:b.frage.id, wert:'reparieren'}); };
+  row.appendChild(ja); row.appendChild(nein);
+  card.querySelector('.rbody').appendChild(row);
+  const fach = fachText(b);
+  if(fach){
+    const d = el('details','disc');
+    d.style.marginTop = '0';
+    d.innerHTML = '<summary>' + svg('chevron') + ' <b>Fachlich</b></summary>' +
+                  '<div class="disc-body"><p class="fach" style="white-space:pre-line">' + esc(fach) + '</p></div>';
     card.querySelector('.rbody').appendChild(d);
   }
   return card;
@@ -942,19 +1035,33 @@ function infoModal(title, body, tone, tech){
   ok.focus();
 }
 
+/* Bereichszeile auf der Startseite angeklickt: alle Befunde dieses Bereichs, jeder mit
+   Satz und Rat; das Fachliche darunter. Fragen und Reparaturen gibt es nur auf dem
+   Ergebnis-Bildschirm, damit hier kein zweiter Weg entsteht. */
 function detailModal(c){
+  const eigene = (S.befunde || []).filter(b => b.bereich === c.key && (b.state !== 'ok' || b.frage));
+  let body = c.summary;
+  if(eigene.length){
+    body = eigene.map(b => b.title + ': ' + (b.frage ? b.frage.text : b.summary) +
+                           (b.advice ? '\nWas Sie tun können: ' + b.advice : '')).join('\n\n');
+    const fach = eigene.map(b => fachText(b)).filter(Boolean).join('\n');
+    if(fach) body += '\n\nFachlich:\n' + fach;
+  } else {
+    if(c.advice) body += '\n\nWas Sie tun können:\n' + c.advice;
+    const fach = fachText(c);
+    if(fach) body += '\n\nEinzelheiten:\n' + fach;
+  }
   const m = buildModal({
     title: c.title,
-    body: c.summary + (c.advice ? '\n\nWas Sie tun können:\n' + c.advice : '') +
-          (c.detail ? '\n\nEinzelheiten:\n' + c.detail : ''),
-    icon: c.state === 'ok' ? 'checkCircle' : (c.state === 'unknown' ? 'info' : 'alert'),
+    body: body,
+    icon: c.state === 'ok' ? 'checkCircle' : (c.state === 'unknown' ? 'info' : (c.state === 'absicht' ? 'check' : (c.state === 'frage' ? 'help' : 'alert'))),
     tone: c.state === 'bad' ? 'bad' : (c.state === 'warn' ? 'warn' : ''),
   });
   const ok = el('button','btn btn-primary btn-md','Schließen');
   ok.onclick = m.close;
   // „Machen Sie Platz frei“ war bisher ein Rat ohne Weg. Von hier aus geht es
   // direkt dorthin, wo steht, WO der Platz steckt.
-  if(c.key === 'space'){
+  if(c.key === 'speicherplatz'){
     const wo = el('button','btn btn-ghost','Wo steckt der Platz?');
     wo.onclick = () => { m.close(); go('storage'); };
     m.btns.appendChild(wo);
@@ -1010,10 +1117,14 @@ function onHost(m){
       // Belegaufnahme: gewuenschte Ansicht direkt oeffnen
       ['tools','history','restore','schedule','autostart','apps','power','settings','storage','registry']
         .forEach(k => { if(HASH.indexOf(k) >= 0) go(k); });
-      // Nur fuer Belegaufnahmen: die (rein lesende) Pruefung von selbst starten.
-      // Der Adresszusatz laesst sich ausschliesslich ueber --view von der Befehlszeile
-      // setzen, im normalen Betrieb ist er leer.
-      if(HASH.indexOf('check') >= 0) startFlow('check');
+      // Nur fuer Belegaufnahmen (der Host meldet shot = true nur im --shot-Modus): die
+      // Pruefung von selbst starten. Der Adresszusatz kommt ausschliesslich ueber --view.
+      S.shot = !!m.shot;
+      if(S.shot){
+        if(HASH.indexOf('check') >= 0) startFlow('check');
+        else if(HASH.indexOf('deep') >= 0) startFlow('deep');   // Tiefenprüfung, nur lesend
+        else if(HASH.indexOf('fix') >= 0) startFlow('fix');     // ohne Dateibefund lehnt der Host ab
+      }
       break;
 
     case 'admin':
@@ -1030,6 +1141,8 @@ function onHost(m){
 
     case 'lastChecks':
       S.checks = m.checks || [];
+      S.fragen = m.fragen || 0;
+      S.glanceFehler = m.fehler || '';
       if(S.screen === 'start') renderStart();
       break;
 
@@ -1058,8 +1171,20 @@ function onHost(m){
       break;
 
     case 'flowResult':
-      renderResult(m);
+      S.befunde = m.befunde || [];
       S.checks = (m.checks || []).filter(c => c.key !== 'files');
+      S.fragen = m.fragen || 0;
+      // Eine Antwort auf eine Frage liefert ein neues Ergebnis, ohne dass ein Lauf lief.
+      // Der Ergebnis-Bildschirm wird dann an Ort und Stelle erneuert.
+      renderResult(m);
+      // Nur fuer Belegaufnahmen (--view check,antwort-ja): die erste Frage mit „Ja, so
+      // lassen“ beantworten, damit der Zustand „so gewollt“ ohne Klick belegt werden kann.
+      if(S.shot && m.mode === 'check' && HASH.indexOf('antwort-ja') >= 0){
+        const ja = $('#res-list .frage .frage-btns .btn-ghost');
+        if(ja) ja.click();
+      }
+      // Belegaufnahme des unteren Teils (Karte „so gewollt“, Gruppen, Empfehlung).
+      if(S.shot && HASH.indexOf('unten') >= 0) requestAnimationFrame(() => { $('#s-result').scrollTop = 1e6; });
       break;
 
     case 'flowCancelled':
@@ -1080,6 +1205,14 @@ function onHost(m){
         m.message + '\n\nBitte warten Sie, bis das fertig ist, und starten Sie es dann ' +
         'erneut. Was gerade läuft, sehen Sie unten unter „Technische Details“.', 'warn');
       go('start');
+      break;
+
+    case 'flowNichts':
+      // Grundsatz 4: keine Reparatur ohne Befund. Der Host hat „Beheben“ abgelehnt, weil
+      // die Tiefenprüfung nichts gefunden hat (oder noch nicht lief). Zurück dorthin,
+      // wo der Nutzer herkam.
+      infoModal('Es gibt nichts zu beheben', m.message, '');
+      if(S.result) show('result'); else go('start');
       break;
 
     case 'flowIdle':

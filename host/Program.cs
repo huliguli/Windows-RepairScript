@@ -18,8 +18,8 @@ namespace WartungsToolbox
             Application.SetCompatibleTextRenderingDefault(false);
             AppLog.InstallGlobalHandlers();
 
-            string shot = null, view = "";
-            bool auto = false;
+            string shot = null, view = "", aufzeichnen = null, pruefen = null;
+            bool auto = false, roh = false;
             int shotWait = 950;
             for (int i = 0; i < args.Length; i++)
             {
@@ -27,10 +27,24 @@ namespace WartungsToolbox
                 else if (args[i] == "--view" && i + 1 < args.Length) view = args[++i];
                 else if (args[i] == "--shotwait" && i + 1 < args.Length) int.TryParse(args[++i], out shotWait);
                 else if (args[i] == "--auto") auto = true;
+                else if (args[i] == "--aufzeichnen" && i + 1 < args.Length) aufzeichnen = args[++i];
+                else if (args[i] == "--pruefen" && i + 1 < args.Length) pruefen = args[++i];
+                else if (args[i] == "--roh") roh = true;
             }
 
             // Stiller, geplanter Wartungslauf ohne Oberflaeche.
             if (auto) { AutoRunner.Run(); return; }
+
+            // Kommandozeile ohne Oberflaeche (Grundsatz 8: testbar ohne Fenster):
+            //   --aufzeichnen <datei.json>  Systembild aufnehmen, redigiert (--roh: unredigiert)
+            //   --pruefen <datei.json>      Regeln ueber eine Aufzeichnung laufen lassen,
+            //                               Ergebnis nach <datei>.befunde.txt
+            // Die EXE hat keine Konsole; Ergebnis und Fehler landen in Dateien und im Protokoll.
+            if (aufzeichnen != null || pruefen != null)
+            {
+                Environment.ExitCode = Kommandozeile(aufzeichnen, pruefen, roh);
+                return;
+            }
 
             // Screenshot-Laeufe duerfen parallel laufen (eigener Datenordner).
             if (shot == null && !ClaimSingleInstance()) return;
@@ -40,6 +54,51 @@ namespace WartungsToolbox
             AppLog.Info("Start (Version " + typeof(Program).Assembly.GetName().Version + ")");
             Application.Run(new ShellForm(shot, view, shotWait));
             AppLog.Info("Beendet.");
+        }
+
+        static int Kommandozeile(string aufzeichnen, string pruefen, bool roh)
+        {
+            try
+            {
+                if (aufzeichnen != null)
+                {
+                    var s = new Sammler.Sammler().Erfassen();
+                    Sammler.Aufzeichnung.Schreiben(s, aufzeichnen, !roh);
+                    AppLog.Info("Aufzeichnung geschrieben: " + aufzeichnen + (roh ? " (roh)" : " (redigiert)"));
+                    if (!roh)
+                    {
+                        var v = Sammler.Aufzeichnung.Verstoesse(aufzeichnen);
+                        if (v.Count > 0) { AppLog.Error("Redaktion unvollständig: " + string.Join(", ", v)); return 2; }
+                    }
+                    return 0;
+                }
+                var bild = Sammler.Aufzeichnung.Lesen(pruefen);
+                var erg = Kern.Regeln.Alle.Pruefen(bild, Kern.Entscheidungen.Laden());
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine("Gesamt: " + Kern.Regeln.Alle.Gesamt(erg) + ", Probleme: " + Kern.Regeln.Alle.Probleme(erg));
+                foreach (var b in erg)
+                {
+                    sb.AppendLine();
+                    sb.AppendLine("[" + b.Zustand + "] " + Kern.Bereich.Titel(b.Bereich) + (b.DatenVorhanden ? "" : "  (keine Daten: " + string.Join("; ", b.Fehlend) + ")"));
+                    foreach (var f in b.Befunde)
+                    {
+                        sb.AppendLine("   " + f.Zustand.PadRight(7) + " " + f.Titel + "  {" + f.Schluessel + "}");
+                        sb.AppendLine("           " + f.Satz);
+                        if (f.Rat != null) sb.AppendLine("           Rat: " + f.Rat);
+                        if (f.Frage != null) sb.AppendLine("           FRAGE [" + f.Frage.Id + "]: " + f.Frage.Text);
+                        foreach (string d in f.Detail) sb.AppendLine("           . " + d);
+                    }
+                }
+                string ziel = pruefen + ".befunde.txt";
+                System.IO.File.WriteAllText(ziel, sb.ToString(), new System.Text.UTF8Encoding(true));
+                AppLog.Info("Befunde geschrieben: " + ziel);
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("Kommandozeile", ex);
+                return 3;
+            }
         }
 
         static Mutex _instance;

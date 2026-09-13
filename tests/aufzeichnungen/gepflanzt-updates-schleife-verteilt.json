@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "aufgezeichnet": "2026-09-11T16:00:00Z",
+  "erhoeht": false,
+  "sprache": { "lcid": 1031 },
+  "windowsUpdate": {
+    "verlauf": [
+      { "zeit": "2026-09-09T10:00:00Z", "titel": "Hewlett-Packard - USB - 11/11/2018 12:00:00 AM - 49.0.4395.18315", "ergebnis": 2, "hresult": 0, "updateId": "4340b239-4b90-4305-9c2e-6a24dfcb6757", "revision": 1 },
+      { "zeit": "2026-07-25T08:30:00Z", "titel": "Hewlett-Packard - USB - 11/11/2018 12:00:00 AM - 49.0.4395.18315", "ergebnis": 2, "hresult": 0, "updateId": "4340b239-4b90-4305-9c2e-6a24dfcb6757", "revision": 1 },
+      { "zeit": "2026-06-20T19:15:00Z", "titel": "Hewlett-Packard - USB - 11/11/2018 12:00:00 AM - 49.0.4395.18315", "ergebnis": 2, "hresult": 0, "updateId": "4340b239-4b90-4305-9c2e-6a24dfcb6757", "revision": 1 },
+      { "zeit": "2026-05-15T07:05:00Z", "titel": "Hewlett-Packard - USB - 11/11/2018 12:00:00 AM - 49.0.4395.18315", "ergebnis": 2, "hresult": 0, "updateId": "4340b239-4b90-4305-9c2e-6a24dfcb6757", "revision": 1 },
+      { "zeit": "2026-09-10T07:57:12Z", "titel": "2026-09 Sicherheitsupdate (KB5124008) (26200.9445)", "ergebnis": 2, "hresult": 0, "updateId": "09e67109-3a94-4344-bb58-bad8a454745f", "revision": 1 }
+    ],
+    "letzteSuche": "2026-09-11T10:00:00Z",
+    "letzteInstallation": "2026-09-11T10:05:00Z",
+    "verborgen": [],
+    "ausstehend": [],
+    "fehlschlaegeLog": [],
+    "erfolgeLog": [],
+    "neustartWu": false,
+    "neustartCbs": false,
+    "pendingRenames": false,
+    "letztesSicherheitsupdate": "2026-09-10T00:00:00Z",
+    "verwaltet": false,
+    "dienste": { "wuauserv": "Manual/Stopped", "bits": "Auto/Running", "cryptsvc": "Auto/Running", "msiserver": "Manual/Stopped", "trustedinstaller": "Manual/Stopped", "usosvc": "Auto/Running", "dosvc": "Auto/Running" }
+  }
+}

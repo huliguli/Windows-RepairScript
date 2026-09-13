@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "aufgezeichnet": "2026-09-11T16:00:00Z",
+  "erhoeht": false,
+  "sprache": { "lcid": 1031, "mui": ["de-DE"] },
+  "hardware": { "ramGesamtKB": 16777216 },
+  "leistung": {
+    "ramGesamtKB": 16630000,
+    "ramFreiKB": 310000,
+    "verfuegbarMB": [300, 320, 310],
+    "commitPct": [85, 86, 84],
+    "abstandMs": 4000,
+    "speicherQuelle": "perf",
+    "auslagerungMB": 2432,
+    "prozesse": [
+      { "pid": 4321, "name": "speicherfresser", "pfad": "C:\\Program Files\\Fresser\\speicherfresser.exe", "arbeitsspeicherBytes": 9126805504, "cpuPct": 12.5 },
+      { "pid": 1234, "name": "browser", "pfad": null, "arbeitsspeicherBytes": 3221225472, "cpuPct": 3.0 },
+      { "pid": 4, "name": "System", "pfad": null, "arbeitsspeicherBytes": 52428800, "cpuPct": 0.2 }
+    ]
+  },
+  "autostart": {
+    "eintraege": [
+      { "quelle": "HKLM\\Run", "name": "SecurityHealth", "befehl": "%windir%\\system32\\SecurityHealthSystray.exe", "aktiviert": true, "signierer": "CN=Microsoft Windows, O=Microsoft Corporation, L=Redmond, S=Washington, C=US" }
+    ],
+    "shell": "explorer.exe",
+    "userinit": "C:\\WINDOWS\\system32\\userinit.exe,",
+    "appInitDlls": ""
+  }
+}

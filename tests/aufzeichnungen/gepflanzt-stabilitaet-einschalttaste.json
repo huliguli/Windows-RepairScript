@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "aufgezeichnet": "2026-09-11T16:00:00Z",
+  "erhoeht": false,
+  "sprache": { "lcid": 1031, "mui": ["de-DE"] },
+  "ereignisse": {
+    "beginnSystem": "2026-06-01T00:00:00Z",
+    "beginnApplication": "2026-05-28T00:00:00Z",
+    "tage": 90,
+    "eintraege": [
+      {
+        "log": "System", "anbieter": "Microsoft-Windows-Kernel-Power", "id": 41, "level": 1, "zeit": "2026-09-02T19:40:00Z",
+        "felder": { "BugcheckCode": "0", "BugcheckParameter1": "0x0", "BugcheckParameter2": "0x0", "BugcheckParameter3": "0x0", "BugcheckParameter4": "0x0", "SleepInProgress": "0", "PowerButtonTimestamp": "134306054393450499", "BootAppStatus": "0", "Checkpoint": "0", "ConnectedStandbyInProgress": "false", "SystemSleepTransitionsToOn": "0", "CsEntryScenarioInstanceId": "0", "BugcheckInfoFromEFI": "false", "CheckpointStatus": "0", "CsEntryScenarioInstanceIdV2": "0", "LongPowerButtonPressDetected": "true" }
+      },
+      {
+        "log": "System", "anbieter": "Microsoft-Windows-Kernel-Boot", "id": 20, "level": 4, "zeit": "2026-09-02T19:40:01Z",
+        "felder": { "LastShutdownGood": "false", "LastBootGood": "true", "LastBootId": "130", "BootStatusPolicy": "0" }
+      },
+      {
+        "log": "System", "anbieter": "Microsoft-Windows-Kernel-Power", "id": 41, "level": 1, "zeit": "2026-09-08T07:05:00Z",
+        "felder": { "BugcheckCode": "0", "BugcheckParameter1": "0x0", "BugcheckParameter2": "0x0", "BugcheckParameter3": "0x0", "BugcheckParameter4": "0x0", "SleepInProgress": "0", "PowerButtonTimestamp": "134310757340000000", "BootAppStatus": "0", "Checkpoint": "0", "ConnectedStandbyInProgress": "false", "SystemSleepTransitionsToOn": "0", "CsEntryScenarioInstanceId": "0", "BugcheckInfoFromEFI": "false", "CheckpointStatus": "0", "CsEntryScenarioInstanceIdV2": "0", "LongPowerButtonPressDetected": "true" }
+      },
+      {
+        "log": "System", "anbieter": "Microsoft-Windows-Kernel-Boot", "id": 20, "level": 4, "zeit": "2026-09-08T07:05:01Z",
+        "felder": { "LastShutdownGood": "false", "LastBootGood": "true", "LastBootId": "131", "BootStatusPolicy": "0" }
+      }
+    ]
+  },
+  "zuverlaessigkeit": { "index": 8.104, "zeit": "2026-09-11T15:00:00Z" }
+}

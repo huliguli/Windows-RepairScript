@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "aufgezeichnet": "2026-09-11T16:00:00Z",
+  "erhoeht": false,
+  "sprache": { "lcid": 1031, "mui": ["de-DE"] },
+  "ereignisse": {
+    "beginnSystem": "2026-06-01T00:00:00Z",
+    "beginnApplication": "2026-05-28T00:00:00Z",
+    "tage": 90,
+    "eintraege": [
+      {
+        "log": "System", "anbieter": "Microsoft-Windows-Kernel-Power", "id": 41, "level": 1, "zeit": "2026-07-28T16:00:00Z",
+        "felder": { "BugcheckCode": "0", "BugcheckParameter1": "0x0", "SleepInProgress": "0", "PowerButtonTimestamp": "0" }
+      },
+      {
+        "log": "System", "anbieter": "Microsoft-Windows-Kernel-Boot", "id": 20, "level": 4, "zeit": "2026-07-28T16:00:01Z",
+        "felder": { "LastShutdownGood": "false", "LastBootGood": "true", "LastBootId": "100", "BootStatusPolicy": "0" }
+      },
+      {
+        "log": "System", "anbieter": "Microsoft-Windows-Kernel-Power", "id": 41, "level": 1, "zeit": "2026-07-13T16:00:00Z",
+        "felder": { "BugcheckCode": "0", "BugcheckParameter1": "0x0", "SleepInProgress": "0", "PowerButtonTimestamp": "0" }
+      },
+      {
+        "log": "System", "anbieter": "Microsoft-Windows-Kernel-Boot", "id": 20, "level": 4, "zeit": "2026-07-13T16:00:01Z",
+        "felder": { "LastShutdownGood": "false", "LastBootGood": "true", "LastBootId": "99", "BootStatusPolicy": "0" }
+      },
+      {
+        "log": "System", "anbieter": "Microsoft-Windows-Kernel-General", "id": 12, "level": 4, "zeit": "2026-09-10T06:00:00Z",
+        "felder": { "MajorVersion": "10", "MinorVersion": "0", "BuildVersion": "26100", "QfeVersion": "9444", "StartTime": "2026-09-10T06:00:00.0000000Z" }
+      }
+    ]
+  },
+  "zuverlaessigkeit": { "index": 9.011, "zeit": "2026-09-11T15:00:00Z" }
+}

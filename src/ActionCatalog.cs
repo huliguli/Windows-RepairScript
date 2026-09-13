@@ -118,10 +118,25 @@ namespace WartungsToolbox
                 Title = "Windows-Update von vorn starten",
                 TechTitle = "SoftwareDistribution + catroot2 zurücksetzen",
                 Desc = "Setzt die Update-Funktion zurück, wenn Updates hängen bleiben oder abbrechen.",
-                Info = "Setzt die Update-Funktion von Windows in den Ausgangszustand zurück. Hilft, wenn Updates hängen bleiben, immer wieder mit einem Fehler abbrechen oder gar nicht erst starten. Nach dieser Aktion sollten Sie den PC neu starten.",
+                Info = "Setzt die Update-Funktion von Windows in den Ausgangszustand zurück. Hilft, wenn Updates hängen bleiben, immer wieder mit einem Fehler abbrechen oder gar nicht erst starten. Dabei geht der Update-Verlauf in den Windows-Einstellungen verloren. Updates, die Sie ausgeblendet hatten, werden gesichert und danach wieder ausgeblendet. Nach dieser Aktion sollten Sie den PC neu starten.",
                 // Best-effort bei den Diensten, aber das Umbenennen MUSS gelingen - sonst
                 // meldete die Aktion frueher Erfolg, obwohl nichts zurueckgesetzt wurde.
+                //
+                // Das Kennzeichen "Update ausgeblendet" (IsHidden) lebt ausschliesslich in
+                // SoftwareDistribution\DataStore. Bis 7.3.2 hob diese Aktion jede Ausblendung
+                // wortlos auf; ein verborgenes Treiberupdate war danach sofort wieder da und
+                // blockierte erneut (Befund vom 04.09.2026). Deshalb: vorher sichern, nachher
+                // wieder ausblenden. Reihenfolge: Reset ZUERST, Ausblenden DANACH.
                 Steps = {
+                    // Sichern VOR dem Reset, solange der DataStore noch da ist (Online=false reicht
+                    // hier). Scheitert das Lesen, bricht der Schritt ab: ein Reset ohne Sicherung
+                    // wuerde jede Ausblendung wortlos aufheben, und der Nutzer erfuehre es nie.
+                    Ps("$ordner = Join-Path $env:ProgramData 'WindowsWartung\\sicherungen'; New-Item -ItemType Directory -Force -Path $ordner | Out-Null; "
+                     + "$datei = Join-Path $ordner 'verborgene-updates.txt'; "
+                     + "try { $s = New-Object -ComObject Microsoft.Update.Session; $u = $s.CreateUpdateSearcher(); $u.Online = $false; "
+                     + "$r = $u.Search('IsHidden=1'); $ids = @(); for ($i = 0; $i -lt $r.Updates.Count; $i++) { $x = $r.Updates.Item($i); $ids += ($x.Identity.UpdateID + '|' + $x.Identity.RevisionNumber + '|' + $x.Title) }; "
+                     + "Set-Content -Path $datei -Value $ids -Encoding UTF8; 'Ausgeblendete Updates gesichert: ' + $ids.Count + ' (Liste: ' + $datei + ')' } "
+                     + "catch { 'Ausgeblendete Updates konnten nicht gelesen werden, der Reset wird nicht gestartet: ' + $_.Exception.Message; exit 1 }"),
                     CmdBE("net stop wuauserv"),
                     CmdBE("net stop bits"),
                     CmdBE("net stop cryptsvc"),
@@ -132,6 +147,21 @@ namespace WartungsToolbox
                     CmdBE("net start cryptsvc"),
                     CmdBE("net start bits"),
                     CmdBE("net start wuauserv"),
+                    // Die gesicherten Ausblendungen wiederherstellen. Braucht Adminrechte
+                    // (IUpdate.IsHidden setzen) - die hat diese Aktion ohnehin.
+                    // Der frische DataStore ist leer, also MUSS die Suche online laufen (Online=false
+                    // faende nie etwas). Das Kriterium wird nur mit einfachen Anfuehrungszeichen
+                    // gebaut: ein doppeltes im -Command-Text beendet den Befehl (Befund 12.09.2026).
+                    // Nur Zeilen mit gueltiger GUID werden gesucht, damit keine untergeschobene
+                    // Zeile das Suchkriterium veraendern kann. Bleibt etwas offen, endet der Schritt
+                    // gelb (exit 1), damit der Hinweis mit dem Dateipfad sichtbar bleibt.
+                    Ps("$datei = Join-Path $env:ProgramData 'WindowsWartung\\sicherungen\\verborgene-updates.txt'; "
+                     + "if (-not (Test-Path $datei)) { 'Keine gesicherten Ausblendungen.' } else { "
+                     + "$zeilen = @(Get-Content -Path $datei -Encoding UTF8 | Where-Object { $_ -match '^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\\|' }); if ($zeilen.Count -eq 0) { 'Es war kein Update ausgeblendet.' } else { "
+                     + "try { $s = New-Object -ComObject Microsoft.Update.Session; $u = $s.CreateUpdateSearcher(); $u.Online = $true; $n = 0; "
+                     + "foreach ($z in $zeilen) { $t = $z.Split('|'); $r = $u.Search('UpdateID=''' + $t[0] + ''''); for ($i = 0; $i -lt $r.Updates.Count; $i++) { $x = $r.Updates.Item($i); if (-not $x.IsHidden) { $x.IsHidden = $true; $n++ } } }; "
+                     + "'Wieder ausgeblendet: ' + $n + ' von ' + $zeilen.Count; if ($n -lt $zeilen.Count) { 'Nicht gefundene Updates werden beim naechsten Angebot wieder sichtbar (Liste: ' + $datei + ')'; exit 1 } } "
+                     + "catch { 'Ausblendungen konnten nicht wiederhergestellt werden: ' + $_.Exception.Message + ' (Liste liegt in ' + $datei + ')'; exit 1 } } }"),
                     // Ergebnis wirklich pruefen statt Erfolg zu behaupten.
                     Ps("$sd = Test-Path (Join-Path $env:WINDIR 'SoftwareDistribution.old'); "
                      + "$cr = Test-Path (Join-Path $env:WINDIR 'System32\\catroot2.old'); "
@@ -300,7 +330,27 @@ namespace WartungsToolbox
                 Title = "Abstürze der letzten Zeit anzeigen",
                 Desc = "Zeigt, wann der PC unerwartet ausging oder einen blauen Bildschirm hatte.",
                 Info = "Windows notiert, wenn der PC unerwartet ausgeht oder abstürzt. Diese Aktion zeigt diese Notizen der letzten Zeit in verständlicher Form. Häufen sich die Einträge, lohnt ein Blick auf Arbeitsspeicher und Festplatte.",
-                Steps = { Ps("try { $e = Get-WinEvent -FilterHashtable @{LogName='System'; Id=41,1074,6008,1001} -MaxEvents 12 -EA Stop; if (-not $e) { 'Es sind keine Abstuerze verzeichnet. Das sieht gut aus.' } else { $e | ForEach-Object { $w=''; if($_.Id -eq 41){$w='Unerwartet ausgegangen (Strom weg oder Absturz)'} elseif($_.Id -eq 6008){$w='Unerwartet heruntergefahren'} elseif($_.Id -eq 1074){$w='Normaler Neustart, von Hand oder durch ein Update'} else {$w='Blauer Bildschirm'}; ('{0}  {1}' -f $_.TimeCreated.ToString('dd.MM.yyyy HH:mm'), $w) } } } catch { 'Es sind keine Abstuerze verzeichnet. Das sieht gut aus.' }") }
+                // Bis 7.3.2 wurden die IDs 41/1001/6008 OHNE Anbieter gefiltert. Im System-Log
+                // vergeben viele Quellen dieselben Nummern (41 auch WindowsUpdateClient und
+                // WHEA-Logger, 1001 auch Dhcp-Client); mit -MaxEvents 12 verdraengten 60 normale
+                // Neustarts (1074) die zwei echten Vorfaelle. Gemessen am 04.09.2026: zwoelf
+                // Zeilen "Normaler Neustart", kein einziger Absturz. Jetzt je Anbieter getrennt,
+                // -EA SilentlyContinue je Abfrage (ein fehlender Anbieter kippt sonst alles),
+                // Kernel-Power 41 ueber BugcheckCode/SleepInProgress unterschieden, und 1074
+                // getrennt am Ende.
+                // 41 und 6008 beschreiben denselben Vorfall (Windows schreibt beide beim naechsten
+                // Start): 6008 zaehlt nur, wenn kein 41 innerhalb von fuenf Minuten liegt. Der
+                // Zeitraum kommt aus dem Log-Beginn, nicht aus der Behauptung "90 Tage".
+                Steps = { Ps("$t = (Get-Date).AddDays(-90); $z = @(); "
+                     + "$alt = (Get-WinEvent -LogName System -Oldest -MaxEvents 1 -EA SilentlyContinue).TimeCreated; $seit = if ($alt -and $alt -gt $t) { 'seit dem ' + $alt.ToString('dd.MM.yyyy') + ' (Beginn des Protokolls)' } else { 'in den letzten 90 Tagen' }; "
+                     + "$kp = @(Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Microsoft-Windows-Kernel-Power'; Id=41; StartTime=$t} -EA SilentlyContinue); "
+                     + "foreach ($e in $kp) { $x = [xml]$e.ToXml(); $d = @{}; foreach ($n in $x.Event.EventData.Data) { $d[$n.Name] = $n.'#text' }; "
+                     + "$w = if ([int64]$d['BugcheckCode'] -ne 0) { ('Blauer Bildschirm (Fehlercode 0x{0:X})' -f [int64]$d['BugcheckCode']) } elseif ([int64]$d['PowerButtonTimestamp'] -ne 0) { 'Mit der Einschalttaste ausgeschaltet' } elseif ($d['SleepInProgress'] -ne '0') { 'Beim Standby unterbrochen' } else { 'Unerwartet ausgegangen (Strom weg oder eingefroren)' }; "
+                     + "$z += [pscustomobject]@{ Zeit = $e.TimeCreated; Was = $w } }; "
+                     + "$eb = @(Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='EventLog'; Id=6008; StartTime=$t} -EA SilentlyContinue); foreach ($e in $eb) { $nah = @($kp | Where-Object { [math]::Abs(($_.TimeCreated - $e.TimeCreated).TotalMinutes) -lt 5 }); if ($nah.Count -eq 0) { $z += [pscustomobject]@{ Zeit = $e.TimeCreated; Was = 'Unerwartet heruntergefahren (von Windows beim naechsten Start notiert)' } } }; "
+                     + "$bc = @(Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Microsoft-Windows-WER-SystemErrorReporting'; Id=1001; StartTime=$t} -EA SilentlyContinue); foreach ($e in $bc) { $z += [pscustomobject]@{ Zeit = $e.TimeCreated; Was = 'Blauer Bildschirm (Absturzabbild gespeichert)' } }; "
+                     + "if ($z.Count -eq 0) { 'Keine Abstuerze verzeichnet ' + $seit + '. Das sieht gut aus.' } else { 'Abstuerze und unerwartete Neustarts ' + $seit + ':'; $z | Sort-Object Zeit -Descending | ForEach-Object { ('{0}  {1}' -f $_.Zeit.ToString('dd.MM.yyyy HH:mm'), $_.Was) } }; "
+                     + "$nr = @(Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='User32'; Id=1074; StartTime=$t} -EA SilentlyContinue); ''; 'Normales Herunterfahren und Neustarten (von Hand oder durch Updates) in derselben Zeit: ' + $nr.Count") }
             });
             l.Add(new MaintenanceAction {
                 Category = "Diagnose", Glyph = "E774", Icon = "globe",
