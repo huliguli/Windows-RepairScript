@@ -728,17 +728,20 @@ try {
         # darf er keinen einzigen Kindprozess haben (kein powershell.exe, kein cmd.exe, nichts).
         $aufLog = Join-Path $env:TEMP ('WW_aufz_' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.txt')
         $proc = Start-Process -FilePath $exe -ArgumentList @('--aufzeichnen', ('"' + $bild + '"')) -PassThru -NoNewWindow -RedirectStandardOutput $aufLog
+        $null = $proc.Handle   # ohne gebundenen Handle ist ExitCode nach dem Ende null (Start-Process-Eigenheit; in der CI so passiert)
         $kinder = @{}
         while (-not $proc.HasExited) {
             foreach ($k in (Get-CimInstance Win32_Process -Filter "ParentProcessId = $($proc.Id)" -ErrorAction SilentlyContinue)) { $kinder[$k.Name] = $true }
             Start-Sleep -Milliseconds 300
         }
+        $proc.WaitForExit()
         $aufCode = $proc.ExitCode
+        if ($null -eq $aufCode) { $hits += "ExitCode des Sammlers nicht lesbar (Prozess-Handle nicht gebunden)" }
         $aufOut = @(Get-Content $aufLog -ErrorAction SilentlyContinue)
         Remove-Item $aufLog -ErrorAction SilentlyContinue
         if ($kinder.Count -gt 0) { $hits += "Der Sammler hat Kindprozesse gestartet: " + (($kinder.Keys | Sort-Object) -join ', ') }
         if ($aufCode -eq 2) { $hits += "Redaktion unvollstaendig: " + (($aufOut | Where-Object { "$_" -match 'REDAKTION' }) -join ' ') }
-        elseif ($aufCode -ne 0) { $hits += "Aufzeichnen schlug fehl (ExitCode $aufCode): " + (($aufOut | Select-Object -Last 3) -join ' | ') }
+        elseif ($null -ne $aufCode -and $aufCode -ne 0) { $hits += "Aufzeichnen schlug fehl (ExitCode $aufCode): " + (($aufOut | Select-Object -Last 3) -join ' | ') }
         elseif (-not (Test-Path $bild)) { $hits += "Aufzeichnung wurde nicht geschrieben" }
         else {
             $j = Get-Content $bild -Raw -Encoding UTF8 | ConvertFrom-Json
