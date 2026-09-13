@@ -1,13 +1,22 @@
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Text;
-using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Forms;
+using WartungsToolbox.Kern;
 
 namespace WartungsToolbox
 {
+    /// <summary>
+    /// Fuehrt einen Plan (Kennungen + Parameter, kern/Plan.cs) ueber den Ausfuehrer aus und
+    /// meldet Zeilen, Fortschritt, Zustand und Abschluss an die Oberflaeche - dieselben
+    /// Rueckrufe wie bis 8.0. Seit 8.1 startet diese Klasse keinen Prozess mehr selbst: das
+    /// tut der Helfer (helfer/Werkzeuge.cs), lokal oder in einem erhoehten Zweitprozess;
+    /// HelferClient.Holen besorgt ihn und loest dabei den UAC-Dialog aus.
+    ///
+    /// Alle Rueckrufe kommen per BeginInvoke auf dem Thread der Oberflaeche an; der Lauf
+    /// selbst sitzt in einem Hintergrund-Thread, weil Holen bis zu 60 s und ein Plan bis zu
+    /// Stunden blockieren darf.
+    /// </summary>
     class CommandRunner
     {
         readonly Control _ui;
@@ -15,25 +24,35 @@ namespace WartungsToolbox
         readonly Action<bool> _onState;
         readonly Action<string, LogKind, string, double> _onComplete;
         readonly Action<int> _onProgress;
-        volatile Process _current;
+        volatile IAusfuehrer _ausfuehrer;
         volatile bool _cancel;
+        volatile bool _running;
+        volatile string _title;
+        int _abbruchNachgereicht;   // 0/1 je Lauf (Interlocked): der nachgereichte Abbruch geht nur einmal raus
 
-        // Puffer der letzten Ausgabezeilen des aktuellen Steps - Grundlage fuer die
-        // laienverstaendliche Deutung (Explain.ForOutput). Reader-Callbacks laufen
-        // auf Threadpool-Threads -> Zugriff nur unter _tailLock.
-        readonly object _tailLock = new object();
-        StringBuilder _tail = new StringBuilder();
-        void TailAdd(string line)
-        {
-            if (string.IsNullOrEmpty(line)) return;
-            lock (_tailLock) { if (_tail.Length < 6000) _tail.AppendLine(line); }
-        }
-        string TailText()
-        {
-            lock (_tailLock) { return _tail.ToString(); }
-        }
+        // Gesetzt, sobald der Hintergrund-Thread mit dem Lauf durch ist (Protokoll und app.log
+        // haben ihr Ende, Done ist an die Oberflaeche uebergeben); anfangs gesetzt = nichts laeuft.
+        // LaufAbwarten wartet darauf, nicht auf Running: Running faellt erst in Done auf dem
+        // Thread der Oberflaeche, und der wartet gerade.
+        readonly ManualResetEvent _ende = new ManualResetEvent(true);
 
-        public bool Running { get; private set; }
+        /// <summary>
+        /// Optional: (schritt, gesamt, label) je Fortschrittsmeldung des Helfers, auf dem Thread
+        /// der Oberflaeche. Das ist der Ablaufbalken des Hauptwegs (CheckFlow.FlowStep), nicht
+        /// das Protokoll: aus Fortschritt entsteht hier keine Log-Zeile, die Kopfzeile je Schritt
+        /// schreibt der Helfer selbst (helfer/Ausfuehrung.cs).
+        /// </summary>
+        public Action<int, int, string> OnStep = null;
+
+        /// <summary>
+        /// Wahr von RunPlan bis zum Ende von Done auf dem Thread der Oberflaeche. Faellt bewusst
+        /// NICHT schon im Hintergrund-Thread: zwischen dem Ende des Laufs dort und der Zustellung
+        /// von Done per BeginInvoke verarbeitet die Oberflaeche andere Nachrichten, und ein neuer
+        /// RunPlan (Klick, geplante Wartung ueber WM_WW_RUNAUTO) haette gestartet, bevor Done des
+        /// alten Laufs dessen Nachlauf, Abschalt-Wunsch und Fertigmeldung verbraucht. Der Runner
+        /// gilt auf der Oberflaeche deshalb genau so lange als laufend, bis Done gelaufen ist.
+        /// </summary>
+        public bool Running { get { return _running; } }
 
         /// <summary>
         /// Titel des gerade laufenden Auftrags ("Geplante Wartung", ein Werkzeugname, ...).
@@ -41,15 +60,7 @@ namespace WartungsToolbox
         /// gerade etwas" ohne zu sagen WAS ist eine Auskunft, mit der niemand etwas anfangen
         /// kann - schon gar nicht bei einem Lauf, den der Zeitplan von selbst gestartet hat.
         /// </summary>
-        public string Title { get; private set; }
-
-        // Zeitgrenze je Schritt, dieselbe wie im AutoRunner. Ohne sie haelt ein einziger
-        // haengender Befehl den ganzen Lauf fuer immer fest: ReadWithProgress blockiert in
-        // rdr.Read(), und WaitForExit() ohne Argument wartet zusaetzlich darauf, dass die
-        // Ausgabe-Leser das Dateiende sehen - was ein ueberlebender Enkelprozess (DISM
-        // startet DismHost.exe) beliebig lange verhindern kann. Der Nutzer saehe dann einen
-        // Balken, der bei irgendeiner Prozentzahl stehenbleibt, und keine Zeile im Protokoll.
-        const int StepTimeoutMs = 45 * 60 * 1000;
+        public string Title { get { return _title; } }
 
         public CommandRunner(Control ui, Action<string, LogKind> log, Action<bool> onState,
                              Action<string, LogKind, string, double> onComplete, Action<int> onProgress)
@@ -63,275 +74,286 @@ namespace WartungsToolbox
 
         void Log(string s, LogKind k)
         {
-            if (_ui != null && _ui.IsHandleCreated)
-            {
-                try { _ui.BeginInvoke((Action)delegate { _log(s, k); }); }
-                catch { }
-            }
+            AufUi(delegate { _log(s, k); });
         }
 
         void Progress(int pct)
         {
-            if (_onProgress != null && _ui != null && _ui.IsHandleCreated)
-            {
-                try { _ui.BeginInvoke((Action)delegate { _onProgress(pct); }); }
-                catch { }
-            }
+            if (_onProgress == null) return;
+            AufUi(delegate { _onProgress(pct); });
         }
 
+        // Auf den Thread der Oberflaeche; ohne Fenster (Handle noch nicht da) direkt. Scheitert
+        // beides, steht es im app.log: ein stiller Fehler in Done (History.Add) bliebe sonst
+        // unsichtbar.
+        void AufUi(Action a)
+        {
+            if (_ui != null && _ui.IsHandleCreated)
+            {
+                try { _ui.BeginInvoke(a); return; }
+                catch (Exception ex) { AppLog.Warn("Rückruf an die Oberfläche (BeginInvoke) fehlgeschlagen: " + ex.Message); }
+            }
+            try { a(); }
+            catch (Exception ex) { AppLog.Warn("Rückruf an die Oberfläche fehlgeschlagen: " + ex.Message); }
+        }
+
+        /// <summary>Laufenden Plan abbrechen: Flag setzen, Ausfuehrer benachrichtigen (Pipe: Anfrage abbrechen).</summary>
         public void Cancel()
         {
-            if (!Running) return;
+            if (!_running) return;
             _cancel = true;
-            try
+            IAusfuehrer a = _ausfuehrer;
+            if (a != null)
             {
-                Process p = _current;
-                if (p != null && !p.HasExited) KillTree(p.Id);
+                try { a.Abbrechen(); }
+                catch (Exception ex) { AppLog.Warn("Abbruch: " + ex.Message); }
             }
-            catch { }
         }
 
-        public void Run(string title, List<Step> steps)
+        /// <summary>
+        /// Plan ausfuehren. Laeuft schon etwas, passiert nichts (der Aufrufer prueft Running
+        /// vorher und nennt dem Nutzer den Title). Der UAC-Dialog kommt aus Holen, wenn noch
+        /// kein Helfer verbunden ist; die Ablehnung ist ein normaler Rueckweg mit Meldung.
+        /// </summary>
+        public void RunPlan(string titel, Plan plan)
         {
-            List<Job> jobs = new List<Job>();
-            jobs.Add(new Job { Title = title, Steps = steps });
-            RunJobs(title, jobs);
-        }
-
-        public void RunJobs(string overallTitle, List<Job> jobs)
-        {
-            if (Running) return;
-            Running = true;
-            Title = overallTitle;
+            if (_running) return;
+            _running = true;
+            _title = titel;
             _cancel = false;
+            _ausfuehrer = null;
+            _abbruchNachgereicht = 0;
+            _ende.Reset();
+            // Mit der Plan-Id laesst sich das lauf-<planId>.jsonl des Helfers im app.log
+            // zuordnen; das Ende schreibt Lauf ("Lauf beendet") im Hintergrund-Thread.
+            int n = plan == null ? 0 : plan.Schritte.Count;
+            AppLog.Info(titel + " gestartet (Plan " + (plan == null || plan.Id == null ? "?" : plan.Id) + ", "
+                        + (n == 1 ? "1 Schritt" : n + " Schritte") + ")");
             _onState(true);
 
-            var t = new Thread(delegate ()
-            {
-                var sw = Stopwatch.StartNew();
-                bool problem = false;
-                foreach (Job job in jobs)
-                {
-                    if (_cancel) break;
-                    Log("▶  " + job.Title, LogKind.Header);
-                    foreach (Step s in job.Steps)
-                    {
-                        if (_cancel) break;
-                        int code = RunStep(s);
-                        if (code != 0 && !s.IgnoreExit) problem = true;
-                    }
-                }
-                sw.Stop();
-                double fsec = sw.Elapsed.TotalSeconds;
-                LogKind fk;
-                string fmsg;
-                if (_cancel)
-                {
-                    Log("✖  Abgebrochen.", LogKind.Bad);
-                    fk = LogKind.Bad; fmsg = "Abgebrochen";
-                }
-                else if (problem)
-                {
-                    Log(string.Format("●  Fertig, aber nicht alles hat geklappt ({0:0.0}s) – die gelben Hinweise oben erklären Ursache und Lösung.", sw.Elapsed.TotalSeconds), LogKind.Warn);
-                    fk = LogKind.Warn; fmsg = "Mit Hinweisen abgeschlossen";
-                }
-                else
-                {
-                    Log(string.Format("✔  Fertig in {0:0.0}s", sw.Elapsed.TotalSeconds), LogKind.Good);
-                    fk = LogKind.Good; fmsg = string.Format("Erfolgreich in {0:0.0}s", sw.Elapsed.TotalSeconds);
-                }
-                Log("", LogKind.Normal);
-
-                Running = false;
-                Title = null;
-                _current = null;
-                string ftitle = overallTitle;
-                if (_ui != null && _ui.IsHandleCreated)
-                {
-                    try
-                    {
-                        _ui.BeginInvoke((Action)delegate
-                        {
-                            _onState(false);
-                            if (_onComplete != null) _onComplete(ftitle, fk, fmsg, fsec);
-                        });
-                    }
-                    catch { }
-                }
-            });
+            var t = new Thread(delegate () { Lauf(titel, plan); });
             t.IsBackground = true;
+            t.Name = "plan-lauf";
             t.Start();
         }
 
-        int RunStep(Step s)
+        void Lauf(string titel, Plan plan)
         {
-            Log("›  " + s.File + " " + s.Args, LogKind.Dim);
-            lock (_tailLock) { _tail = new StringBuilder(); }
+            var sw = Stopwatch.StartNew();
+            LogKind fk = LogKind.Bad;
+            string fmsg = "Abgebrochen (Fehler)";
             try
             {
-                if (s.Detached)
+                if (plan == null || plan.Schritte.Count == 0)
                 {
-                    var p = new Process();
-                    p.StartInfo.FileName = s.File;
-                    p.StartInfo.Arguments = s.Args;
-                    p.StartInfo.UseShellExecute = true;
-                    p.Start();
-                    Log("   (in eigenem Fenster gestartet)", LogKind.Dim);
-                    return 0;
+                    Log("✖  Der Plan „" + titel + "“ enthält 0 Schritte, es gibt nichts auszuführen.", LogKind.Bad);
+                    fmsg = "Abgebrochen (leerer Plan)";
                 }
-
-                Encoding enc = s.Enc != null ? s.Enc : Oem;
-                var psi = new ProcessStartInfo();
-                psi.FileName = s.File;
-                psi.Arguments = s.Args;
-                psi.UseShellExecute = false;
-                psi.CreateNoWindow = true;
-                psi.RedirectStandardOutput = true;
-                psi.RedirectStandardError = true;
-                psi.StandardOutputEncoding = enc;
-                psi.StandardErrorEncoding = enc;
-
-                using (var proc = new Process())
+                else
                 {
-                    proc.StartInfo = psi;
-                    proc.ErrorDataReceived += delegate (object o, DataReceivedEventArgs e)
-                    {
-                        if (!string.IsNullOrEmpty(e.Data)) { TailAdd(e.Data); Log(e.Data, LogKind.Normal); }
-                    };
-                    // Fortschritts-Schritte (DISM/SFC) werden zeichenweise gelesen (siehe ReadWithProgress);
-                    // sonst zeilenweise asynchron.
-                    if (!s.Progress)
-                    {
-                        proc.OutputDataReceived += delegate (object o, DataReceivedEventArgs e)
-                        {
-                            if (e.Data != null) { TailAdd(e.Data); Log(e.Data, LogKind.Normal); }
-                        };
-                    }
-                    _current = proc;
-                    proc.Start();
-                    proc.BeginErrorReadLine();
+                    // Der Hinweis nur, wenn der Dialog wirklich kommt: schon verbunden oder
+                    // erhoeht heisst kein Dialog, und auf dem Abnahmeweg (--pipe) laeuft der
+                    // Helfer schon von aussen.
+                    if (!HelferClient.Verbunden && !HelferClient.Abnahmeweg)
+                        Log("Windows fragt gleich nach Administratorrechten.", LogKind.Dim);
 
-                    // Der Wachhund beendet den Schritt samt Kindern (taskkill /T erwischt
-                    // auch DismHost.exe, das DISM hinterlaesst). Erst dadurch sieht der
-                    // Leser sein Dateiende und WaitForExit kehrt ueberhaupt zurueck.
-                    // System.Threading.Timer voll ausgeschrieben: System.Windows.Forms
-                    // bringt einen gleichnamigen Typ mit, beide sind hier eingebunden.
-                    using (var wachhund = new System.Threading.Timer(delegate
+                    string grund;
+                    IAusfuehrer a = HelferClient.Holen(true, out grund);
+                    if (_cancel)
                     {
-                        try
+                        // "Abbrechen" waehrend des UAC-Dialogs: der Helfer kennt das Flag nicht,
+                        // also darf der Plan gar nicht erst zu ihm. Ein gestarteter Helfer bleibt
+                        // fuer den naechsten Auftrag verbunden (ein Dialog je Sitzung).
+                        Log("✖  Abgebrochen.", LogKind.Bad);
+                        fk = LogKind.Bad; fmsg = "Abgebrochen";
+                    }
+                    else if (a == null)
+                    {
+                        if (grund == Protokoll.Abgelehnt)
                         {
-                            if (proc.HasExited) return;
-                            AppLog.Warn("Zeitgrenze erreicht, Schritt wird beendet: " + s.File + " " + s.Args);
-                            Log("   Zeitgrenze von " + (StepTimeoutMs / 60000) +
-                                " Minuten erreicht - dieser Schritt wurde beendet.", LogKind.Bad);
-                            KillTree(proc.Id);
+                            // Der Nutzer hat im UAC-Dialog "Nein" gesagt: normaler Rueckweg.
+                            Log("✖  Ohne Administratorrechte kann dieser Schritt nicht laufen. Sie können es jederzeit erneut versuchen.", LogKind.Bad);
+                            fk = LogKind.Bad; fmsg = "Abgebrochen (keine Administratorrechte)";
                         }
-                        catch { }
-                    }, null, StepTimeoutMs, System.Threading.Timeout.Infinite))
-                    {
-                        if (s.Progress) ReadWithProgress(proc);
-                        else proc.BeginOutputReadLine();
-                        proc.WaitForExit();
-                    }
-
-                    int code = proc.ExitCode;
-                    _current = null;
-
-                    if (code == 3010 && !s.IgnoreExit)
-                    {
-                        // Dokumentierte Windows-Semantik: 3010 = ERROR_SUCCESS_REBOOT_REQUIRED.
-                        // Vorher wurde das faelschlich als Fehler gewertet.
-                        Log("   ↳ ExitCode 3010 – Erfolgreich; Windows braucht einen Neustart, um die Änderung abzuschließen.", LogKind.Good);
-                        code = 0;
+                        else
+                        {
+                            // Rechte erteilt, aber der Helfer kam technisch nicht zustande (Exit 7,
+                            // keine Pipe binnen 60 s, Abnahme-Pipe stumm): das ist ein Fehler,
+                            // keine Ablehnung, und so steht es auch im Verlauf.
+                            string g = string.IsNullOrEmpty(grund) ? "ohne Angabe" : grund.TrimEnd('.', ' ');
+                            Log("✖  Der Helfer ließ sich nicht starten: " + g + ".", LogKind.Bad);
+                            fk = LogKind.Bad; fmsg = "Abgebrochen (Fehler)";
+                        }
                     }
                     else
                     {
-                        string hex = code < 0 ? string.Format(" (0x{0:X8})", code) : "";
-                        Log("   ↳ ExitCode " + code + hex, (code == 0 || s.IgnoreExit) ? LogKind.Dim : LogKind.Bad);
+                        _ausfuehrer = a;
+                        PlanErgebnis erg = Ausfuehren(a, plan);
+                        sw.Stop();
+                        Abschluss(erg, sw.Elapsed.TotalSeconds, out fk, out fmsg);
                     }
-
-                    // Laienverstaendliche Deutung: erst die Tool-Ausgabe (SFC/DISM-Ergebnissaetze),
-                    // dann - falls der Schritt fehlschlug - der bekannte Exit-Code.
-                    bool oGood;
-                    string oxp = Explain.ForOutput(s.File, TailText(), out oGood);
-                    if (oxp != null) Log((oGood ? "   ✔  " : "   ●  ") + oxp, oGood ? LogKind.Good : LogKind.Warn);
-                    if (code != 0 && !s.IgnoreExit)
-                    {
-                        string xp = Explain.ForExit(code);
-                        if (xp != null) Log("   ●  " + xp, LogKind.Warn);
-                    }
-                    return code;
                 }
             }
             catch (Exception ex)
             {
+                AppLog.Error("Plan " + titel, ex);
                 Log("   Fehler: " + ex.Message, LogKind.Bad);
-                return -1;
+                fk = LogKind.Bad; fmsg = "Abgebrochen (Fehler)";
+            }
+            if (sw.IsRunning) sw.Stop();
+            double fsec = sw.Elapsed.TotalSeconds;
+
+            // Das Ende des Laufs steht im app.log, BEVOR es an die Oberflaeche geht: wird das
+            // Fenster gerade geschlossen (ShellForm wartet mit LaufAbwarten), verwirft das
+            // zerstoerte Fenster anstehende BeginInvokes, und die Zeile kaeme sonst nie. Der
+            // Verlaufseintrag entsteht weiter in Done (ShellForm), das nach LaufAbwarten noch
+            // zugestellt wird. Running/Title fallen erst dort (siehe Running).
+            string ftitle = titel;
+            AppLog.Info("Lauf beendet: " + ftitle + " - " + fmsg + " (" + fsec.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + " s).");
+            AufUi(delegate
+            {
+                _running = false;
+                _title = null;
+                _ausfuehrer = null;
+                _onState(false);
+                if (_onComplete != null) _onComplete(ftitle, fk, fmsg, fsec);
+            });
+            _ende.Set();
+        }
+
+        /// <summary>
+        /// Wartet hoechstens ms Millisekunden, bis der Hintergrund-Thread des laufenden Plans
+        /// durch ist (Protokoll und app.log haben ihr Ende, Done ist an die Oberflaeche
+        /// uebergeben). true = fertig oder es lief nichts; false = die Zeit ist um (der Helfer
+        /// haengt noch im UAC-Dialog oder in einem Werkzeug). Fuer das Schliessen des Fensters:
+        /// erst Cancel, dann LaufAbwarten, dann HelferClient.Beenden; sonst schliesst die Pipe
+        /// unter dem Lauf weg und der Lauf endet als "Verbindung verloren" ohne Ende im Verlauf.
+        /// Blockiert den Thread der Oberflaeche, deshalb kurz halten (5 s); Done selbst laeuft
+        /// erst, wenn die Oberflaeche wieder Nachrichten verarbeitet.
+        /// </summary>
+        public bool LaufAbwarten(int ms)
+        {
+            if (!_running) return true;
+            try { return _ende.WaitOne(ms < 0 ? 0 : ms); }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Auf das Ende des Laufs warten: " + ex.Message);
+                return false;
             }
         }
 
-        // DISM/SFC schreiben ihren Fortschritt mit Carriage-Return (\r) auf EINE Zeile, ohne Zeilenumbruch.
-        // Der zeilenbasierte Reader (BeginOutputReadLine) wuerde das erst am Ende sehen -> hier zeichenweise lesen.
-        void ReadWithProgress(Process proc)
+        // Kontext bauen (Rueckrufe -> Oberflaeche) und den Plan beim Ausfuehrer laufen lassen.
+        PlanErgebnis Ausfuehren(IAusfuehrer a, Plan plan)
         {
-            StringBuilder sb = new StringBuilder();
-            int lastPct = -1;
-            System.IO.TextReader rdr = proc.StandardOutput;
-            int ch;
-            while ((ch = rdr.Read()) >= 0)
+            var k = new Helfer.Ausfuehrungskontext();
+            k.Zeile = delegate (string text, string art, int? prozent)
             {
-                if (_cancel) break;
-                char c = (char)ch;
-                if (c == '\r' || c == '\n')
+                if (_cancel) AbbruchNachreichen(a);
+                if (prozent.HasValue)
                 {
-                    if (sb.Length > 0) { lastPct = HandleProgressLine(sb.ToString(), lastPct); sb.Length = 0; }
+                    Progress(prozent.Value);
+                    if (string.IsNullOrEmpty(text)) return;   // reine Fortschrittszeile: kein Protokoll-Spam
                 }
-                else sb.Append(c);
-            }
-            if (sb.Length > 0) HandleProgressLine(sb.ToString(), lastPct);
-        }
-
-        int HandleProgressLine(string line, int lastPct)
-        {
-            int pct = ParsePercent(line);
-            if (pct >= 0)
+                Log(text ?? "", Art(art));
+            };
+            // Fortschritt ist der Ablaufbalken, nicht das Protokoll: keine Zeile, nur der
+            // optionale Rueckruf. Die Kopfzeile "▶  Titel" je Schritt schreibt der Helfer.
+            k.Fortschritt = delegate (int schritt, int gesamt, string label)
             {
-                if (pct != lastPct) Progress(pct);   // Fortschrittszeile selbst nicht als Log-Spam ausgeben
-                return pct;
-            }
-            string t = line.TrimEnd();
-            if (t.Length > 0) { TailAdd(t); Log(t, LogKind.Normal); }
-            return lastPct;
-        }
+                if (_cancel) AbbruchNachreichen(a);
+                Action<int, int, string> h = OnStep;
+                if (h == null) return;
+                AufUi(delegate { h(schritt, gesamt, label ?? ""); });
+            };
+            k.Abgebrochen = delegate { return _cancel; };
 
-        static readonly Regex PctRx = new Regex("(\\d{1,3})([.,]\\d+)?\\s*%", RegexOptions.Compiled);
-        static int ParsePercent(string line)
-        {
-            Match m = PctRx.Match(line);
-            if (!m.Success) return -1;
-            int v;
-            if (!int.TryParse(m.Groups[1].Value, out v)) return -1;
-            if (v < 0 || v > 100) return -1;
-            return v;
-        }
-
-        static readonly Encoding Oem = GetOem();
-        static Encoding GetOem()
-        {
-            try { return Encoding.GetEncoding((int)Native.GetOEMCP()); }
-            catch { return Encoding.Default; }
-        }
-
-        static void KillTree(int pid)
-        {
-            try
+            PlanErgebnis erg;
+            try { erg = a.Plan(plan, k); }
+            catch (Exception ex)
             {
-                var psi = new ProcessStartInfo("taskkill.exe", "/PID " + pid + " /T /F");
-                psi.UseShellExecute = false;
-                psi.CreateNoWindow = true;
-                Process.Start(psi);
+                AppLog.Error("Ausführer " + a.Art, ex);
+                erg = new PlanErgebnis { PlanId = plan.Id, Exit = PlanErgebnis.Ausnahme, Grund = ex.Message };
             }
-            catch { }
+            if (erg == null)
+                erg = new PlanErgebnis { PlanId = plan.Id, Exit = PlanErgebnis.Ausnahme, Grund = "Der Ausführer lieferte kein Ergebnis" };
+            return erg;
+        }
+
+        // Ein Abbruch, der zwischen der Pruefung nach Holen und dem Eintreffen des Plans beim
+        // Helfer kam, hat dort nichts vorgefunden ("es läuft nichts", helfer/Pipe.cs) und ist
+        // verpufft; lokal wirkt k.Abgebrochen, ueber die Pipe kennt der Helfer das Flag nicht.
+        // Deshalb geht er mit der naechsten Zeile oder Fortschrittsmeldung des Helfers noch
+        // einmal raus, hoechstens einmal je Lauf (Interlocked). Ein doppelter Abbruch ist fuer
+        // den Helfer harmlos, ein verlorener kostet bis zu 45 Minuten.
+        void AbbruchNachreichen(IAusfuehrer a)
+        {
+            if (Interlocked.Exchange(ref _abbruchNachgereicht, 1) != 0) return;
+            try { a.Abbrechen(); }
+            catch (Exception ex) { AppLog.Warn("Abbruch nachreichen: " + ex.Message); }
+        }
+
+        // Dieselben Fertigmeldungen wie bis 8.0: Abgebrochen / mit Hinweisen / Fertig in Xs.
+        // Neu: abgelehnt (Exit 2) und Ausnahme (Exit 3) mit Grund, Neustart-Hinweis aus den Werten.
+        void Abschluss(PlanErgebnis erg, double sekunden, out LogKind fk, out string fmsg)
+        {
+            if (erg.Wert("neustart") == "1")
+                Log("●  Ein Neustart von Windows steht noch aus, erst danach ist die Änderung abgeschlossen.", LogKind.Warn);
+
+            if (erg.Abgebrochen || erg.Exit == PlanErgebnis.AbgebrochenExit)
+            {
+                Log("✖  Abgebrochen.", LogKind.Bad);
+                fk = LogKind.Bad; fmsg = "Abgebrochen";
+            }
+            else if (erg.Exit == PlanErgebnis.Abgelehnt)
+            {
+                // Eine Ablehnung aus der Ausfuehrung steht schon als bad-Zeile des Helfers im
+                // Protokoll ("✖  Abgelehnt: ..."). Nur die Ablehnungen der Pipe selbst kommen
+                // ohne solche Zeile an; deren Grund gehoert deshalb hierher.
+                string g = GrundOhnePunkt(erg.Grund);
+                bool ohneHelferzeile = g != null && (g.StartsWith("beschäftigt", StringComparison.Ordinal)
+                                                  || g.StartsWith("planJson", StringComparison.Ordinal)
+                                                  || g.StartsWith("Verbindung", StringComparison.Ordinal));
+                Log("✖  Nicht ausgeführt." + (ohneHelferzeile ? " Grund: " + g + "." : ""), LogKind.Bad);
+                fk = LogKind.Bad; fmsg = "Abgelehnt";
+            }
+            else if (erg.Exit == PlanErgebnis.Ausnahme)
+            {
+                Log("✖  Der Lauf ist mit einem Fehler abgebrochen: " + (GrundOhnePunkt(erg.Grund) ?? "ohne Angabe") + ".", LogKind.Bad);
+                fk = LogKind.Bad; fmsg = "Abgebrochen (Fehler)";
+            }
+            else if (erg.Problem || erg.Exit != PlanErgebnis.Ok)
+            {
+                Log(string.Format("●  Fertig, aber nicht alles hat geklappt ({0:0.0}s). Die gelben Hinweise oben erklären Ursache und Lösung.", sekunden), LogKind.Warn);
+                fk = LogKind.Warn; fmsg = "Mit Hinweisen abgeschlossen";
+            }
+            else
+            {
+                Log(string.Format("✔  Fertig in {0:0.0}s", sekunden), LogKind.Good);
+                fk = LogKind.Good; fmsg = string.Format("Erfolgreich in {0:0.0}s", sekunden);
+            }
+            Log("", LogKind.Normal);
+        }
+
+        // Gruende des Helfers enden schon mit "."; der Satz hier setzt seinen eigenen. null bleibt null.
+        static string GrundOhnePunkt(string grund)
+        {
+            if (string.IsNullOrEmpty(grund)) return null;
+            string g = grund.TrimEnd('.', ' ');
+            return g.Length == 0 ? null : g;
+        }
+
+        // Zeilenart des Helfers -> LogKind der Oberflaeche. Unbekanntes wird Normal, nie verworfen.
+        static LogKind Art(string art)
+        {
+            switch (art)
+            {
+                case "header": return LogKind.Header;
+                case "good": return LogKind.Good;
+                case "bad": return LogKind.Bad;
+                case "dim": return LogKind.Dim;
+                case "warn": return LogKind.Warn;
+                default: return LogKind.Normal;
+            }
         }
     }
 }

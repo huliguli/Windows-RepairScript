@@ -82,6 +82,10 @@
 
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
+/* Das Attribut hidden verliert gegen jedes eigene display (Browser-Vorgabe gegen
+   Autoren-Stil): #queue-bar, #res-next und der Selbststart-Hinweis (.next und .catnote
+   sind display:flex) blieben damit als leere Kaesten sichtbar. Gemessen am 13.09.2026. */
+[hidden]{display:none !important}
 body{
   font-family:"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
   color:var(--text);
@@ -181,6 +185,8 @@ h1[tabindex="-1"]:focus,h1[tabindex="-1"]:focus-visible{outline:none}
 
 /* ---------- Bereichszeilen ---------- */
 .areas{display:grid;grid-template-columns:1fr 1fr;gap:11px}
+/* Eine Zeile über beide Spalten (Hinweis unter den Bereichen, etwa zu fehlenden Rechten). */
+.areas .areas-wide{grid-column:1 / -1;margin:0}
 @media (max-width:900px){ .areas{grid-template-columns:1fr} }
 .area{
   display:flex;align-items:center;gap:15px;padding:17px 19px;text-align:left;
@@ -217,9 +223,11 @@ h1[tabindex="-1"]:focus,h1[tabindex="-1"]:focus-visible{outline:none}
   display:inline-flex;align-items:center;gap:7px;white-space:nowrap;
 }
 .link svg{width:15px;height:15px;flex:none}
-.link:hover{background:var(--surface-2);color:var(--text)}
+.link:hover:not(:disabled){background:var(--surface-2);color:var(--text)}
 .link.danger{color:var(--bad)}
-.link.danger:hover{background:var(--bad-bg)}
+.link.danger:hover:not(:disabled){background:var(--bad-bg)}
+/* „Abschalten“ beim Zeitplan wartet wie die Schaltflächen auf 'done' (B26) */
+.link:disabled{opacity:.5;cursor:default}
 
 /* ---------- Ablauf ---------- */
 .barrow{display:flex;align-items:center;gap:14px;margin-bottom:7px}
@@ -307,6 +315,12 @@ details.disc > summary b{font-weight:600;color:var(--text)}
 .rcard.absicht .rico{color:var(--ok)}
 .dot.frage{background:var(--accent)}
 .pill.frage{color:var(--accent);background:var(--idle-bg);border:1px solid var(--idle-line)}
+/* v8.1: die Rechte-Karte („N Werte brauchen einmal Administratorrechte“) ist ein Angebot,
+   kein Befund. Darum die Haarlinie der Fragen-Karte und das Schild in Akzentfarbe, keine
+   Warnfarbe: ohne Rechte fehlt ein Messwert, dem PC fehlt nichts. */
+.rcard.rechte{border-color:var(--line-strong)}
+.rcard.rechte .rico{color:var(--accent)}
+.rbtns{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
 
 .next{padding:17px 20px;border-radius:var(--r);border:1px solid var(--line-strong);
   background:var(--surface-2);display:flex;align-items:center;gap:18px;flex-wrap:wrap}
@@ -335,6 +349,9 @@ details.disc > summary b{font-weight:600;color:var(--text)}
   font-size:13.2px;color:var(--text-2);line-height:1.55;
 }
 .catnote svg{width:17px;height:17px;flex:none;color:var(--accent);margin-top:1px}
+/* Text füllt die Zeile, eine Schaltfläche daneben (Selbststart umstellen) bleibt schmal */
+.catnote > div{flex:1;min-width:0}
+.catnote > .btn{flex:none;align-self:center;white-space:nowrap}
 
 .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:11px}
 .card{

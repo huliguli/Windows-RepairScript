@@ -45,19 +45,39 @@ jobs:
         run: ./tests/run-tests.ps1
 
       # Schutz vor vergessenem Versions-Bump: die App vergleicht ihre eigene
-      # Assembly-Version mit dem Release-Tag; passt beides nicht zusammen,
-      # wuerde der Updater dasselbe Update endlos wieder anbieten.
-      - name: Version pruefen (Tag == Assembly-Version)
+      # AssemblyVersion (Assembly.GetName().Version, host\ShellForm.cs) mit dem Release-Tag;
+      # passt beides nicht zusammen, wuerde der Updater dasselbe Update endlos wieder anbieten.
+      # Geprueft werden BEIDE Werte aus src\AssemblyInfo.cs: die FileVersion (Explorer,
+      # Installer) und die AssemblyVersion (Update-Pruefung). Bis 13.09.2026 zaehlte nur die
+      # FileVersion; eine angehobene FileVersion mit vergessener AssemblyVersion ging gruen
+      # durch und haette sich beim Kunden bei jedem Start selbst als Update angeboten.
+      # Der Tag muss dreiteilig sein (v8.1.0): ein Tag v8.1 laege in ParseVer der App unter
+      # 8.1.0.0, und Nutzer auf 8.1.0.0 bekaemen das Release nie angeboten.
+      - name: Version pruefen (Tag == FileVersion == AssemblyVersion)
         if: github.ref_type == 'tag'
         shell: powershell
         run: |
-          $ver = (Get-Item bin\WindowsWartung.exe).VersionInfo.FileVersion  # z. B. 6.5.0.0
-          $tag = "$env:GITHUB_REF_NAME".TrimStart("v")                       # z. B. 6.5
-          if (-not ($ver -eq $tag -or $ver.StartsWith($tag + "."))) {
-            Write-Error "Assembly-Version ($ver) passt nicht zum Tag ($tag) - bitte AssemblyInfo.cs anheben."
+          $tag = "$env:GITHUB_REF_NAME"                                        # z. B. v8.1.0
+          if (-not ($tag -match '^v(\d+)\.(\d+)\.(\d+)$')) {
+            Write-Error "Tag '$tag' ist nicht dreiteilig (erwartet v<major>.<minor>.<patch>, z. B. v8.1.0)."
             exit 1
           }
-          Write-Host "Version ok: $ver (Tag $env:GITHUB_REF_NAME)"
+          $erwartet = [version]"$($Matches[1]).$($Matches[2]).$($Matches[3]).0"
+          $exe = (Resolve-Path bin\WindowsWartung.exe).Path
+          $dateiText = (Get-Item $exe).VersionInfo.FileVersion                # AssemblyFileVersion, z. B. 8.1.0.0
+          try { $datei = [version]$dateiText }
+          catch { Write-Error "FileVersion '$dateiText' ist keine Versionsnummer (src\AssemblyInfo.cs)."; exit 1 }
+          $asm = [Reflection.AssemblyName]::GetAssemblyName($exe).Version     # AssemblyVersion
+          Write-Host "Tag $tag -> erwartet $erwartet; FileVersion $datei; AssemblyVersion $asm"
+          if ($datei -ne $erwartet) {
+            Write-Error "FileVersion ($datei) passt nicht zum Tag ($tag) - bitte AssemblyFileVersion in src\AssemblyInfo.cs anheben."
+            exit 1
+          }
+          if ($asm -ne $erwartet) {
+            Write-Error "AssemblyVersion ($asm) passt nicht zum Tag ($tag) - bitte AssemblyVersion in src\AssemblyInfo.cs anheben (die Update-Pruefung der App liest diesen Wert)."
+            exit 1
+          }
+          Write-Host "Version ok: $erwartet (Tag $tag, FileVersion und AssemblyVersion stimmen)"
 
       - name: Programmdatei signieren
         shell: powershell
@@ -83,6 +103,64 @@ jobs:
             Write-Error "Herausgeber weicht ab: '$($sig.SignerCertificate.Subject)' statt '$erwartet'. Installierte Fassungen wuerden dieses Update ablehnen."
             exit 1
           }
+
+      # Die signierte EXE einmal so starten, wie sie beim Kunden startet. Die Tests (oben) laufen
+      # VOR der Signatur und messen die Startpruefung nur unsigniert; danach startete bis
+      # 13.09.2026 niemand die EXE. Der Bau-Server vertraut dem Stamm des Zertifikats nicht
+      # (CERT_E_UNTRUSTEDROOT, 0x800B0109) - genau der Zweig, den jede Installation trifft
+      # (host\Selbstpruefung.cs, IstKettenfehler). Aendert sich diese Liste, sign.ps1 oder das
+      # Zertifikat, endet sonst jeder Kundenstart mit Exit 5 ("Programmdateien veraendert"),
+      # waehrend die CI gruen bleibt. Ohne Zertifikat laeuft der Schritt unsigniert (Exit 0
+      # verlangt, Tamper-Probe erwartet 6 statt 5).
+      - name: Startpruefung der signierten EXE
+        shell: powershell
+        run: |
+          $signiert = Test-Path cert.pfx
+          $exe = (Resolve-Path bin\WindowsWartung.exe).Path
+          $ausgabe = Join-Path $env:RUNNER_TEMP 'selbstpruefung.txt'
+          function Selbstpruefung-Lauf([string]$was) {
+            Remove-Item $ausgabe -Force -ErrorAction SilentlyContinue
+            # Start-Process -Wait -PassThru und das Handle binden: die EXE ist eine Fensteranwendung,
+            # ueber "& exe" kaeme kein ExitCode; ohne Zugriff auf Handle bleibt ExitCode leer.
+            $p = Start-Process -FilePath $exe -ArgumentList @('--selbstpruefung', ('"' + $ausgabe + '"')) -Wait -PassThru
+            $null = $p.Handle
+            $text = ''
+            if (Test-Path $ausgabe) { $text = [IO.File]::ReadAllText($ausgabe, [Text.Encoding]::UTF8) }
+            Write-Host "--- Selbstpruefung ($was): Exit $($p.ExitCode) ---"
+            Write-Host $text
+            if ($text -eq '') { Write-Error "Startpruefung ($was) schrieb keine Ausgabedatei ($ausgabe)."; exit 1 }
+            return New-Object PSObject -Property @{ Exit = $p.ExitCode; Text = $text }
+          }
+          $r = Selbstpruefung-Lauf 'unveraendert'
+          if ($r.Exit -ne 0) { Write-Error "Startpruefung der signierten EXE endete mit Exit $($r.Exit) statt 0."; exit 1 }
+          $verlangt = @('uiStimmt=true')
+          if ($signiert) { $verlangt += @('signiert=true', 'signaturGueltig=true') }
+          foreach ($zeile in $verlangt) {
+            if ($r.Text -notmatch ('(?m)^' + [regex]::Escape($zeile) + '\s*$')) { Write-Error "Startpruefung: '$zeile' fehlt in der Ausgabe."; exit 1 }
+          }
+          # Tamper-Probe: app.js um ein Byte verlaengert muss zum Verweigern fuehren (5 signiert,
+          # 6 unsigniert). Das Original kommt in jedem Fall zurueck, und der Hash beweist es -
+          # sonst wanderte ein veraendertes app.js ins ZIP und in den Installer.
+          $appJs = Join-Path (Split-Path -Parent $exe) 'ui\app.js'
+          $sicherung = Join-Path $env:RUNNER_TEMP 'app.js.original'
+          $hashVorher = (Get-FileHash $appJs -Algorithm SHA256).Hash
+          Copy-Item $appJs $sicherung -Force
+          $r2 = $null
+          try {
+            [IO.File]::AppendAllText($appJs, ' ', (New-Object System.Text.UTF8Encoding $false))
+            $r2 = Selbstpruefung-Lauf 'app.js um ein Byte verlaengert'
+          }
+          finally {
+            Copy-Item $sicherung $appJs -Force
+            Remove-Item $sicherung, $ausgabe -Force -ErrorAction SilentlyContinue
+          }
+          $hashNachher = (Get-FileHash $appJs -Algorithm SHA256).Hash
+          if ($hashNachher -ne $hashVorher) { Write-Error "app.js wurde nach der Tamper-Probe nicht wiederhergestellt (Hash $hashNachher statt $hashVorher)."; exit 1 }
+          $erwartetExit = 6
+          if ($signiert) { $erwartetExit = 5 }
+          if ($r2.Exit -ne $erwartetExit) { Write-Error "Tamper-Probe: Exit $($r2.Exit) statt $erwartetExit (signiert=$signiert)."; exit 1 }
+          if ($r2.Text -notmatch '(?m)^uiStimmt=false') { Write-Error "Tamper-Probe: Ausgabe ohne uiStimmt=false."; exit 1 }
+          Write-Host "Startpruefung ok: unveraendert Exit 0, veraendert Exit $erwartetExit, app.js wiederhergestellt (signiert=$signiert)."
 
       - name: Paket schnüren (ZIP)
         shell: powershell

@@ -18,6 +18,7 @@ using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
+using WartungsToolbox.Kern;
 
 namespace WartungsToolbox
 {
@@ -29,12 +30,48 @@ namespace WartungsToolbox
         readonly StringBuilder _log = new StringBuilder();
         readonly JavaScriptSerializer _js = new JavaScriptSerializer();
 
+        // Einmaliger Nachlauf nach dem naechsten Done des Runners (Zeitplan anlegen/loeschen
+        // melden ihren Stand erst, wenn der Plan durch ist). Wird vor dem Aufruf geleert.
+        Action<LogKind> _nachLauf;
+
+        // Die Selbststart-Aufgabe stammt aus 8.0 (/RL HIGHEST) und liess sich aus diesem
+        // Prozess nicht erneuern: die Oberflaeche zeigt dann den Hinweis (Nachricht selfstart,
+        // Feld veraltet). Gesetzt einmal beim Start, nachgezogen bei jedem Umschalten.
+        volatile bool _selfStartVeraltet;
+
+        // Stand von HelferClient.Verbunden bei der letzten Nachricht admin. Nach dem ersten
+        // UAC-Dialog eines Werkzeugs ist ein Helfer da, die Startzeile wuesste sonst nichts
+        // davon: AdminNachmelden vergleicht und schickt admin erneut, wenn es sich geaendert hat.
+        bool _helferGemeldet;
+
         readonly string _shotPath;
         readonly string _view;
         readonly int _shotWaitMs;
 
         string _pendingPost = "none";
         int _pendingDelay = 60;
+
+        // Ein Abschalt-Countdown von shutdown.exe laeuft (Entwurf, Abschnitt 14, B18): gesetzt,
+        // sobald shutdown.exe den Befehl angenommen hat (Exit 0), geloescht in CancelShutdown
+        // und bei Exit 1190 (Windows: es lief schon einer, der hier ist nicht unserer).
+        // StartAbgelehnt (CheckFlow) liest es und bricht den Countdown ab, bevor ein neuer
+        // Lauf beginnt: sonst faehrt der PC bei Sekunde 60 mitten in DISM herunter.
+        // Geschrieben im Hintergrund-Thread von ShutdownBefehl, gelesen im UI-Thread.
+        volatile bool _countdownAktiv;
+
+        // 0/1: das In-App-Update laeuft (Download, Pruefung, Austausch; Entwurf, Abschnitt 14,
+        // B11/B28). Gesetzt in BeginUpdate per Interlocked.CompareExchange, geloescht im finally
+        // des Update-Threads, NICHT aber nach dem Start von Batch oder Installer (die App
+        // beendet sich dann). Ein zweiter Klick auf "Jetzt aktualisieren" raeumte vorher den
+        // laufenden Download ab (gleicher Arbeitsordner, update.zip mit FileMode.Create).
+        int _updateLaeuft;
+
+        /// <summary>true, solange das In-App-Update laeuft. Darf von jedem Thread aus gelesen werden.</summary>
+        bool UpdateLaeuft { get { return Volatile.Read(ref _updateLaeuft) != 0; } }
+
+        // Das Fenster wurde waehrend eines Runner-Laufs geschlossen (OnClosingWhileBusy, B19):
+        // der Abbruch ist durch, Done ist unterwegs; Done schliesst das Fenster dann selbst.
+        bool _schliessenNachDone;
 
         const string Repo = "huliguli/Windows-RepairScript";
         string _updateUrl;
@@ -117,21 +154,104 @@ namespace WartungsToolbox
         /// Oberflaeche verspricht an dieser Stelle ausdruecklich, dass sich der Vorgang
         /// nicht mehr anhalten laesst - das X in der Titelleiste darf dieses Versprechen
         /// nicht unterlaufen. Es dauert nur Sekunden.
+        ///
+        /// Laeuft der Runner oder der Hauptweg (seit 8.1 im Helfer), fragt das Fenster nach:
+        /// das Ende der Pipe bricht den laufenden Plan ab (Baum-Kill im Helfer), und ein
+        /// halbes "sfc /scannow" soll niemand aus Versehen ausloesen. Geht das Fenster zu,
+        /// bekommt der Helfer "ende" (HelferClient.Beenden); bleibt es offen, bleibt auch er.
+        ///
+        /// Vor dem "ende" wartet das Fenster bis 3 s auf das Ende des abgebrochenen Laufs
+        /// (Entwurf, Abschnitt 14, B19): der Runner schreibt "Lauf beendet" im Hintergrund-
+        /// Thread und stellt Done zu (Verlaufseintrag), der Hauptweg schreibt Protokoll-Ende
+        /// und Verlauf selbst; ohne das Warten endete der Prozess mitten darin, und der Lauf
+        /// hatte einen Anfang, aber kein Ende. Beim Runner wird das Schliessen dazu vertagt,
+        /// bis Done zugestellt ist (_schliessenNachDone).
         /// </summary>
         void OnClosingWhileBusy(object sender, FormClosingEventArgs e)
         {
-            if (e.CloseReason != CloseReason.UserClosing) return;
-            if (!ScanEntferntGerade) return;
-
-            e.Cancel = true;
-            try
+            if (e.CloseReason == CloseReason.UserClosing)
             {
-                MessageBox.Show(this,
-                    "Es wird gerade aufgeräumt. Bitte warten Sie einen Moment, bis der Vorgang " +
-                    "abgeschlossen ist. Danach lässt sich das Fenster wie gewohnt schließen.",
-                    "Windows-Wartung", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                if (ScanEntferntGerade)
+                {
+                    e.Cancel = true;
+                    try
+                    {
+                        MessageBox.Show(this,
+                            "Es wird gerade aufgeräumt. Bitte warten Sie einen Moment, bis der Vorgang " +
+                            "abgeschlossen ist. Danach lässt sich das Fenster wie gewohnt schließen.",
+                            "Windows-Wartung", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    }
+                    catch { }
+                    return;
+                }
+
+                bool runnerLaeuft = _runner != null && _runner.Running;
+                if (runnerLaeuft || FlowRunning)
+                {
+                    string was = runnerLaeuft && !string.IsNullOrEmpty(_runner.Title)
+                        ? "„" + _runner.Title + "“"
+                        : "eine Prüfung oder Reparatur";
+                    DialogResult r = DialogResult.Yes;
+                    try
+                    {
+                        r = MessageBox.Show(this,
+                            "Gerade läuft " + was + ". Wird das Fenster jetzt geschlossen, bricht dieser " +
+                            "Lauf ab; Ihrem PC passiert dabei nichts, der Lauf ist nur nicht zu Ende.\n\n" +
+                            "Trotzdem schließen?",
+                            "Windows-Wartung", MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
+                            MessageBoxDefaultButton.Button2);
+                    }
+                    catch { }
+                    if (r != DialogResult.Yes)
+                    {
+                        e.Cancel = true;
+                        AppLog.Info("Schließen abgebrochen: " + was + " läuft weiter.");
+                        return;
+                    }
+                    AppLog.Info("Fenster wird geschlossen, obwohl " + was + " läuft: der Lauf wird abgebrochen.");
+                    if (runnerLaeuft) _runner.Cancel();
+                    CancelFlow();
+
+                    // Abbruch ist unterwegs; jetzt das Ende abwarten, bevor die Pipe schliesst.
+                    // Bis 3 s je Weg: der Helfer beantwortet den Abbruch sofort (Baum-Kill),
+                    // der Rest ist Verlauf und Protokoll. Steckt der Lauf noch im UAC-Dialog,
+                    // laeuft die Frist aus, und das Fenster geht trotzdem zu.
+                    if (runnerLaeuft)
+                    {
+                        bool zuEnde = false;
+                        try { zuEnde = _runner.LaufAbwarten(3000); }
+                        catch (Exception ex) { AppLog.Warn("Auf das Ende des Laufs warten: " + ex.Message); }
+                        if (!zuEnde) AppLog.Warn("Der Lauf " + was + " war nach 3 s noch nicht zu Ende; das Fenster schließt trotzdem.");
+                        else if (_runner.Running && !_schliessenNachDone)
+                        {
+                            // Der Thread ist durch, Done liegt als BeginInvoke in der Warteschlange
+                            // (Running faellt erst dort). Ginge das Fenster jetzt zu, verwuerfe
+                            // WinForms die wartende Zustellung: kein Verlaufseintrag, kein "done".
+                            // Also vertagen: Done schliesst das Fenster selbst (dann laeuft nichts
+                            // mehr, und dieser Weg geht ohne Rueckfrage durch). Kommt Done wider
+                            // Erwarten nicht, schliesst der naechste Klick auf X ohne Vertagung.
+                            _schliessenNachDone = true;
+                            e.Cancel = true;
+                            AppLog.Info("Schließen vertagt, bis der Abschluss von " + was + " zugestellt ist.");
+                            return;
+                        }
+                    }
+                    Thread hauptweg = _flowThread;
+                    if (hauptweg != null && hauptweg.IsAlive)
+                    {
+                        bool zuEnde = false;
+                        try { zuEnde = hauptweg.Join(3000); }
+                        catch (Exception ex) { AppLog.Warn("Auf das Ende des Hauptwegs warten: " + ex.Message); }
+                        if (!zuEnde) AppLog.Warn("Der Hauptweg war nach 3 s noch nicht zu Ende; das Fenster schließt trotzdem.");
+                    }
+                }
             }
-            catch { }
+
+            // Jeder Weg, der das Fenster wirklich schliesst (X, Application.Exit beim Update,
+            // Abmelden): der Helfer bekommt "ende" und beendet sich. Ohne diesen Aufruf bliebe
+            // ein erhoehter Prozess bis zu 10 Minuten (Leerlauf) stehen.
+            try { HelferClient.Beenden(); }
+            catch (Exception ex) { AppLog.Warn("Helfer beim Schließen beenden: " + ex.Message); }
         }
 
         // Windows-Benachrichtigung (nur wenn das Fenster im Hintergrund/minimiert ist)
@@ -144,7 +264,7 @@ namespace WartungsToolbox
                 if (fg) return;
                 ToolTipIcon ic = kind == LogKind.Good ? ToolTipIcon.Info
                                : (kind == LogKind.Bad ? ToolTipIcon.Error : ToolTipIcon.Warning);
-                _tray.ShowBalloonTip(5000, "Windows-Wartung", title + " – " + message, ic);
+                _tray.ShowBalloonTip(5000, "Windows-Wartung", title + ": " + message, ic);
             }
             catch { }
         }
@@ -225,6 +345,14 @@ namespace WartungsToolbox
 
             core.WebMessageReceived += OnWebMessage;
             _runner = new CommandRunner(_web, Log, SetState, Done, OnProgress);
+            // Schrittzaehler des Ablaufbildschirms (Warteschlange: "Schritt i von n"), nicht
+            // das Protokoll: die Kopfzeile je Schritt schreibt der Helfer selbst. Der Helfer
+            // meldet (i, n, Titel) nur bei n > 1 (Entwurf, Abschnitt 12); die Oberflaeche
+            // kennt die Nachricht flowStep schon vom Hauptweg.
+            _runner.OnStep = delegate (int schritt, int gesamt, string label)
+            {
+                Post(new { type = "flowStep", index = schritt, label = label ?? "" });
+            };
 
             // Gespeicherte UI-Groesse schon vor dem Anzeigen anwenden (kein Flackern)
             try { _web.ZoomFactor = (_shotPath != null) ? 1.0 : ReadZoom(); } catch { }
@@ -255,6 +383,57 @@ namespace WartungsToolbox
             CheckUpdatedMarker();   // nach einem Update: Erfolgsmeldung zeigen
             StartUpdateCheck();     // auf neue Version prüfen
             StartQuickGlance();     // sofort einen echten, lesenden Erstbefund zeigen
+            PruefeSelbststartAufgabe();   // 8.0-Aufgabe mit HIGHEST erkennen (Entwurf, Abschnitt 12)
+        }
+
+        /// <summary>
+        /// Einmal beim Start: stammt die Selbststart-Aufgabe aus 8.0 (/RL HIGHEST), wuerde sie
+        /// die asInvoker-App bei jeder Anmeldung erhoeht starten. Scheduler.StartTaskAuffrischen
+        /// legt sie ohne Rechte neu an, wenn das aus diesem Kontext geht; sonst bleibt sie
+        /// veraltet, das steht im Protokoll (Warnung aus dem Scheduler) und geht als Feld
+        /// veraltet an die Oberflaeche, damit sie den Hinweis zeigen kann.
+        /// Drei schtasks-Aufrufe, deshalb im Hintergrund.
+        ///
+        /// Laeuft der Host selbst erhoeht (genau das tut die 8.0-Aufgabe bei jeder Anmeldung,
+        /// bis sie umgestellt ist), wird NICHTS neu angelegt (Entwurf, Abschnitt 14, B33):
+        /// "/Create /XML /F" gelaenge erhoeht, die neue Aufgabe gehoerte aber wieder der
+        /// Administratorengruppe, truege LeastPrivilege (also nicht mehr "veraltet"), und der
+        /// nicht erhoehte Host koennte sie nie mehr abschalten. Die Aufgabe bleibt veraltet,
+        /// die Oberflaeche bekommt hinweis "erhoeht" dazu.
+        /// </summary>
+        void PruefeSelbststartAufgabe()
+        {
+            string exe = Application.ExecutablePath;
+            bool erhoeht = IsElevated();
+            Thread t = new Thread(delegate ()
+            {
+                try
+                {
+                    if (!Scheduler.StartTaskVeraltet()) return;
+                    if (erhoeht)
+                    {
+                        _selfStartVeraltet = true;
+                        AppLog.Warn(SelbststartErhoehtGrund("Die Selbststart-Aufgabe aus 8.0 wurde nicht erneuert"));
+                        UiPost(new { type = "selfstart", on = true, veraltet = true, hinweis = "erhoeht" });
+                        return;
+                    }
+                    bool erneuert = Scheduler.StartTaskAuffrischen(exe);
+                    _selfStartVeraltet = !erneuert && Scheduler.StartTaskVeraltet();
+                    if (!_selfStartVeraltet) return;
+                    UiPost(new { type = "selfstart", on = true, veraltet = true });
+                }
+                catch (Exception ex) { AppLog.Warn("Selbststart-Aufgabe prüfen: " + ex.Message); }
+            });
+            t.IsBackground = true;
+            t.Start();
+        }
+
+        /// <summary>Ein Satz fuer app.log, warum der erhoehte Host keine Selbststart-Aufgabe anlegt.</summary>
+        static string SelbststartErhoehtGrund(string was)
+        {
+            return was + ": dieser Start läuft mit Administratorrechten, und eine jetzt angelegte Aufgabe gehörte " +
+                   "der Administratorengruppe; der normale Start könnte sie nie mehr abschalten. Bitte Windows-Wartung " +
+                   "einmal normal starten (Doppelklick, ohne Administratorrechte) und den Selbststart dort einschalten.";
         }
 
         /// <summary>
@@ -301,6 +480,10 @@ namespace WartungsToolbox
         /// Meldet Rechtelage UND Benutzerkonto an die Oberflaeche. Beides gehoert zusammen:
         /// Wer die Rechte ueber ein fremdes Konto geholt hat, sieht ueberall das Profil
         /// dieses Kontos statt sein eigenes.
+        ///
+        /// Seit 8.1 laeuft die Oberflaeche ohne Rechte (on = false im Normalfall); helfer sagt,
+        /// ob ein Ausfuehrer ohne UAC-Dialog da ist (erhoeht oder lebende Helfer-Pipe), abnahme,
+        /// ob der Helfer von aussen kam (--pipe, Testweg ohne Dialog).
         /// </summary>
         void SendAdmin()
         {
@@ -312,18 +495,39 @@ namespace WartungsToolbox
             if (fremd)
                 AppLog.Info("Läuft als '" + laeuftAls + "', angemeldet ist '" + angemeldet + "'.");
 
+            bool helfer = false, abnahme = false;
+            try { helfer = HelferClient.Verbunden; abnahme = HelferClient.Abnahmeweg; }
+            catch (Exception ex) { AppLog.Warn("Helfer-Stand nicht lesbar: " + ex.Message); }
+            _helferGemeldet = helfer;
+
             try
             {
                 Post(new
                 {
                     type = "admin",
                     on = IsElevated(),
+                    helfer = helfer,
+                    abnahme = abnahme,
                     fremdesKonto = fremd,
                     laeuftAls = laeuftAls,
                     angemeldet = angemeldet,
                 });
             }
             catch { }
+        }
+
+        /// <summary>
+        /// Am Ende eines Laufs (Done, NachlaufPruefen): hat sich HelferClient.Verbunden seit der
+        /// letzten Nachricht admin geaendert (Helfer per UAC-Dialog gekommen, oder nach 10 Minuten
+        /// Leerlauf gegangen), bekommt die Oberflaeche den Stand erneut. UI-Thread.
+        /// </summary>
+        void AdminNachmelden()
+        {
+            bool helfer = false;
+            try { helfer = HelferClient.Verbunden; }
+            catch (Exception ex) { AppLog.Warn("Helfer-Stand nicht lesbar: " + ex.Message); return; }
+            if (helfer == _helferGemeldet) return;
+            SendAdmin();
         }
 
         static bool IsElevated()
@@ -462,6 +666,80 @@ namespace WartungsToolbox
         }
 
         // ---------- In-App-Update: herunterladen, entpacken, tauschen, neu starten ----------
+
+        /// <summary>
+        /// Was gerade laeuft, als Satzteil fuer eine Absage: „Tiefenprüfung“ (Titel des Runners),
+        /// "eine Prüfung oder Reparatur" (Hauptweg), "eine Suche nach Speicherfressern oder
+        /// ungültigen Einträgen" (Suchlauf), "die geplante Wartung im Hintergrund" (der
+        /// --auto-Prozess haelt den Mutex, Entwurf Abschnitt 14 B15) und "das Update" (B11);
+        /// null, wenn nichts laeuft. Liest nur Thread-Zustaende und darf von jedem Thread aus
+        /// gerufen werden. ohneUpdate = true fuer die Pruefungen des Update-Wegs selbst, der
+        /// sich sonst im eigenen Flag saehe.
+        /// </summary>
+        string LaufendesWas()
+        {
+            return LaufendesWas(false);
+        }
+
+        string LaufendesWas(bool ohneUpdate)
+        {
+            if (FlowRunning) return "eine Prüfung oder Reparatur";
+            if (ScanRunning) return "eine Suche nach Speicherfressern oder ungültigen Einträgen";
+            if (_runner != null && _runner.Running)
+                return string.IsNullOrEmpty(_runner.Title) ? "eine andere Aufgabe" : "„" + _runner.Title + "“";
+            // Ohne Helfer gibt die offene App die geplante Wartung an den --auto-Prozess zurueck;
+            // der ist dieselbe EXE und haelt sie 10 bis 20 Minuten (DISM, SFC). Ein Update
+            // traefe mit robocopy auf die gesperrte Datei und rollte danach zurueck.
+            if (GeplanteWartungLaeuft()) return "die geplante Wartung im Hintergrund";
+            if (!ohneUpdate && UpdateLaeuft) return "das Update";
+            return null;
+        }
+
+        /// <summary>
+        /// Update abgesagt, weil etwas laeuft: "ende" an den Helfer bei laufendem Plan ist ein
+        /// Baum-Kill (Entwurf, Abschnitt 12), und ein halbes "sfc /scannow" darf kein Klick auf
+        /// "Jetzt aktualisieren" ausloesen. Die Leiste kommt danach zurueck (Nachricht update),
+        /// damit der Klick nach dem Lauf wiederholt werden kann. Von jedem Thread aus rufbar.
+        /// </summary>
+        void UpdateWartetAuf(string laeuft)
+        {
+            AppLog.Info("Update nicht gestartet: es läuft " + laeuft + ".");
+            UiPost(new { type = "updateError", message = "Gerade läuft " + laeuft + "; das Update startet erst, wenn der Lauf zu Ende ist." });
+            UiPost(new { type = "update", version = _updateTag ?? "", notes = "" });
+        }
+
+        /// <summary>
+        /// Zweiter Klick auf "Jetzt aktualisieren", waehrend das Update laeuft: nur ein Hinweis,
+        /// die Leiste bleibt (Feld laeuft = true; die Oberflaeche zeigt dann eine Meldung am
+        /// Rand statt des Fehlerdialogs und laesst die Leiste stehen). Nichts wird abgeraeumt.
+        /// </summary>
+        void UpdateLaeuftBereits()
+        {
+            AppLog.Info("Update nicht erneut gestartet: es läuft bereits.");
+            Post(new { type = "updateError", message = "Das Update läuft bereits.", laeuft = true });
+        }
+
+        /// <summary>Flag des laufenden Updates loeschen; mehrfach rufbar (finally und Wiederholungsangebot).</summary>
+        void UpdateFreigeben()
+        {
+            Interlocked.Exchange(ref _updateLaeuft, 0);
+        }
+
+        /// <summary>
+        /// UAC-Dialog fuer Batch oder Installer abgelehnt (Entwurf, Abschnitt 14, B28): keine
+        /// Fehlermeldung mit "von Hand installieren", sondern das Angebot, es erneut zu
+        /// versuchen. Erst das Flag freigeben, dann die Leiste zurueckholen (Nachricht update),
+        /// damit der naechste Klick nicht an "läuft bereits" scheitert. Der Helfer war vor dem
+        /// Dialog schon beendet; beim naechsten Versuch fragt Windows erneut.
+        /// </summary>
+        void UpdateAbgelehnt(string wofuer)
+        {
+            AppLog.Info("Update: der UAC-Dialog für " + wofuer + " wurde abgelehnt; die Leiste bleibt, ein neuer Versuch ist möglich.");
+            UpdateFreigeben();
+            UiPost(new { type = "updateError", message = UpdateOhneRechte + " Sie können es erneut versuchen: ein Klick auf „Jetzt aktualisieren“ genügt.", abgelehnt = true });
+            UiPost(new { type = "update", version = _updateTag ?? "", notes = "" });
+        }
+
         void BeginUpdate()
         {
             if (string.IsNullOrEmpty(_updateAsset))
@@ -469,9 +747,23 @@ namespace WartungsToolbox
                 Post(new { type = "updateError", message = "Kein Download-Paket im Release gefunden." });
                 return;
             }
+            // Reihenfolge (alles im UI-Thread, nur der Update-Thread loescht das Flag wieder):
+            // 1. laeuft schon ein Update, nur der Hinweis; 2. laeuft etwas anderes, Absage mit
+            //    Grund; 3. das Flag setzen, dann erst der Thread. LaufendesWas(true) laesst das
+            //    eigene Flag aus, sonst saehe sich der Update-Weg selbst im Weg.
+            if (UpdateLaeuft) { UpdateLaeuftBereits(); return; }
+            // Erst pruefen, dann laden: waehrend eines Laufs wird gar nicht erst heruntergeladen.
+            // Vor dem Start von Batch oder Installer wird noch einmal geprueft (FinishUpdate,
+            // UpdateViaInstaller): der Download dauert, und in der Zeit kann ein Werkzeug gestartet sein.
+            string laeuft = LaufendesWas(true);
+            if (laeuft != null) { UpdateWartetAuf(laeuft); return; }
+            if (Interlocked.CompareExchange(ref _updateLaeuft, 1, 0) != 0) { UpdateLaeuftBereits(); return; }
             Thread t = new Thread(delegate ()
             {
                 string tmp = UpdateWorkDir();
+                // true = Batch oder Installer laufen, die App beendet sich gleich: das Flag
+                // bleibt dann gesetzt, damit kein weiterer Klick mehr durchkommt.
+                bool austauschLaeuft = false;
                 try
                 {
                     try { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); } catch { }
@@ -486,7 +778,7 @@ namespace WartungsToolbox
                         && !string.IsNullOrEmpty(_updateSetup))
                     {
                         AppLog.Info("Aktualisierung ueber den Installer (" + installOrt + ").");
-                        UpdateViaInstaller(tmp);
+                        austauschLaeuft = UpdateViaInstaller(tmp);
                         return;
                     }
 
@@ -515,13 +807,18 @@ namespace WartungsToolbox
 
                     UiPost(new { type = "updateStatus", phase = "extract" });
 
-                    if (_web != null && _web.IsHandleCreated)
-                        _web.BeginInvoke((Action)delegate { FinishUpdate(tmp, zip); });
+                    // Bleibt auf diesem Hintergrund-Thread: der Start der Austausch-Batch
+                    // zeigt den UAC-Dialog, und der darf den Thread der Oberflaeche nicht halten.
+                    austauschLaeuft = FinishUpdate(tmp, zip);
                 }
                 catch (Exception ex)
                 {
                     AppLog.Error("Update fehlgeschlagen", ex);
                     UiPost(new { type = "updateError", message = ex.Message });
+                }
+                finally
+                {
+                    if (!austauschLaeuft) UpdateFreigeben();
                 }
             });
             t.IsBackground = true;
@@ -531,11 +828,18 @@ namespace WartungsToolbox
         const string UserAgent = "WindowsWartung-Updater";
         const long MaxUpdateBytes = 200L * 1024 * 1024;   // Reissleine gegen endlose Antworten
 
+        /// <summary>Satz fuer die Oberflaeche, wenn der UAC-Dialog beim Update abgelehnt wurde.</summary>
+        const string UpdateOhneRechte = "Ohne Administratorrechte kann das Update nicht installiert werden.";
+
         /// <summary>
         /// Aktualisierung ueber den Installer des Releases. Laeuft still durch und ersetzt
-        /// die Installation sauber, inklusive Eintrag unter "Apps und Features".
+        /// die Installation sauber, inklusive Eintrag unter "Apps und Features". Der Installer
+        /// traegt sein eigenes Manifest (requireAdministrator); aus dem nicht erhoehten Host
+        /// geht sein Start nur ueber ShellExecute (Verb runas), sonst antwortet Windows mit
+        /// Fehler 740 ("erfordert erhoehte Rechte"). Rueckgabe true = der Installer laeuft,
+        /// die App beendet sich; false = nichts getauscht, das Update-Flag wird freigegeben.
         /// </summary>
-        void UpdateViaInstaller(string tmp)
+        bool UpdateViaInstaller(string tmp)
         {
             SetupTls();
             UiPost(new { type = "updateStatus", phase = "download" });
@@ -546,34 +850,70 @@ namespace WartungsToolbox
             {
                 AppLog.Warn("Installer-Download fehlgeschlagen: " + fehler);
                 UiPost(new { type = "updateError", message = fehler });
-                return;
+                return false;
             }
 
             string pruef = PruefeDatei(setup, _updateSetupHashUrl);
-            if (pruef != null) { UiPost(new { type = "updateError", message = pruef }); return; }
+            if (pruef != null) { UiPost(new { type = "updateError", message = pruef }); return false; }
 
-            UiPost(new { type = "updateStatus", phase = "restart" });
+            // Der Helfer bekommt gleich "ende"; bei laufendem Plan waere das ein Baum-Kill.
+            // Waehrend des Downloads kann ein Lauf begonnen haben, deshalb hier noch einmal.
+            string laeuft = LaufendesWas(true);
+            if (laeuft != null) { UpdateWartetAuf(laeuft); return false; }
+
+            UiPost(new { type = "updateStatus", phase = "admin" });
             WriteMarker(_updateTag);
             AppLog.Info("Installer wird still ausgefuehrt.");
 
+            // /VERYSILENT: keine Oberflaeche. /NORESTART: der Installer startet den PC nicht neu.
+            // Der Installer wartet, bis diese Instanz beendet ist - deshalb erst starten,
+            // dann beenden. Der Helfer ist dieselbe EXE: er muss vorher weg, sonst kann der
+            // Installer die Datei nicht ersetzen.
+            HelferClient.Beenden();
+            bool abgelehnt;
+            string start = StarteErhoeht(setup, "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOCANCEL", out abgelehnt);
+            if (start != null)
+            {
+                DeleteMarker();
+                if (abgelehnt) { UpdateAbgelehnt("den Installer"); return false; }
+                AppLog.Error("Installer ließ sich nicht starten: " + start);
+                UiPost(new { type = "updateError", message = start });
+                return false;
+            }
+            UiPost(new { type = "updateStatus", phase = "restart" });
+            BeginInvoke((Action)delegate { Application.Exit(); });
+            return true;
+        }
+
+        /// <summary>
+        /// Startet datei erhoeht (Verb runas, UseShellExecute, ohne Fenster). Rueckgabe null =
+        /// gestartet; sonst der Grund als Satz, abgelehnt = true bei Win32-Fehler 1223 (der
+        /// Nutzer hat im UAC-Dialog "Nein" gesagt). Die einzige Stelle in ShellForm, die noch
+        /// einen Prozess startet (Entwurf, Abschnitt 8 Punkt 3: Ausnahme "Update-Batch").
+        /// Blockiert, solange der UAC-Dialog offen ist: nur aus einem Hintergrund-Thread rufen.
+        /// </summary>
+        static string StarteErhoeht(string datei, string argumente, out bool abgelehnt)
+        {
+            abgelehnt = false;
             try
             {
-                // /VERYSILENT: keine Oberflaeche. /NORESTART: der Installer startet den PC nicht neu.
-                // Der Installer wartet, bis diese Instanz beendet ist - deshalb erst starten,
-                // dann beenden.
-                ProcessStartInfo psi = new ProcessStartInfo(setup,
-                    "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOCANCEL")
+                ProcessStartInfo psi = new ProcessStartInfo(datei, argumente ?? "")
                 {
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
+                    UseShellExecute = true,      // Pflicht fuer Verb = runas (UAC-Dialog)
+                    Verb = "runas",
+                    WindowStyle = ProcessWindowStyle.Hidden,
                 };
-                Process.Start(psi);
-                BeginInvoke((Action)delegate { Application.Exit(); });
+                using (Process p = Process.Start(psi)) { }
+                return null;
+            }
+            catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)   // ERROR_CANCELLED
+            {
+                abgelehnt = true;
+                return UpdateOhneRechte;
             }
             catch (Exception ex)
             {
-                AppLog.Error("Installer liess sich nicht starten", ex);
-                UiPost(new { type = "updateError", message = ex.Message });
+                return "Windows meldet beim Start „" + ex.Message.TrimEnd('.') + "“.";
             }
         }
 
@@ -669,21 +1009,37 @@ namespace WartungsToolbox
         }
 
         /// <summary>
-        /// Arbeitsordner fuer das Update. Bewusst NICHT %TEMP%: die App laeuft als Administrator,
-        /// der Nutzer-Temp ist aber auch ohne Adminrechte beschreibbar. Ein nicht erhoehter
-        /// Prozess konnte das entpackte Paket oder die Batchdatei zwischen Schreiben und
+        /// Arbeitsordner fuer das Update.
+        ///
+        /// Erhoeht (EnableLUA=0, eingebauter Administrator, erhoehte Shell): wie bis 8.0 unter
+        /// ProgramData, nur fuer Administratoren und SYSTEM beschreibbar. Ein nicht erhoehter
+        /// Prozess konnte sonst das entpackte Paket oder die Batchdatei zwischen Schreiben und
         /// Ausfuehren austauschen und damit Code als Administrator ausfuehren.
+        ///
+        /// Nicht erhoeht (Normalfall seit 8.1, Manifest asInvoker): der Host selbst muss den
+        /// Download dort ablegen, ein Ordner nur fuer Administratoren ginge also gar nicht,
+        /// und unter ProgramData\WindowsWartung haben seit 8.1 ALLE Benutzer Aenderungsrecht
+        /// (vererbt), also auch fremde Konten desselben PCs. Deshalb das eigene Profil, mit
+        /// Rechten nur fuer das eigene Konto, Administratoren und SYSTEM (siehe
+        /// CreateAdminOnlyDirectory). Die Batch laeuft danach erhoeht (Verb runas); gegen einen
+        /// Tausch durch einen anderen Prozess DESSELBEN Kontos schuetzt kein Ordner, das ist
+        /// die Grenze des Rechte-Modells B und im Entwurf so hingenommen.
         /// </summary>
         static string UpdateWorkDir()
         {
             return Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                Environment.GetFolderPath(IsElevated()
+                    ? Environment.SpecialFolder.CommonApplicationData
+                    : Environment.SpecialFolder.LocalApplicationData),
                 "WindowsWartung", "update");
         }
 
         /// <summary>
-        /// Legt einen Ordner an, in den nur Administratoren und SYSTEM schreiben duerfen.
-        /// Vererbte Rechte werden ausdruecklich abgeworfen.
+        /// Legt den Update-Ordner mit engen Rechten an; vererbte Rechte werden ausdruecklich
+        /// abgeworfen. Erhoeht: nur Administratoren und SYSTEM, Besitzer Administratoren.
+        /// Nicht erhoeht: dazu das eigene Konto (es muss schreiben), Besitzer bleibt das
+        /// eigene Konto (einen anderen darf ein nicht erhoehter Prozess nicht eintragen,
+        /// Windows lehnt das mit Fehler 1307 ab).
         /// </summary>
         static void CreateAdminOnlyDirectory(string path)
         {
@@ -700,7 +1056,17 @@ namespace WartungsToolbox
 
                 sec.AddAccessRule(new FileSystemAccessRule(admins, FileSystemRights.FullControl, inh, PropagationFlags.None, AccessControlType.Allow));
                 sec.AddAccessRule(new FileSystemAccessRule(system, FileSystemRights.FullControl, inh, PropagationFlags.None, AccessControlType.Allow));
-                sec.SetOwner(admins);
+                if (IsElevated())
+                {
+                    sec.SetOwner(admins);
+                }
+                else
+                {
+                    SecurityIdentifier ich;
+                    using (WindowsIdentity id = WindowsIdentity.GetCurrent()) ich = id.User;
+                    if (ich == null) throw new InvalidOperationException("Das eigene Konto ist nicht lesbar.");
+                    sec.AddAccessRule(new FileSystemAccessRule(ich, FileSystemRights.FullControl, inh, PropagationFlags.None, AccessControlType.Allow));
+                }
 
                 di.SetAccessControl(sec);
             }
@@ -766,7 +1132,13 @@ namespace WartungsToolbox
             }
         }
 
-        void FinishUpdate(string tmp, string zip)
+        /// <summary>
+        /// ZIP-Weg: entpacken, Herkunft pruefen, Austausch-Batch erhoeht starten (Verb runas,
+        /// UAC-Dialog), dann diese Instanz beenden. Laeuft auf dem Download-Thread; alles
+        /// fuer die Oberflaeche geht ueber UiPost. Rueckgabe true = die Batch laeuft, die App
+        /// beendet sich; false = nichts getauscht, das Update-Flag wird freigegeben.
+        /// </summary>
+        bool FinishUpdate(string tmp, string zip)
         {
             try
             {
@@ -777,8 +1149,8 @@ namespace WartungsToolbox
                 string neueExe = Path.Combine(newDir, "WindowsWartung.exe");
                 if (!File.Exists(neueExe))
                 {
-                    Post(new { type = "updateError", message = "Paket enthält keine WindowsWartung.exe." });
-                    return;
+                    UiPost(new { type = "updateError", message = "Das Paket enthält keine WindowsWartung.exe; es wurde nichts verändert." });
+                    return false;
                 }
 
                 // Herkunft pruefen, BEVOR getauscht wird: die neue Fassung muss vom selben
@@ -787,25 +1159,60 @@ namespace WartungsToolbox
                 string herkunft = UpdateTrust.PruefeHerausgeber(neueExe);
                 if (herkunft != null)
                 {
-                    Post(new { type = "updateError", message = herkunft });
-                    return;
+                    UiPost(new { type = "updateError", message = herkunft });
+                    return false;
                 }
 
                 string appDir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
                 string appExe = Path.Combine(appDir, "WindowsWartung.exe");
                 int pid = Process.GetCurrentProcess().Id;
 
+                // Der Helfer bekommt gleich "ende"; bei laufendem Plan waere das ein Baum-Kill.
+                // Waehrend Download und Entpacken kann ein Lauf begonnen haben, deshalb hier
+                // noch einmal, bevor Merker und Batch entstehen.
+                string laeuft = LaufendesWas(true);
+                if (laeuft != null) { UpdateWartetAuf(laeuft); return false; }
+
                 WriteMarker(_updateTag);
 
                 // Die Batchdatei liegt im abgesicherten Update-Ordner, NICHT in %TEMP%:
                 // sie wird gleich mit Adminrechten ausgefuehrt.
+                //
+                // Die neue Fassung startet ueber explorer.exe, nicht ueber "start": die Batch
+                // laeuft per runas erhoeht, und "start" vererbt das (asInvoker) an die App. Die
+                // liefe dann erhoeht, und ihr Selbststart-Schalter legte die Aufgabe wieder mit
+                // Besitzer Administratoren an, also genau die 8.0-Aufgabe, die der nicht erhoehte
+                // Host nie mehr loswird. Der Explorer startet Programme mit mittlerer Integritaet.
                 string bat = Path.Combine(tmp, "ww_update.cmd");
                 string sicherung = Path.Combine(tmp, "vorher");
+                string neuStarten = "explorer.exe \"" + appExe + "\"\r\n";
                 string content =
                     "@echo off\r\n" +
                     ":w\r\n" +
                     "tasklist /FI \"PID eq " + pid + "\" 2>nul | find \"" + pid + "\" >nul\r\n" +
                     "if not errorlevel 1 ( timeout /t 1 /nobreak >nul & goto w )\r\n" +
+                    // Nicht nur der Host: Helfer (--helfer) und geplante Wartung (--auto) sind
+                    // dieselbe EXE, und solange einer davon laeuft, kann robocopy die Datei nicht
+                    // ersetzen (/R:3 scheitert, Rueckrollen, "Update rückgängig gemacht" beim
+                    // naechsten Start, obwohl nichts kaputt war; Entwurf Abschnitt 14, B15).
+                    // Deshalb bis 120 s warten, bis kein WindowsWartung.exe mehr laeuft; danach
+                    // geht es weiter, und robocopy meldet den Fehler selbst.
+                    "set /a ww_warte=0\r\n" +
+                    ":w2\r\n" +
+                    "tasklist /FI \"IMAGENAME eq WindowsWartung.exe\" 2>nul | find /I \"WindowsWartung.exe\" >nul\r\n" +
+                    "if errorlevel 1 goto w2ok\r\n" +
+                    "set /a ww_warte+=1\r\n" +
+                    "if %ww_warte% geq 120 goto w2ok\r\n" +
+                    "timeout /t 1 /nobreak >nul\r\n" +
+                    "goto w2\r\n" +
+                    ":w2ok\r\n" +
+                    // Rechte des Laufzeitordners (Entwurf, Abschnitt 14, B34): nach einem
+                    // 8.0-Bestand gehoeren Verlauf, Antworten und app.log der Administratoren-
+                    // gruppe, und der nicht erhoehte Host kann sie nicht mehr ueberschreiben.
+                    // Diese Batch laeuft erhoeht und gibt BUILTIN\Users (S-1-5-32-545, sprach-
+                    // unabhaengig) Aenderungsrecht auf den ganzen Baum, wie Ablage.RechteSichern.
+                    // Ein Fehler hier (Ordner fehlt) bricht das Update nicht ab.
+                    "icacls \"%ProgramData%\\WindowsWartung\" /grant *S-1-5-32-545:(OI)(CI)M /T >nul 2>&1\r\n" +
                     // Erst die bisherige Fassung zur Seite legen. Ohne diesen Schritt gab es
                     // keinen Rueckweg: Bricht das Kopieren mittendrin ab, blieb eine halb
                     // ueberschriebene Installation stehen - neue Oberflaeche, alte Programmdatei
@@ -814,7 +1221,7 @@ namespace WartungsToolbox
                     "robocopy \"" + appDir + "\" \"" + sicherung + "\" /E /NFL /NDL /NJH /NJS /R:1 /W:1 >nul\r\n" +
                     "if errorlevel 8 (\r\n" +
                     "  echo Die bisherige Fassung liess sich nicht sichern. Es wurde nichts veraendert.> \"" + Path.Combine(tmp, "fehler.txt") + "\"\r\n" +
-                    "  start \"\" \"" + appExe + "\"\r\n" +
+                    "  " + neuStarten +
                     "  goto ende\r\n" +
                     ")\r\n" +
                     "robocopy \"" + newDir + "\" \"" + appDir + "\" /E /NFL /NDL /NJH /NJS /R:3 /W:2 >nul\r\n" +
@@ -826,7 +1233,7 @@ namespace WartungsToolbox
                     "  robocopy \"" + sicherung + "\" \"" + appDir + "\" /E /PURGE /NFL /NDL /NJH /NJS /R:2 /W:2 >nul\r\n" +
                     "  echo Update fehlgeschlagen, die bisherige Fassung wurde wiederhergestellt.> \"" + Path.Combine(tmp, "fehler.txt") + "\"\r\n" +
                     ")\r\n" +
-                    "start \"\" \"" + appExe + "\"\r\n" +
+                    neuStarten +
                     ":ende\r\n" +
                     "rmdir /s /q \"" + sicherung + "\" >nul 2>&1\r\n" +
                     "rmdir /s /q \"" + Path.Combine(tmp, "new") + "\" >nul 2>&1\r\n" +
@@ -838,20 +1245,35 @@ namespace WartungsToolbox
                 // schlug das Kopieren fehl und die App startete nach dem Update nicht mehr.
                 File.WriteAllText(bat, content, OemEncoding());
 
-                Post(new { type = "updateStatus", phase = "restart" });
-                AppLog.Info("Update auf " + _updateTag + " wird angewendet.");
+                // Die Batch tauscht Programmdateien unter Program Files: seit 8.1 (asInvoker)
+                // braucht sie dafuer den UAC-Dialog (Verb runas). Der Helfer ist dieselbe EXE
+                // und muss vorher weg, sonst kann robocopy sie nicht ersetzen.
+                UiPost(new { type = "updateStatus", phase = "admin" });
+                AppLog.Info("Update auf " + _updateTag + " wird angewendet (Austausch-Batch per runas).");
+                HelferClient.Beenden();
 
-                ProcessStartInfo psi = new ProcessStartInfo("cmd.exe", "/c \"" + bat + "\"");
-                psi.UseShellExecute = false;
-                psi.CreateNoWindow = true;
-                Process.Start(psi);
+                bool abgelehnt;
+                string start = StarteErhoeht("cmd.exe", "/c \"" + bat + "\"", out abgelehnt);
+                if (start != null)
+                {
+                    DeleteMarker();
+                    try { File.Delete(bat); } catch { }
+                    if (abgelehnt) { UpdateAbgelehnt("die Austausch-Batch"); return false; }
+                    AppLog.Error("Austausch-Batch ließ sich nicht starten: " + start);
+                    UiPost(new { type = "updateError", message = start });
+                    return false;
+                }
 
+                UiPost(new { type = "updateStatus", phase = "restart" });
                 BeginInvoke((Action)delegate { Application.Exit(); });
+                return true;
             }
             catch (Exception ex)
             {
                 AppLog.Error("Update konnte nicht angewendet werden", ex);
-                Post(new { type = "updateError", message = ex.Message });
+                DeleteMarker();
+                UiPost(new { type = "updateError", message = ex.Message });
+                return false;
             }
         }
 
@@ -900,6 +1322,14 @@ namespace WartungsToolbox
         {
             try { Directory.CreateDirectory(Path.GetDirectoryName(MarkerPath())); File.WriteAllText(MarkerPath(), tag ?? ""); }
             catch { }
+        }
+        // Der Merker wird VOR dem Start von Batch oder Installer geschrieben. Kommt der Start
+        // nicht zustande (UAC abgelehnt, Fehler), muss er weg: sonst meldete der naechste
+        // Start "Update rueckgaengig gemacht", obwohl nie eines lief.
+        void DeleteMarker()
+        {
+            try { if (File.Exists(MarkerPath())) File.Delete(MarkerPath()); }
+            catch (Exception ex) { AppLog.Warn("Update-Merker ließ sich nicht löschen: " + ex.Message); }
         }
         void CheckUpdatedMarker()
         {
@@ -981,54 +1411,76 @@ namespace WartungsToolbox
             string type = Str(m, "type");
             if (type == "run")
             {
+                // Ein Werkzeug = ein Plan mit einem werkzeug-Schritt. Der Helfer baut die
+                // Schritte selbst aus der Nummer (src/Schritte.cs); hier gehen nur Nummer und
+                // der Schalter fuer den Sicherungspunkt hinueber.
                 int id = ToInt(m, "id");
-                if (id < 0 || id >= _actions.Count) return;
+                MaintenanceAction a = Schritte.Aktion(id);
+                if (a == null)
+                {
+                    Abgewiesen("Werkzeug", "Werkzeug Nr. " + id + " gibt es nicht (Katalog hat " + _actions.Count + " Einträge).", "Unbekanntes Werkzeug");
+                    return;
+                }
+                if (a.Special != null)
+                {
+                    // braucht eine Eingabe, laeuft ueber den eigenen Befehl (netDiag, driverBackup)
+                    Abgewiesen(a.Title, "„" + a.Title + "“ braucht eine Eingabe und läuft über seinen eigenen Befehl, nicht über „run“.", "Falscher Befehl");
+                    return;
+                }
+                if (StartAbgelehnt(a.Title)) return;
                 bool restore = ToBool(m, "restore");
                 ReadPost(m);
-                MaintenanceAction a = _actions[id];
-                if (a.Special != null) return;   // braucht eine Eingabe, laeuft ueber den eigenen Befehl
-                List<Job> jobs = new List<Job>();
-                jobs.Add(new Job { Title = a.Title, Steps = BuildSteps(a, restore) });
-                _runner.RunJobs(a.Title, jobs);
+                Kern.Plan plan = Kern.Plan.Neu(a.Title).Mit("werkzeug",
+                    "id", a.Id.ToString(),
+                    "sicherung", restore && a.WantsRestorePoint ? "1" : "0");
+                _runner.RunPlan(a.Title, plan);
             }
             else if (type == "runQueue")
             {
                 bool restore = ToBool(m, "restore");
-                ReadPost(m);
-                List<Job> jobs = new List<Job>();
+                var gewaehlt = new List<MaintenanceAction>();
                 object idsObj;
                 if (m.TryGetValue("ids", out idsObj) && idsObj is object[])
                 {
-                    // Ein Sicherungspunkt fuer die GANZE Warteschlange, ganz vorn. Vorher legte
-                    // jede einzelne Aktion einen an; Windows drosselt auf einen je 24 Stunden,
-                    // also wurden die uebrigen mit einer Warnung uebersprungen - das las sich wie
-                    // ein Fehler, obwohl alles in Ordnung war.
-                    bool restoreDone = false;
                     foreach (object o in (object[])idsObj)
                     {
                         int id;
                         try { id = Convert.ToInt32(o); } catch { continue; }
-                        if (id < 0 || id >= _actions.Count) continue;
-                        MaintenanceAction a = _actions[id];
-                        if (a.Special != null) continue;   // Sonderaktion, nicht sammelbar
-
-                        List<Step> steps = new List<Step>();
-                        if (restore && a.WantsRestorePoint && !restoreDone)
-                        {
-                            steps.Add(RestoreStep());
-                            restoreDone = true;
-                        }
-                        steps.AddRange(a.Steps);
-                        jobs.Add(new Job { Title = a.Title, Steps = steps });
+                        MaintenanceAction a = Schritte.Aktion(id);
+                        if (a == null || a.Special != null) continue;   // unbekannt oder Sonderaktion, nicht sammelbar
+                        gewaehlt.Add(a);
                     }
                 }
-                if (jobs.Count == 0) return;
-                _runner.RunJobs("Warteschlange (" + jobs.Count + ")", jobs);
+                if (gewaehlt.Count == 0)
+                {
+                    Abgewiesen("Warteschlange", "Die Warteschlange enthält 0 ausführbare Werkzeuge.", "Nichts auszuführen");
+                    return;
+                }
+                string titel = "Warteschlange (" + gewaehlt.Count + ")";
+                if (StartAbgelehnt(titel)) return;
+                ReadPost(m);
+
+                // Ein Sicherungspunkt fuer die GANZE Warteschlange, ganz vorn: nur der ERSTE
+                // Schritt, der einen will, bekommt sicherung=1. Vorher legte jede einzelne
+                // Aktion einen an; Windows drosselt auf einen je 24 Stunden, also wurden die
+                // uebrigen mit einer Warnung uebersprungen - das las sich wie ein Fehler,
+                // obwohl alles in Ordnung war.
+                Kern.Plan plan = Kern.Plan.Neu(titel);
+                bool restoreDone = false;
+                foreach (MaintenanceAction a in gewaehlt)
+                {
+                    bool sicherung = restore && a.WantsRestorePoint && !restoreDone;
+                    if (sicherung) restoreDone = true;
+                    plan.Mit("werkzeug", "id", a.Id.ToString(), "sicherung", sicherung ? "1" : "0");
+                }
+                _runner.RunPlan(titel, plan);
             }
             // --- Hauptweg -------------------------------------------------------
             else if (type == "startCheck") StartCheck();
             else if (type == "startDeepCheck") StartDeepCheck();
             else if (type == "startFix") StartFix();
+            // Werte, die nur erhoeht lesbar sind, nachmessen (CheckFlow.Ergaenzen, B1).
+            else if (type == "ergaenzen") Ergaenzen();
             // Antwort auf eine Frage des Systems ("so lassen" oder "reparieren"), Grundsatz 1.
             else if (type == "antwort") Antwort(Str(m, "id"), Str(m, "wert"));
             // Ein Editor mit Administratorrechten koennte jede Datei des Systems
@@ -1090,31 +1542,127 @@ namespace WartungsToolbox
             else if (type == "scheduleCreate") ScheduleCreate(m);
             else if (type == "scheduleDelete") ScheduleDelete();
             else if (type == "selfStartGet") SelfStartGet();
-            else if (type == "selfStartSet") SelfStartSet(ToBool(m, "on"));
+            else if (type == "selfStartSet") SelfStartSet(ToBool(m, "on"), ToBool(m, "umstellen"));
             else if (type == "openStartupFolder") OpenStartupFolder(Str(m, "scope"));
         }
 
         // ---------- App-Selbststart (Autostart-Ansicht) ----------
+        // Bleibt lokal und ohne Rechte (Scheduler.StartTaskSet, Aufgabe mit LeastPrivilege im
+        // eigenen Konto). veraltet = die Aufgabe stammt noch aus 8.0 und startet erhoeht; die
+        // kann nur der Helfer loeschen (SelfStartUmstellen).
         void SelfStartGet()
         {
             Thread t = new Thread(delegate ()
             {
-                UiPost(new { type = "selfstart", on = Scheduler.StartTaskExists() });
+                UiPost(new { type = "selfstart", on = Scheduler.StartTaskExists(), veraltet = _selfStartVeraltet });
             });
             t.IsBackground = true;
             t.Start();
         }
 
-        void SelfStartSet(bool on)
+        /// <summary>
+        /// Schalter "Mit dem PC starten". umstellen = Schaltflaeche "Umstellen" am Hinweis zur
+        /// 8.0-Aufgabe (Entwurf, Abschnitt 13). Ist die Aufgabe veraltet, geht JEDER Weg ueber
+        /// den Helfer: der nicht erhoehte Host kann sie weder loeschen noch ersetzen (Besitzer
+        /// Administratoren), ein lokales StartTaskSet antwortete nur mit "Nicht geändert".
+        ///
+        /// Erhoehter Host (Entwurf, Abschnitt 14, B33): Einschalten legt keine Aufgabe an (sie
+        /// gehoerte der Administratorengruppe und liesse sich spaeter nicht mehr abschalten),
+        /// Antwort ist selfstart mit hinweis "erhoeht" und dem wahren Stand. Ausschalten geht
+        /// auch erhoeht, das Loeschen ist ja gerade das, was der normale Host nicht darf.
+        /// </summary>
+        void SelfStartSet(bool on, bool umstellen)
         {
+            if (umstellen || _selfStartVeraltet) { SelfStartUmstellen(on); return; }
+            if (on && IsElevated()) { SelbststartErhoehtAbgelehnt(); return; }
             string exe = Application.ExecutablePath;
             Thread t = new Thread(delegate ()
             {
                 bool ok = Scheduler.StartTaskSet(on, exe);
-                UiPost(new { type = "selfstart", on = Scheduler.StartTaskExists(), changed = ok });
+                // Nach dem Umschalten neu lesen: eine neu angelegte Aufgabe ist nie veraltet,
+                // eine 8.0-Aufgabe, die sich nicht loeschen liess, bleibt es.
+                try { _selfStartVeraltet = Scheduler.StartTaskVeraltet(); }
+                catch (Exception ex) { AppLog.Warn("Selbststart-Aufgabe prüfen: " + ex.Message); }
+                UiPost(new { type = "selfstart", on = Scheduler.StartTaskExists(), changed = ok, veraltet = _selfStartVeraltet });
             });
             t.IsBackground = true;
             t.Start();
+        }
+
+        /// <summary>
+        /// Einschalten im erhoehten Host abgelehnt: Grund ins app.log, an die Oberflaeche der
+        /// wahre Stand mit hinweis "erhoeht" (changed false, damit der Schalter zurueckspringt).
+        /// Nie still: ohne Antwort stuende der Schalter auf "an", obwohl nichts angelegt wurde.
+        /// </summary>
+        void SelbststartErhoehtAbgelehnt()
+        {
+            AppLog.Warn(SelbststartErhoehtGrund("Selbststart nicht eingeschaltet"));
+            Thread t = new Thread(delegate ()
+            {
+                UiPost(new { type = "selfstart", on = Scheduler.StartTaskExists(), changed = false, veraltet = _selfStartVeraltet, hinweis = "erhoeht" });
+            });
+            t.IsBackground = true;
+            t.Start();
+        }
+
+        /// <summary>
+        /// 8.0-Aufgabe (/RL HIGHEST, Besitzer Administratoren) umstellen: Plan selbststart.loeschen
+        /// (Stufe 1, keine Parameter) ueber den Runner, der Helfer loescht sie erhoeht. Im
+        /// Nachlauf nach Done legt der Host sie bei on lokal neu an (StartTaskSet(true, exe):
+        /// Besitzer Nutzer, LeastPrivilege); bei kind != good bleibt sie veraltet, und die
+        /// Oberflaeche erfaehrt das ueber selfstart {veraltet:true}. Braucht einmal den UAC-Dialog.
+        ///
+        /// Erhoehter Host (Entwurf, Abschnitt 14, B33): der Plan laeuft lokal ohne Dialog und
+        /// loescht die 8.0-Aufgabe, neu angelegt wird NICHTS (sie gehoerte wieder der
+        /// Administratorengruppe). Der Selbststart ist danach aus; die Oberflaeche bekommt
+        /// hinweis "erhoeht", damit sie sagen kann: normal starten und dort wieder einschalten.
+        /// Das ist der Ausweg aus der Schleife "8.0-Aufgabe startet 8.1 bei jeder Anmeldung erhöht".
+        /// </summary>
+        void SelfStartUmstellen(bool on)
+        {
+            const string titel = "Selbststart umstellen";
+            if (StartAbgelehnt(titel))
+            {
+                // Der Schalter der Oberflaeche steht schon um: den wahren Stand nachschicken.
+                SelfStartGet();
+                return;
+            }
+            string exe = Application.ExecutablePath;
+            bool erhoeht = IsElevated();
+            Kern.Plan plan = Kern.Plan.Neu(titel).Mit("selbststart.loeschen");
+            _nachLauf = delegate (LogKind k)
+            {
+                bool gut = k == LogKind.Good;
+                Thread t = new Thread(delegate ()
+                {
+                    bool angelegt = false;
+                    if (gut && on && erhoeht)
+                        AppLog.Warn(SelbststartErhoehtGrund("Selbststart-Aufgabe aus 8.0 gelöscht, aber keine neue angelegt"));
+                    else if (gut && on)
+                    {
+                        angelegt = Scheduler.StartTaskSet(true, exe);
+                        if (angelegt) AppLog.Info("Selbststart-Aufgabe ohne Rechte neu angelegt (Besitzer Nutzer).");
+                    }
+                    else if (gut) AppLog.Info("Selbststart-Aufgabe aus 8.0 gelöscht, keine neue angelegt.");
+                    if (gut) _selfStartVeraltet = false;
+                    else
+                    {
+                        // Nachlesen statt raten: bei einer Ablehnung steht die 8.0-Aufgabe noch.
+                        try { _selfStartVeraltet = Scheduler.StartTaskVeraltet(); }
+                        catch (Exception ex) { AppLog.Warn("Selbststart-Aufgabe prüfen: " + ex.Message); _selfStartVeraltet = true; }
+                    }
+                    // changed = der Helfer hat geloescht; on sagt der Oberflaeche, was jetzt gilt
+                    // (scheitert das Neuanlegen, steht der Schalter ehrlich auf "aus").
+                    if (gut && on && !angelegt && !erhoeht) AppLog.Warn("Selbststart-Aufgabe gelöscht, aber nicht neu angelegt: der Selbststart ist jetzt aus.");
+                    if (erhoeht)
+                        UiPost(new { type = "selfstart", on = Scheduler.StartTaskExists(), changed = gut, veraltet = _selfStartVeraltet, hinweis = "erhoeht" });
+                    else
+                        UiPost(new { type = "selfstart", on = Scheduler.StartTaskExists(), changed = gut, veraltet = _selfStartVeraltet });
+                });
+                t.IsBackground = true;
+                t.Start();
+            };
+            _runner.RunPlan(titel, plan);
         }
 
         void OpenStartupFolder(string scope)
@@ -1170,48 +1718,151 @@ namespace WartungsToolbox
         }
         void SetState(bool running) { Post(new { type = "state", running = running }); }
         void OnProgress(int pct) { Post(new { type = "progress", percent = pct }); }
+        // "Lauf beendet" schreibt seit 8.1 der Runner selbst im Hintergrund-Thread (Entwurf,
+        // Abschnitt 14, B19), der Verlaufseintrag entsteht hier. Beim Schliessen des Fensters
+        // waere diese Zustellung verloren gegangen (ein wartendes BeginInvoke wird beim
+        // Zerstoeren des Fensters verworfen); deshalb vertagt OnClosingWhileBusy das Schliessen,
+        // bis Done gelaufen ist, und Done schliesst dann selbst (_schliessenNachDone).
         void Done(string title, LogKind k, string message, double seconds)
         {
-            AppLog.Info("Lauf beendet: " + title + " - " + message + ".");
             History.Add(title, KindStr(k), message, seconds);
             Post(new { type = "done", title = title, kind = KindStr(k), message = message });
+
+            // Einmaliger Nachlauf (Zeitplan-Stand melden, Selbststart neu anlegen, Liste der
+            // Nebenansicht neu laden), vor dem nachgeholten Wartungslauf: der wuerde sonst den
+            // Stand erst nach Minuten liefern.
+            Action<LogKind> nachlauf = _nachLauf;
+            _nachLauf = null;
+            if (nachlauf != null)
+            {
+                try { nachlauf(k); }
+                catch (Exception ex) { AppLog.Warn("Nachlauf nach „" + title + "“: " + ex.Message); }
+            }
+
+            // Der erste UAC-Dialog eines Werkzeugs bringt den Helfer: die Startzeile soll das wissen.
+            AdminNachmelden();
+            Notify(title, message, k);
+
+            // Das Fenster wartet nur noch auf diesen Abschluss: jetzt schliessen, kein Nachlauf,
+            // kein Countdown (ein abgebrochener Lauf ist ohnehin "bad").
+            if (_schliessenNachDone)
+            {
+                AppLog.Info("Abschluss von „" + title + "“ zugestellt, das Fenster wird jetzt geschlossen.");
+                _pendingPost = "none";
+                _autoRunPending = false;
+                try { BeginInvoke((Action)Close); }
+                catch (Exception ex) { AppLog.Warn("Vertagtes Schließen: " + ex.Message); _schliessenNachDone = false; }
+                return;
+            }
 
             // Steht noch ein nachgeholter Wartungslauf an, darf JETZT kein Abschalt-Countdown
             // starten: sonst faehrt der PC mitten in DISM oder SFC herunter und beschaedigt genau
             // das, was das Werkzeug reparieren soll. Der Wunsch bleibt gemerkt und greift nach
-            // dem letzten Lauf.
+            // dem letzten Lauf (Done des nachgeholten Laufs). Wird die Wartung dagegen
+            // uebersprungen (kein Helfer mehr verbunden), gibt es kein weiteres Done: dann
+            // gilt der Wunsch jetzt, wie ohne Vormerkung.
             if (_autoRunPending)
             {
-                Notify(title, message, k);
-                _autoRunPending = false;
-                if (_pendingPost != "none")
-                    Log("●  Der Abschalt-Countdown startet erst nach der geplanten Wartung.", LogKind.Warn);
-                RunScheduledJobsNow();
-                return;
+                NachlaufPruefen();
+                bool nachgeholt = _autoRunPending || (_runner != null && _runner.Running);
+                if (nachgeholt)
+                {
+                    if (_pendingPost != "none")
+                        Log("●  Der Abschalt-Countdown startet erst nach der geplanten Wartung.", LogKind.Warn);
+                    return;
+                }
             }
 
             if (k != LogKind.Bad && _pendingPost != "none") ScheduleShutdown();
             _pendingPost = "none";
-            Notify(title, message, k);
         }
 
         // ---------- Geplante Wartung, an die offene App uebergeben (--auto -> WM_WW_RUNAUTO) ----------
         bool _autoRunPending;
 
+        /// <summary>
+        /// Am Ende JEDES Wegs (Done des Runners hier; Hauptweg und Suchlaeufe rufen es per
+        /// BeginInvoke aus CheckFlow und ScanFlow): ein geplanter Wartungslauf, der auf das
+        /// Ende der laufenden Aktion gewartet hat (_autoRunPending), startet jetzt. Laeuft
+        /// noch etwas anderes (Runner zu Ende, Suchlauf noch nicht), bleibt er vorgemerkt,
+        /// das Ende des anderen Wegs ruft erneut. Dazu der Helfer-Stand fuer die Startzeile.
+        /// UI-Thread; darf beliebig oft gerufen werden, ohne Vormerkung tut er nichts.
+        ///
+        /// Gestartet wird nur, wenn ein Helfer verbunden ist (Entwurf, Abschnitt 14, B10/B55):
+        /// der Helfer kann waehrend einer lesenden Pruefung oder eines Suchlaufs nach 10 Minuten
+        /// Leerlauf gegangen sein. Ohne ihn zeigte der Nachholweg einen UAC-Dialog, den niemand
+        /// bestellt hat, und bei "Nein" hing der Runner im Dialog. Der --auto-Prozess ist zu
+        /// dem Zeitpunkt schon weg (er hat "übergeben" gemeldet): der Termin faellt aus, und
+        /// das steht im Verlauf, damit es nicht unbemerkt bleibt.
+        /// </summary>
+        internal void NachlaufPruefen()
+        {
+            AdminNachmelden();
+            if (!_autoRunPending || _runner == null) return;
+            if (EtwasLaeuft)
+            {
+                AppLog.Info("Geplante Wartung wartet weiter: es läuft noch " + (LaufendesWas() ?? "etwas") + ".");
+                return;
+            }
+            _autoRunPending = false;
+            if (!HelferVerbunden())
+            {
+                const string grund = "Übersprungen: kein Helfer verbunden";
+                AppLog.Warn("Geplante Wartung nicht nachgeholt: kein Helfer verbunden (nach 10 Minuten Leerlauf beendet); der Termin fällt aus, der nächste läuft wie geplant.");
+                History.Add("Geplante Wartung", "warn", grund, 0);
+                Log("●  Die vorgemerkte geplante Wartung wurde übersprungen: es ist kein Helfer mehr verbunden, und ein UAC-Dialog ohne Ihren Klick kommt nicht in Frage. Der nächste Termin läuft wie geplant.", LogKind.Warn);
+                Notify("Geplante Wartung", grund, LogKind.Warn);
+                return;
+            }
+            RunScheduledJobsNow();
+        }
+
+        /// <summary>HelferClient.Verbunden, ohne zu werfen (ein Lesefehler zaehlt als "nicht verbunden" und steht im app.log).</summary>
+        static bool HelferVerbunden()
+        {
+            try { return HelferClient.Verbunden; }
+            catch (Exception ex) { AppLog.Warn("Helfer-Stand nicht lesbar: " + ex.Message); return false; }
+        }
+
         // Rueckgabe true = Lauf uebernommen (gestartet oder fuer direkt danach vorgemerkt).
-        // false (z. B. UI noch nicht bereit) laesst den --auto-Prozess still selbst laufen.
-        bool OnScheduledRunRequested()
+        // false laesst den --auto-Prozess selbst laufen (still, ohne Fenster) oder, wenn er
+        // nicht erhoeht ist, mit seinem eigenen Verlaufseintrag "Übersprungen" enden.
+        // erhoeht = wParam der Nachricht (1 = der --auto-Prozess laeuft erhoeht).
+        bool OnScheduledRunRequested(bool erhoeht)
         {
             if (_runner == null) return false;
-            // FlowRunning gehoert mit in die Pruefung: Waehrend des Hauptwegs laufen DISM und
-            // SFC bereits: startet die geplante Wartung jetzt zusaetzlich, laufen zwei
-            // DISM-Instanzen gleichzeitig auf dasselbe Windows-Abbild.
-            if (_runner.Running || FlowRunning)
+            // Von Hand aus einer normalen Eingabeaufforderung gestartet: ohne Erhoehung laeuft
+            // die Wartung nirgends, auch nicht hier (der Nachholweg zeigte sonst irgendwann
+            // einen UAC-Dialog, den niemand bestellt hat).
+            if (!erhoeht)
             {
-                // Laufende Aktion nicht stoeren - die Wartung startet direkt danach.
+                AppLog.Warn("Geplante Wartung nicht übernommen: der --auto-Aufruf war nicht erhöht.");
+                Log("●  Der Aufruf der geplanten Wartung war nicht erhöht; sie läuft nicht.", LogKind.Warn);
+                return false;
+            }
+            // Seit 8.1 laeuft die Oberflaeche ohne Rechte. Uebernehmen darf sie den Lauf nur,
+            // wenn schon ein Ausfuehrer da ist (erhoeht oder lebende Helfer-Pipe): sonst
+            // muesste sie den UAC-Dialog zeigen, jetzt oder am Ende der laufenden Aktion,
+            // waehrend der --auto-Prozess bereits erhoeht wartet. Deshalb zuerst der Helfer
+            // (Entwurf, Abschnitt 14, B10/B55), erst dann EtwasLaeuft: ohne Helfer laeuft der
+            // --auto-Prozess selbst, still, wie ohne offenes Fenster. Ein Lauf der offenen
+            // App ohne Helfer (Pruefung, Suchlauf) kollidiert nicht mit DISM.
+            if (!HelferVerbunden())
+            {
+                AppLog.Info("Geplante Wartung: kein Helfer verbunden, der --auto-Prozess führt sie selbst aus.");
+                Log("●  Geplante Wartung läuft im Hintergrund (ohne Fenster).", LogKind.Warn);
+                return false;
+            }
+            // Dann EtwasLaeuft (Hauptweg, Suchlaeufe, Runner; Entwurf, Abschnitt 13): waehrend
+            // des Hauptwegs laufen DISM und SFC bereits, ein zweiter Plan auf derselben Pipe
+            // bekaeme vom Helfer "beschäftigt". Die Wartung startet direkt danach, das Ende
+            // jedes Wegs ruft NachlaufPruefen.
+            if (EtwasLaeuft)
+            {
                 if (!_autoRunPending)
                 {
                     _autoRunPending = true;
+                    AppLog.Info("Geplante Wartung vorgemerkt: es läuft " + (LaufendesWas() ?? "etwas") + ".");
                     Log("●  Geplante Wartung wartet, bis die laufende Aktion abgeschlossen ist.", LogKind.Warn);
                 }
                 return true;
@@ -1222,23 +1873,36 @@ namespace WartungsToolbox
 
         void RunScheduledJobsNow()
         {
-            List<Job> jobs = new List<Job>();
-            jobs.Add(new Job { Title = "Geplante Wartung", Steps = Catalog.AutoSet(Scheduler.ReadActions()) });
+            // Der gewaehlte Aufgaben-Satz aus zeitplan.json; leer = Standardsatz (der Helfer
+            // nimmt dann Catalog.AutoSet(null)).
+            string[] keys = Scheduler.ReadActions();
+            string schluessel = keys == null ? "" : string.Join(";", keys);
+            const string titel = "Geplante Wartung";
+            Kern.Plan plan = Kern.Plan.Neu(titel).Mit("wartung.auto", "schluessel", schluessel);
             // Ins Protokoll, nicht nur ins Fenster: Bei der Fehlersuche am 22.08.2026 war
             // genau diese Luecke die teuerste. Die geplante Wartung war zehn Minuten lang
             // mit DISM und SFC ueber das System gelaufen, ohne in app.log eine einzige
             // Zeile zu hinterlassen - im Protokoll sah es aus, als sei nichts geschehen.
-            AppLog.Info("Geplante Wartung gestartet (Zeitplan, in der offenen App).");
+            AppLog.Info("Geplante Wartung gestartet (Zeitplan, in der offenen App" + (keys == null ? ", Standardsatz" : ", " + keys.Length + " Aufgaben") + ").");
+            // Der Lauf kommt ohne Klick: die Oberflaeche richtet den Ablaufbildschirm dafuer her
+            // (Titel, ein Schritt, Balken zurueck, "Abbrechen" statt "Zurück"; Entwurf, Abschnitt
+            // 14, B29). Ohne diese Nachricht lief der Balken unter dem Titel des vorigen Werkzeugs.
+            Post(new { type = "flowStart", mode = "action", total = 1, titel = titel });
             Log("●  Geplante Wartung wird jetzt automatisch ausgeführt (Zeitplan).", LogKind.Warn);
-            _runner.RunJobs("Geplante Wartung", jobs);
+            _runner.RunPlan(titel, plan);
         }
 
-        List<Step> BuildSteps(MaintenanceAction a, bool restore)
+        /// <summary>
+        /// Abgewiesen, bevor ein Lauf beginnt (ungültige Eingabe, unbekannte Nummer): eine
+        /// Zeile ins Protokoll und „done“ mit kind bad, damit der Ablaufbildschirm nicht mit
+        /// „Läuft …“ stehen bleibt (Regel aus 7.3.2: nie still ablehnen). Kein Verlaufseintrag,
+        /// es lief nichts.
+        /// </summary>
+        void Abgewiesen(string titel, string grund, string kurz)
         {
-            List<Step> steps = new List<Step>();
-            if (restore && a.WantsRestorePoint) steps.Add(RestoreStep());
-            steps.AddRange(a.Steps);
-            return steps;
+            AppLog.Warn(titel + " nicht gestartet: " + grund);
+            Post(new { type = "log", text = "✖  " + grund, kind = "bad" });
+            Post(new { type = "done", title = titel, kind = "bad", message = kurz });
         }
 
         // Grenzen der Wartezeit: 5 Sekunden bis 24 Stunden. Die Oberflaeche bietet 1 Minute
@@ -1266,32 +1930,74 @@ namespace WartungsToolbox
             }
         }
 
+        // shutdown.exe braucht keine Administratorrechte (das Recht zum Herunterfahren hat
+        // jedes angemeldete Konto) und antwortet in Millisekunden. Der Aufruf geht ueber
+        // Shell.Run in einem Hintergrund-Thread: ShellForm startet seit 8.1 keinen Prozess
+        // mehr selbst, und eine Absage von Windows (Exit 1190: es läuft schon ein Countdown)
+        // steht so im Protokoll statt still zu verschwinden.
+        //
+        // Banner und Merker _countdownAktiv erst NACH der Antwort von shutdown.exe (Entwurf,
+        // Abschnitt 14, B18): vorher zeigte das Banner die neue Wartezeit, obwohl Windows den
+        // Befehl mit 1190 abgelehnt hatte und der fruehere Countdown weiterlief.
         void ScheduleShutdown()
         {
-            string args = (_pendingPost == "restart" ? "-r" : "-s") + " -t " + _pendingDelay;
-            try
+            string modus = _pendingPost;
+            int wartezeit = _pendingDelay;
+            string args = (modus == "restart" ? "-r" : "-s") + " -t " + wartezeit;
+            string word = modus == "restart" ? "neu gestartet" : "heruntergefahren";
+            ShutdownBefehl(args, "Der Countdown zum Herunterfahren wurde von Windows nicht angenommen", delegate (Shell.Result r)
             {
-                ProcessStartInfo psi = new ProcessStartInfo("shutdown.exe", args);
-                psi.UseShellExecute = false; psi.CreateNoWindow = true;
-                Process.Start(psi);
-            }
-            catch { }
-            string word = _pendingPost == "restart" ? "neu gestartet" : "heruntergefahren";
-            Log("●  Der PC wird in " + _pendingDelay + "s " + word + " – Abbrechen über das Banner.", LogKind.Warn);
-            Post(new { type = "shutdownScheduled", mode = _pendingPost, delay = _pendingDelay });
+                if (r.Ok)
+                {
+                    _countdownAktiv = true;
+                    AppLog.Info("Abschalt-Countdown gesetzt: " + word + " in " + wartezeit + " s.");
+                    UiLog("●  Der PC wird in " + wartezeit + "s " + word + "; Abbrechen über das Banner.", LogKind.Warn);
+                    UiPost(new { type = "shutdownScheduled", mode = modus, delay = wartezeit });
+                    return true;
+                }
+                if (r.Started && !r.TimedOut && r.ExitCode == 1190)
+                {
+                    // Es lief schon ein Countdown (Windows nimmt keinen zweiten an). Der ist nicht
+                    // unserer: der eigene wird vor jedem Lauf abgebrochen (StartAbgelehnt). Also
+                    // kein Merker, kein neues Banner; der fruehere Countdown laeuft weiter.
+                    _countdownAktiv = false;
+                    AppLog.Warn("shutdown.exe " + args + ": Exit 1190, es läuft bereits ein Countdown; die Wartezeit von " + wartezeit + " s gilt nicht.");
+                    UiLog("✖  Windows meldet: es läuft bereits ein Countdown zum Herunterfahren. Die gewählte Wartezeit von " + wartezeit + "s gilt nicht, der frühere Countdown läuft weiter.", LogKind.Bad);
+                    return true;
+                }
+                return false;
+            });
         }
 
         void CancelShutdown()
         {
-            try
-            {
-                ProcessStartInfo psi = new ProcessStartInfo("shutdown.exe", "-a");
-                psi.UseShellExecute = false; psi.CreateNoWindow = true;
-                Process.Start(psi);
-            }
-            catch { }
+            _countdownAktiv = false;
             Log("●  Herunterfahren abgebrochen.", LogKind.Good);
             Post(new { type = "shutdownCancelled" });
+            ShutdownBefehl("-a", "Der Abbruch des Countdowns wurde von Windows nicht angenommen", null);
+        }
+
+        // auswerten (Hintergrund-Thread, darf null sein): true = Ergebnis ist verarbeitet; false
+        // oder kein Rueckruf = die allgemeine Fehlerzeile mit Exit-Code oder Zeitueberschreitung.
+        void ShutdownBefehl(string args, string fehlerSatz, Func<Shell.Result, bool> auswerten)
+        {
+            Thread t = new Thread(delegate ()
+            {
+                Shell.Result r = Shell.Run("shutdown.exe", args, 15000);
+                if (auswerten != null)
+                {
+                    bool erledigt = false;
+                    try { erledigt = auswerten(r); }
+                    catch (Exception ex) { AppLog.Warn("shutdown.exe " + args + " auswerten: " + ex.Message); }
+                    if (erledigt) return;
+                }
+                if (r.Ok) return;
+                string grund = r.Started ? (r.TimedOut ? "keine Antwort binnen 15 s" : "Exit " + r.ExitCode) : "nicht gestartet";
+                AppLog.Warn("shutdown.exe " + args + ": " + grund + " " + (r.Error ?? "").Trim());
+                UiLog("✖  " + fehlerSatz + " (" + grund + ").", LogKind.Bad);
+            });
+            t.IsBackground = true;
+            t.Start();
         }
 
         void Post(object o)
@@ -1304,6 +2010,17 @@ namespace WartungsToolbox
             if (_web != null && _web.IsHandleCreated)
             {
                 try { _web.BeginInvoke((Action)delegate { Post(o); }); }
+                catch { }
+            }
+        }
+
+        // Log aus einem Hintergrund-Thread: dieselbe Zeile im Fenster UND im Berichtstext
+        // (_log, "Bericht speichern"); ein rohes UiPost(log) liesse den Bericht aus.
+        void UiLog(string text, LogKind k)
+        {
+            if (_web != null && _web.IsHandleCreated)
+            {
+                try { _web.BeginInvoke((Action)delegate { Log(text, k); }); }
                 catch { }
             }
         }
@@ -1322,15 +2039,6 @@ namespace WartungsToolbox
             }
         }
 
-        Step RestoreStep()
-        {
-            return new Step
-            {
-                File = "powershell.exe",
-                Args = "-NoProfile -ExecutionPolicy Bypass -Command \"try { Checkpoint-Computer -Description 'Wartungstool' -RestorePointType MODIFY_SETTINGS -EA Stop; 'Wiederherstellungspunkt erstellt.' } catch { 'Wiederherstellungspunkt uebersprungen: ' + $_.Exception.Message + ' (Hinweis: Windows legt standardmaessig hoechstens einen Punkt pro 24 Stunden an - der vorhandene ist dann noch aktuell.)' }\""
-            };
-        }
-
         // ---------- Wiederherstellungspunkte ----------
         void StartRestoreList()
         {
@@ -1343,47 +2051,41 @@ namespace WartungsToolbox
             t.Start();
         }
 
+        // Der Punkt entsteht im Helfer ueber WMI (Drossel-Schluessel vorher auf 0, Nachweis
+        // ueber die Folgenummer); hier wird nur die Beschreibung vorab geprueft, damit die
+        // Oberflaeche eine brauchbare Meldung bekommt. Der Helfer prueft sie erneut.
         void RestoreCreate(string desc)
         {
-            string safe = SanitizeDesc(desc);
-            // Frequenz-Drossel kurz aufheben, damit ein bewusst angelegter Punkt nicht still verworfen wird.
-            string cmd =
-                "try { " +
-                "Set-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore' -Name 'SystemRestorePointCreationFrequency' -Value 0 -EA SilentlyContinue; " +
-                "Checkpoint-Computer -Description '" + safe + "' -RestorePointType MODIFY_SETTINGS -EA Stop; " +
-                "'Wiederherstellungspunkt wurde angelegt.' " +
-                "} catch { 'Konnte nicht angelegt werden (Systemschutz aktiv?): ' + $_.Exception.Message }";
-            Step s = new Step { File = "powershell.exe", Args = "-NoProfile -ExecutionPolicy Bypass -Command \"" + cmd + "\"" };
-            List<Job> jobs = new List<Job>();
-            jobs.Add(new Job { Title = "Wiederherstellungspunkt anlegen", Steps = new List<Step> { s } });
-            _runner.RunJobs("Wiederherstellungspunkt anlegen", jobs);
+            const string titel = "Wiederherstellungspunkt anlegen";
+            string beschreibung = Schritte.BeschreibungPruefen(desc);
+            if (beschreibung == null)
+            {
+                Abgewiesen(titel, "Die Beschreibung darf höchstens 60 Zeichen haben und nur Buchstaben, Ziffern, Leerzeichen, Punkt, Unterstrich und Bindestrich enthalten.", "Ungültige Beschreibung");
+                return;
+            }
+            if (StartAbgelehnt(titel)) return;
+            Kern.Plan plan = Kern.Plan.Neu(titel).Mit("wiederherstellungspunkt.anlegen", "beschreibung", beschreibung);
+            // Nach Done die Liste neu laden (Entwurf, Abschnitt 14, B26): der neue Punkt erschien
+            // sonst erst nach Verlassen und Neuoeffnen der Ansicht. Auch nach einem Fehlschlag,
+            // die Liste zeigt dann ehrlich den alten Stand.
+            _nachLauf = delegate (LogKind k) { StartRestoreList(); };
+            _runner.RunPlan(titel, plan);
         }
 
         void RestoreRevert(int seq)
         {
-            if (seq <= 0) return; // Sequenznummer ist eine reine Zahl -> keine Injektion moeglich
-            string cmd =
-                "try { Restore-Computer -RestorePoint " + seq + " -Confirm:$false -EA Stop; 'Wiederherstellung gestartet - der PC startet neu.' } " +
-                "catch { 'Wiederherstellung fehlgeschlagen: ' + $_.Exception.Message }";
-            Step s = new Step { File = "powershell.exe", Args = "-NoProfile -ExecutionPolicy Bypass -Command \"" + cmd + "\"" };
-            List<Job> jobs = new List<Job>();
-            jobs.Add(new Job { Title = "Windows auf einen früheren Stand zurücksetzen", Steps = new List<Step> { s } });
-            _runner.RunJobs("Wiederherstellung", jobs);
-        }
-
-        // Beschreibung fuer Checkpoint-Computer absichern: nur unkritische Zeichen, begrenzte Laenge.
-        static string SanitizeDesc(string s)
-        {
-            if (string.IsNullOrEmpty(s)) return "Manueller Punkt (Windows-Wartung)";
-            StringBuilder sb = new StringBuilder();
-            foreach (char c in s)
+            const string titel = "Windows auf einen früheren Stand zurücksetzen";
+            if (seq <= 0)
             {
-                if (char.IsLetterOrDigit(c) || c == ' ' || c == '-' || c == '_' || c == '.' || c == ':' || c == '(' || c == ')')
-                    sb.Append(c);
-                if (sb.Length >= 60) break;
+                // Die Folgenummer ist eine reine Zahl; alles andere kann nur ein Fehler der Oberflaeche sein.
+                Abgewiesen(titel, "Die Folgenummer des Wiederherstellungspunkts muss größer als 0 sein, nicht " + seq + ".", "Ungültige Folgenummer");
+                return;
             }
-            string r = sb.ToString().Trim();
-            return r.Length == 0 ? "Manueller Punkt (Windows-Wartung)" : r;
+            if (StartAbgelehnt(titel)) return;
+            // Ein Titel fuer Absage, Plan, Verlauf und Toast: bis 8.1 hiess der Lauf hier
+            // "Wiederherstellung", die Rueckfrage aber "zurücksetzen".
+            Kern.Plan plan = Kern.Plan.Neu(titel).Mit("wiederherstellungspunkt.zurueck", "folge", seq.ToString());
+            _runner.RunPlan(titel, plan);
         }
 
         // ---------- Energieplaene ----------
@@ -1443,209 +2145,177 @@ namespace WartungsToolbox
                 }
             }
 
+            string title = "Bloatware entfernen (" + fulls.Count + ")";
             if (fulls.Count == 0)
             {
-                Post(new { type = "log", text = "Keine gueltigen Pakete zum Entfernen.", kind = "bad" });
-                Post(new { type = "done", title = "Bloatware entfernen", kind = "bad", message = "Nichts entfernt" });
+                Abgewiesen("Bloatware entfernen", "0 der übergebenen Pakete steht in der Liste der entfernbaren Apps; es wurde nichts entfernt.", "Nichts entfernt");
                 return;
             }
+            if (StartAbgelehnt(title)) return;
 
-            List<Step> steps = new List<Step>();
-            if (restore) steps.Add(BloatRestoreStep());
-            foreach (string full in fulls)
-                steps.Add(BloatRemoveStep(full, AppxCleaner.LabelFor(full)));
-
-            string title = "Bloatware entfernen (" + fulls.Count + ")";
-            List<Job> jobs = new List<Job>();
-            jobs.Add(new Job { Title = title, Steps = steps });
-            _runner.RunJobs(title, jobs);
-        }
-
-        // Zuverlaessiger Wiederherstellungspunkt vor dem Entfernen (Frequenz-Drossel kurz aufheben).
-        // Ein uebersprungener Punkt (Systemschutz aus) darf den Lauf nicht als Fehler werten.
-        Step BloatRestoreStep()
-        {
-            string cmd =
-                "try { " +
-                "Set-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore' -Name 'SystemRestorePointCreationFrequency' -Value 0 -EA SilentlyContinue; " +
-                "Checkpoint-Computer -Description 'Vor Bloatware-Entfernung' -RestorePointType MODIFY_SETTINGS -EA Stop; " +
-                "'Wiederherstellungspunkt angelegt.' " +
-                "} catch { 'Es wurde kein Sicherungspunkt angelegt: ' + $_.Exception.Message }";
-            return new Step
-            {
-                File = "powershell.exe",
-                Args = "-NoProfile -ExecutionPolicy Bypass -Command \"" + cmd + "\"",
-                IgnoreExit = true
-            };
-        }
-
-        // full ist bereits per AppxCleaner.IsRemovable geprueft (nur [A-Za-z0-9._-]) -> sicher in '' .
-        Step BloatRemoveStep(string full, string label)
-        {
-            string safe = AppxCleaner.SafeLabel(label);
-            string cmd =
-                "$ErrorActionPreference='Stop'; " +
-                "try { Remove-AppxPackage -Package '" + full + "' -EA Stop; 'Entfernt: " + safe + "' } " +
-                "catch { 'Fehler bei " + safe + ": ' + $_.Exception.Message; exit 1 }";
-            return new Step
-            {
-                File = "powershell.exe",
-                Args = "-NoProfile -ExecutionPolicy Bypass -Command \"" + cmd + "\""
-            };
+            // Ein Schritt apps.entfernen mit der Paketliste (';'-getrennt; PackageFullNames
+            // enthalten nie ';'). Sicherungspunkt und Entfernen baut der Helfer (Schritte.AppsEntfernen).
+            Kern.Plan plan = Kern.Plan.Neu(title).Mit("apps.entfernen",
+                "pakete", string.Join(";", fulls.ToArray()),
+                "sicherung", restore ? "1" : "0");
+            // Nach Done die Liste neu laden (Entwurf, Abschnitt 14, B26): entfernte Apps blieben
+            // sonst angehakt in der Liste stehen.
+            _nachLauf = delegate (LogKind k) { StartBloatList(); };
+            _runner.RunPlan(title, plan);
         }
 
         // ---------- Netzwerk-Diagnose ----------
         void NetDiag(string target)
         {
-            string t = SanitizeHost(target);
+            string t = Schritte.HostPruefen(target);
             if (t == null)
             {
-                Post(new { type = "log", text = "Ungueltiges Ziel - erlaubt sind nur Buchstaben, Zahlen, Punkt, Doppelpunkt und Bindestrich.", kind = "bad" });
-                Post(new { type = "done", title = "Netzwerk-Diagnose", kind = "bad", message = "Ungueltiges Ziel" });
+                Abgewiesen("Netzwerk-Diagnose",
+                    "Ungültiges Ziel: erlaubt sind 1 bis 253 Zeichen aus Buchstaben, Ziffern, Punkt, Doppelpunkt und Bindestrich, kein Bindestrich am Anfang.",
+                    "Ungültiges Ziel");
                 return;
             }
-            // ping.exe/tracert.exe werden direkt (ohne Shell) aufgerufen -> der Parameter wird nie interpretiert.
-            List<Step> steps = new List<Step>();
-            steps.Add(new Step { File = "ping.exe", Args = "-n 4 " + t });
-            steps.Add(new Step { File = "tracert.exe", Args = "-d -h 20 " + t });
-            List<Job> jobs = new List<Job>();
-            jobs.Add(new Job { Title = "Netzwerk-Diagnose: " + t, Steps = steps });
-            _runner.RunJobs("Netzwerk-Diagnose: " + t, jobs);
-        }
-
-        // Hostname/IP streng auf unkritische Zeichen begrenzen.
-        static string SanitizeHost(string s)
-        {
-            if (string.IsNullOrEmpty(s)) return null;
-            s = s.Trim();
-            if (s.Length == 0 || s.Length > 253) return null;
-            foreach (char c in s)
-            {
-                bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
-                          || c == '.' || c == '-' || c == ':';
-                if (!ok) return null;
-            }
-            return s;
+            string titel = "Netzwerk-Diagnose: " + t;
+            if (StartAbgelehnt(titel)) return;
+            // ping.exe/tracert.exe startet der Helfer direkt (ohne Shell); hier geht nur das geprüfte Ziel hinüber.
+            Kern.Plan plan = Kern.Plan.Neu(titel).Mit("netz.diagnose", "ziel", t);
+            _runner.RunPlan(titel, plan);
         }
 
         // ---------- Treiber-Backup ----------
         void DriverBackup()
         {
+            const string titel = "Treiber-Backup";
             string folder;
             using (FolderBrowserDialog d = new FolderBrowserDialog())
             {
                 d.Description = "Ordner für die Treiber-Sicherung aussuchen";
                 d.ShowNewFolderButton = true;
-                if (d.ShowDialog(this) != DialogResult.OK) return;
-                folder = d.SelectedPath;
+                if (d.ShowDialog(this) != DialogResult.OK) folder = null;
+                else folder = d.SelectedPath;
             }
-            if (string.IsNullOrEmpty(folder)) return;
-            // Pfad stammt aus dem System-Ordnerdialog; pnputil wird direkt (ohne Shell) gestartet.
-            List<Step> steps = new List<Step>();
-            steps.Add(new Step { File = "pnputil.exe", Args = "/export-driver * \"" + folder + "\"" });
-            List<Job> jobs = new List<Job>();
-            jobs.Add(new Job { Title = "Treiber-Backup nach " + folder, Steps = steps });
-            _runner.RunJobs("Treiber-Backup", jobs);
+            if (string.IsNullOrEmpty(folder))
+            {
+                // Die Oberflaeche steht schon auf dem Ablaufbildschirm: ohne Antwort bliebe sie dort.
+                AppLog.Info("Treiber-Backup nicht gestartet: kein Ordner gewählt.");
+                Post(new { type = "log", text = "●  Kein Ordner gewählt, das Treiber-Backup wurde nicht gestartet.", kind = "warn" });
+                Post(new { type = "done", title = titel, kind = "warn", message = "Kein Ordner gewählt" });
+                return;
+            }
+            // Pfad stammt aus dem System-Ordnerdialog; geprueft wird er trotzdem (absolut,
+            // nicht unter %WINDIR%, keine Laufwerkswurzel), der Helfer prueft ihn erneut und
+            // startet pnputil.exe direkt (ohne Shell).
+            string ordner = Schritte.OrdnerPruefen(folder);
+            if (ordner == null)
+            {
+                Abgewiesen(titel, Schritte.IstLaufwerkswurzel(folder)
+                    ? "Der Zielordner „" + folder + "“ ist eine Laufwerkswurzel; bitte einen Unterordner wählen."
+                    : "Der Zielordner „" + folder + "“ muss ein absoluter Pfad sein und darf nicht im Windows-Ordner liegen.",
+                    "Ungültiger Zielordner");
+                return;
+            }
+            if (StartAbgelehnt(titel)) return;
+            Kern.Plan plan = Kern.Plan.Neu("Treiber-Backup nach " + ordner).Mit("treiber.sichern", "ordner", ordner);
+            _runner.RunPlan(titel, plan);
         }
 
         // ---------- Geplante Wartung ----------
-        void SendScheduleStatus()
+        // justCreated (nur nach zeitplan.anlegen) und fehler (Eingabe abgewiesen, nichts lief)
+        // sind Zusatzfelder; ohne beide ist es die reine Statusabfrage.
+        void SendScheduleStatus(bool? justCreated = null, string fehler = null)
         {
             Thread t = new Thread(delegate ()
             {
                 bool exists = Scheduler.Exists();
                 object cfg = Scheduler.Read();
-                UiPost(new { type = "schedule", exists = exists, config = cfg });
+                if (justCreated.HasValue)
+                    UiPost(new { type = "schedule", exists = exists, config = cfg, justCreated = justCreated.Value });
+                else if (fehler != null)
+                    UiPost(new { type = "schedule", exists = exists, config = cfg, fehler = fehler });
+                else
+                    UiPost(new { type = "schedule", exists = exists, config = cfg });
             });
             t.IsBackground = true;
             t.Start();
         }
 
+        /// <summary>
+        /// Zeitplan anlegen: die Aufgabe braucht /RL HIGHEST (DISM und sfc), also den Helfer.
+        /// Die Eingaben werden hier mit derselben Pruefung vorab gefiltert wie im Helfer
+        /// (Schritte.ZeitplanPruefen: Whitelist fuer Modus, Wochentage, Monatstag, Uhrzeit,
+        /// Aufgaben-Schluessel), damit die Oberflaeche bei einem Fehler sofort einen Grund
+        /// bekommt statt eines UAC-Dialogs. Den Stand meldet der Nachlauf nach Done.
+        /// </summary>
         void ScheduleCreate(Dictionary<string, object> m)
         {
-            string mode = Str(m, "mode");
-            int hh = ToInt(m, "hh");
-            int mi = ToInt(m, "mm");
+            const string titel = "Zeitplan anlegen";
+            // Nur setzen, was die Oberflaeche geschickt hat: ein fehlendes Feld soll in der
+            // Meldung aus ZeitplanPruefen als fehlend erscheinen, nicht als "-1".
+            var s = new PlanSchritt { Kennung = "zeitplan.anlegen" };
+            if (m.ContainsKey("mode")) s.Parameter["modus"] = Str(m, "mode");
+            if (m.ContainsKey("hh")) s.Parameter["stunde"] = ToInt(m, "hh").ToString();
+            if (m.ContainsKey("mm")) s.Parameter["minute"] = ToInt(m, "mm").ToString();
+            if (m.ContainsKey("dom")) s.Parameter["tag"] = ToInt(m, "dom").ToString();
+            if (m.ContainsKey("days")) s.Parameter["tage"] = ListeAusNachricht(m, "days");
+            if (m.ContainsKey("actions")) s.Parameter["aktionen"] = ListeAusNachricht(m, "actions");
 
-            if (mode != "daily" && mode != "weekly" && mode != "monthly") return;
-            if (hh < 0 || hh > 23 || mi < 0 || mi > 59) return;
-
-            // Wochentage: nur Whitelist-Tokens, dedupliziert, in Wochenreihenfolge (fuer /D MON,WED,...)
-            string[] valid = { "MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN" };
-            string dSpec = "";
-            string[] daysArr = null;
-            if (mode == "weekly")
-            {
-                List<string> chosen = new List<string>();
-                object dv;
-                if (m.TryGetValue("days", out dv) && dv is object[])
-                {
-                    foreach (string tok in valid)
-                        foreach (object o in (object[])dv)
-                            if (tok.Equals(o as string) && !chosen.Contains(tok)) chosen.Add(tok);
-                }
-                if (chosen.Count == 0) return;
-                daysArr = chosen.ToArray();
-                dSpec = string.Join(",", daysArr);
-            }
-            int dom = 1;
-            if (mode == "monthly")
-            {
-                dom = ToInt(m, "dom");
-                if (dom < 1 || dom > 31) return;
-                dSpec = dom.ToString();
-            }
-
-            // Aufgaben-Satz: nur bekannte Katalog-Schluessel, Katalogreihenfolge; null = Standard.
-            string[] actionsArr = null;
+            // Explizit leer gewaehlte Aufgaben (Feld da, aber 0 Eintraege) waeren "Standardsatz":
+            // das verhindert die Oberflaeche, hier zaehlt es wie bisher als ungueltig.
             object av;
-            if (m.TryGetValue("actions", out av) && av is object[])
+            bool aktionenLeer = m.TryGetValue("actions", out av) && av is object[] && ((object[])av).Length == 0;
+
+            string modus, dSpec; string[] tage, aktionen; int dom, hh, mm;
+            string grund = Schritte.ZeitplanPruefen(s, out modus, out dSpec, out tage, out dom, out hh, out mm, out aktionen);
+            if (grund == null && aktionenLeer) grund = "Es sind 0 Aufgaben gewählt; mindestens 1 muss es sein.";
+            if (grund != null)
             {
-                List<string> keys = new List<string>();
-                foreach (AutoItem it in Catalog.AutoCatalog())
-                    foreach (object o in (object[])av)
-                        if (it.Key.Equals(o as string) && !keys.Contains(it.Key)) keys.Add(it.Key);
-                if (keys.Count == 0) return; // explizit leer gewaehlt -> ungueltig (UI verhindert das)
-                actionsArr = keys.ToArray();
+                AppLog.Warn(titel + " nicht gestartet: " + grund);
+                Post(new { type = "log", text = "✖  " + grund, kind = "bad" });
+                SendScheduleStatus(null, grund);
+                return;
             }
+            if (StartAbgelehnt(titel)) return;
 
-            string hhs = hh.ToString("00");
-            string mms = mi.ToString("00");
-            string exe = Application.ExecutablePath;
-            string fMode = mode, fSpec = dSpec;
-            string[] fDays = daysArr, fActions = actionsArr;
-            int fDom = dom;
-
-            Thread t = new Thread(delegate ()
-            {
-                bool ok = Scheduler.Create(fMode, fSpec, hhs, mms, exe);
-                if (ok) Scheduler.Write(fMode, fDays, fDom, hhs + ":" + mms, fActions);
-                UiPost(new { type = "schedule", exists = Scheduler.Exists(), config = Scheduler.Read(), justCreated = ok });
-            });
-            t.IsBackground = true;
-            t.Start();
+            Kern.Plan plan = Kern.Plan.Neu(titel);
+            plan.Schritte.Add(s);
+            _nachLauf = delegate (LogKind k) { SendScheduleStatus(k == LogKind.Good); };
+            _runner.RunPlan(titel, plan);
         }
 
         void ScheduleDelete()
         {
-            Thread t = new Thread(delegate ()
+            const string titel = "Zeitplan löschen";
+            if (StartAbgelehnt(titel)) return;
+            Kern.Plan plan = Kern.Plan.Neu(titel).Mit("zeitplan.loeschen");
+            _nachLauf = delegate (LogKind k) { SendScheduleStatus(); };
+            _runner.RunPlan(titel, plan);
+        }
+
+        /// <summary>Feld der Oberflaeche (Array aus Texten) als ';'-Liste; leer, wenn es fehlt. Eintraege mit ';' werden verworfen.</summary>
+        static string ListeAusNachricht(Dictionary<string, object> m, string k)
+        {
+            object v;
+            if (!m.TryGetValue(k, out v) || !(v is object[])) return "";
+            var teile = new List<string>();
+            foreach (object o in (object[])v)
             {
-                Scheduler.Delete();
-                Scheduler.Clear();
-                UiPost(new { type = "schedule", exists = Scheduler.Exists(), config = (object)null });
-            });
-            t.IsBackground = true;
-            t.Start();
+                string t = o as string;
+                if (string.IsNullOrEmpty(t) || t.IndexOf(';') >= 0) continue;
+                teile.Add(t.Trim());
+            }
+            return string.Join(";", teile.ToArray());
         }
 
         // ---------- Rahmenloses Fenster: Größe ändern ----------
         protected override void WndProc(ref Message m)
         {
             // Geplanter Wartungslauf, vom --auto-Prozess an diese offene Instanz uebergeben.
+            // wParam 1 = der Aufrufer laeuft erhoeht (AutoRunner schickt das seit 8.1 so).
             // Result 1 = uebernommen (Handshake); sonst faellt --auto auf den stillen Lauf zurueck.
             if (Native.WM_WW_RUNAUTO != 0 && m.Msg == (int)Native.WM_WW_RUNAUTO)
             {
-                m.Result = OnScheduledRunRequested() ? (IntPtr)1 : IntPtr.Zero;
+                bool erhoeht = m.WParam.ToInt64() == 1;
+                m.Result = OnScheduledRunRequested(erhoeht) ? (IntPtr)1 : IntPtr.Zero;
                 return;
             }
             const int WM_NCHITTEST = 0x84;

@@ -34,6 +34,38 @@ namespace WartungsToolbox
                 Environment.Exit(1);
             }
 
+            // Das App-Protokoll der Probe bleibt in einem Wegwerf-Ordner: PruefeHerausgeber und
+            // IstPerInstallerInstalliert rufen AppLog, und ohne die Naht legte der erste Aufruf
+            // %ProgramData%\WindowsWartung\logs an und zoege eine 8.0-Datei aus dem Nutzerprofil
+            // nach. Die Probe laeuft unsigniert aus %TEMP%, PruefeHerausgeber schreibt deshalb
+            // sicher eine Zeile - am Ende wird nachgewiesen, dass sie hier gelandet ist.
+            string ordner = Path.Combine(Path.GetTempPath(),
+                "WW-TrustProbe-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+            Directory.CreateDirectory(ordner);
+            string probeLog = Path.Combine(ordner, "app.log");
+            AppLog.PfadFuerProbe = probeLog;
+
+            try
+            {
+                Pruefen(wurzel, signiert, signiert2);
+                Ist("AppLog schreibt in den Wegwerf-Ordner, nicht nach ProgramData (Naht PfadFuerProbe)",
+                    File.Exists(probeLog), probeLog);
+            }
+            catch (Exception ex)
+            {
+                Ist("Probe laeuft ohne Ausnahme", false, ex.GetType().Name + ": " + ex.Message);
+            }
+            finally
+            {
+                AppLog.PfadFuerProbe = null;
+                try { Directory.Delete(ordner, true); } catch { }
+            }
+
+            Environment.Exit(fehler == 0 ? 0 : 1);
+        }
+
+        static void Pruefen(string wurzel, string signiert, string signiert2)
+        {
             string fp = UpdateTrust.Fingerabdruck(signiert);
             Ist("eingebettet signierte Datei liefert Fingerabdruck", fp != null, fp ?? "null");
             Ist("Signierer wird gelesen", UpdateTrust.Signierer(signiert) != null, "");
@@ -75,8 +107,6 @@ namespace WartungsToolbox
             string ort;
             UpdateTrust.IstPerInstallerInstalliert(out ort);
             Ist("Installationsart laesst sich bestimmen, ohne zu werfen", true, "");
-
-            Environment.Exit(fehler == 0 ? 0 : 1);
         }
     }
 }

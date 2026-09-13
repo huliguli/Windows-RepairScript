@@ -31,6 +31,11 @@ namespace WartungsToolbox
             Directory.CreateDirectory(ordner);
             string datei = Path.Combine(ordner, "history.json");
             History.PfadFuerProbe = datei;
+            // Auch das App-Protokoll bleibt im Wegwerf-Ordner: History ruft bei Lese- und
+            // Schreibfehlern AppLog.Warn (die zerstoerte Datei unten ist so ein Fall), und ohne
+            // die Naht legte der erste Aufruf %ProgramData%\WindowsWartung\logs an und zoege eine
+            // 8.0-Datei aus dem Nutzerprofil nach.
+            AppLog.PfadFuerProbe = Path.Combine(ordner, "app.log");
 
             try
             {
@@ -73,6 +78,7 @@ namespace WartungsToolbox
             finally
             {
                 History.PfadFuerProbe = null;
+                AppLog.PfadFuerProbe = null;
                 try { Directory.Delete(ordner, true); } catch { }
             }
 

@@ -1,5 +1,75 @@
 # Changelog
 
+## [8.1.0] - 2026-09-13
+
+Das Programm startet ohne die Nachfrage von Windows. Administratorrechte holt es sich erst,
+wenn Sie etwas ändern lassen, und nur für diesen einen Schritt.
+
+### Neu
+
+- **Kein Dialog mehr beim Start.** Prüfen, Ansehen, Bericht speichern: alles läuft mit Ihren
+  normalen Rechten. Erst wenn Sie eine Reparatur, ein Werkzeug oder die Tiefenprüfung
+  starten, fragt Windows einmal nach Administratorrechten. Die Erlaubnis gilt dann für diese
+  Sitzung; nach 10 Minuten ohne Auftrag fragt Windows erneut.
+- **„Nein“ im Dialog ist erlaubt.** Lehnen Sie die Nachfrage ab, sagt das Programm das kurz
+  und lässt alles, wie es ist. Sie können es jederzeit erneut versuchen.
+- **Was ohne Rechte nicht lesbar ist, wird benannt.** Einige Werte (Festplatten-Zähler,
+  Prüfbit der Laufwerke, Ausnahmen des Virenschutzes, Wiederherstellungspunkte, Sicherungsspeicher,
+  ein Ereignisprotokoll) brauchen Administratorrechte. Die Prüfung zeigt dann „N Werte brauchen
+  einmal Administratorrechte“ mit einer Schaltfläche; nach dem Klick werden sie in etwa
+  10 Sekunden ergänzt.
+- **Der Helfer prüft jeden Auftrag selbst.** Der Teil mit Administratorrechten kennt nur
+  einen festen Katalog von Maßnahmen und nimmt von der Oberfläche keine Befehle an, nur
+  Kennungen. Was nicht im Katalog steht, läuft nicht.
+- **Das Programm prüft sich beim Start selbst.** Signatur und Oberflächendateien werden
+  gegen die eingebaute Liste geprüft. Wurde eine Datei verändert, startet die installierte
+  Fassung nicht und bittet um eine Neuinstallation.
+- **Verlauf, Zeitplan und Protokolle liegen jetzt an einem Ort** (`C:\ProgramData\WindowsWartung`),
+  unabhängig davon, welches Konto das Programm bedient. Vorhandene Daten werden beim ersten
+  Start übernommen.
+
+### Behoben
+
+- **Wechseldatenträger von gestern zählen nicht mehr als Festplattenfehler.** Meldungen für
+  einen USB-Stick, der inzwischen abgezogen ist, wurden als Laufwerksfehler gewertet.
+- **Die geplante Wartung fällt nicht mehr still aus,** wenn sie während einer laufenden
+  Prüfung fällig wird. Sind Administratorrechte in dieser Sitzung schon erteilt, startet sie,
+  sobald der Lauf beendet ist; sonst läuft sie im Hintergrund weiter, ohne Fenster und ohne
+  Nachfrage. Läuft sie im Hintergrund, lehnt das Programm einen zweiten Start ab, statt DISM
+  zweimal laufen zu lassen.
+- **Ein Werkzeug, das die Zeitgrenze überschreitet, endet nicht mehr als „Fertig“.** Jeder
+  Werkzeugschritt läuft in einem eigenen Auftragsobjekt von Windows; ist die Zeitgrenze
+  erreicht (in der Regel 45 Minuten) oder klicken Sie „Abbrechen“, werden auch die
+  Hilfsprozesse beendet, die das Werkzeug gestartet hat (bei DISM zum Beispiel
+  `DismHost.exe`), und der Schritt endet mit „Zeitgrenze erreicht“ oder „nicht gestartet“.
+
+### Gut zu wissen
+
+- **Selbststart aus Version 8.0:** Wer das Programm bei der Anmeldung starten ließ, hat eine
+  Aufgabe mit Administratorrechten. Die Einstellungen zeigen das an; „Umstellen“ fragt einmal
+  nach Rechten und legt die Aufgabe ohne sie neu an.
+- **Update ohne Installer:** Wer das Programm aus dem ZIP nutzt, sieht beim Update den
+  Windows-Dialog für den Befehlsprozessor; der Installer-Weg zeigt den Namen des Programms.
+  Empfohlen bleibt der Installer.
+- **Nach einem ZIP-Update von 8.0:** Die Dateien unter `C:\ProgramData\WindowsWartung` gehören
+  dann noch der Administratorengruppe, und eine Antwort auf eine Frage lässt sich nicht
+  speichern („Die Antworten gehören noch der vorigen Fassung; nach dem nächsten Schritt mit
+  Administratorrechten klappt es“). Einmal „Mit Administratorrechten ergänzen“ klicken oder
+  ein Werkzeug starten, danach sind die Dateien wieder beschreibbar. Der Installer setzt die
+  Rechte selbst.
+- **Ein anderes Konto im Windows-Dialog:** Tippen Sie dort das Kennwort eines anderen Kontos
+  ein, lehnt das Programm alles ab, was Ihr Benutzerprofil betrifft (Speicher aufräumen, Apps
+  entfernen, Werkzeuge, geplante Wartung und ihr Zeitplan): „Im Dialog ist ein anderes Konto
+  angemeldet; diese Maßnahme braucht Ihr eigenes Konto.“ Bei den Registrierungs-Einträgen
+  werden die Ihres Profils übersprungen und gezählt. Tiefenprüfung, Reparatur und die
+  Ergänzung der Messwerte laufen mit jedem Administratorkonto.
+- **Herausgeber-Bindung des Updates:** Ein Update wird nur angenommen, wenn Name **und**
+  öffentlicher Schlüssel des Signaturzertifikats zur installierten Fassung passen. Ein
+  Zertifikat mit gleichem Namen, aber neuem Schlüsselpaar wird abgelehnt.
+- Die Werkzeuge im Werkzeugkasten laufen unverändert (eine Warteschlange legt wie seit 7.0.1
+  einen Sicherungspunkt am Anfang an, nicht je Werkzeug); die Umstellung auf Maßnahmen mit
+  Vorschau folgt mit 8.2.
+
 ## [8.0.0] - 2026-09-12
 
 Eine neue Diagnose im vertrauten Gehäuse. Alles, was Sie bisher hatten (die Werkzeuge, die

@@ -52,6 +52,21 @@ namespace WartungsToolbox
         {
             bool ausfuehrlich = args.Any(a => string.Equals(a, "-all", StringComparison.OrdinalIgnoreCase));
 
+            // Die .reg-Sicherung der Loeschproben (10 und 11) geht in einen Wegwerf-Ordner: die
+            // Probe legt weder ProgramData an noch eine echte Sicherung des Nutzers daneben.
+            string sicherungsordner = Path.Combine(Path.GetTempPath(),
+                "WW-RegistryProbe-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+            Directory.CreateDirectory(sicherungsordner);
+            RegistryScan.OrdnerFuerProbe = sicherungsordner;
+
+            // Auch das App-Protokoll bleibt im Wegwerf-Ordner: RegistryScan.Run und Entferne rufen
+            // AppLog.Info, und ohne die Naht legte der erste Aufruf %ProgramData%\WindowsWartung\logs
+            // an, zoege eine 8.0-Datei aus dem Nutzerprofil nach (mit Umbenennen auf *.uebernommen)
+            // und schriebe die Probe-Zeilen ("aufgeraeumt: 1 entfernt", FEHLER-Zeilen aus Probe 11)
+            // in das echte app.log des Betreibers. Vor dem ersten Aufruf setzen, hinterher nachweisen.
+            string probeLog = Path.Combine(sicherungsordner, "app.log");
+            AppLog.PfadFuerProbe = probeLog;
+
             var uhr = System.Diagnostics.Stopwatch.StartNew();
             List<RegistryScan.Fund> funde = RegistryScan.Run(null, null);
             uhr.Stop();
@@ -119,6 +134,12 @@ namespace WartungsToolbox
             // ---- 11. Eine misslungene Sicherung stoppt ALLES --------------------------
             PruefeAllesOderNichts();
 
+            // ---- 12. Das App-Protokoll der Probe liegt im Wegwerf-Ordner ------------
+            // Run schreibt immer eine Zeile ("Registrierung geprueft: ..."): existiert die Datei
+            // an der Naht nicht, ist die Zeile woanders gelandet - im echten app.log.
+            Ist("AppLog schreibt in den Wegwerf-Ordner, nicht nach ProgramData (Naht PfadFuerProbe)",
+                File.Exists(probeLog), probeLog);
+
             // ---- Auflistung fuer die Beurteilung von Hand -----------------------------
             // Nur auf Anforderung: in der Testsuite wuerde die Liste alles andere
             // zuschuetten. Zum Nachmessen auf einem echten Rechner:
@@ -141,6 +162,10 @@ namespace WartungsToolbox
             {
                 Console.WriteLine("         (Einzelauflistung mit -all)");
             }
+
+            RegistryScan.OrdnerFuerProbe = null;
+            AppLog.PfadFuerProbe = null;
+            try { Directory.Delete(sicherungsordner, true); } catch { }
 
             Environment.Exit(fehler == 0 ? 0 : 1);
         }

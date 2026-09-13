@@ -23,15 +23,15 @@ namespace WartungsToolbox
                 case 87:                                  // ERROR_INVALID_PARAMETER
                     return "Ungültiger Parameter. Diese Windows-Version kennt den Befehl möglicherweise nicht vollständig. → Windows über die Einstellungen aktualisieren und erneut versuchen.";
                 case 740:                                 // ERROR_ELEVATION_REQUIRED
-                    return "Administratorrechte erforderlich. → Die App per Rechtsklick als Administrator starten.";
+                    return "Administratorrechte erforderlich. → Erneut starten und den Dialog von Windows bestätigen.";
                 case 1053:                                // ERROR_SERVICE_REQUEST_TIMEOUT
                     return "Ein Windows-Dienst hat nicht rechtzeitig reagiert. → Den PC neu starten und die Aktion wiederholen.";
                 case 1058:                                // ERROR_SERVICE_DISABLED
                     return "Ein benötigter Windows-Dienst ist deaktiviert. → Windows-Taste + R, dann services.msc: den betroffenen Dienst auf Starttyp Manuell oder Automatisch stellen.";
                 case 1060:                                // ERROR_SERVICE_DOES_NOT_EXIST
-                    return "Ein benötigter Windows-Dienst ist auf diesem PC nicht vorhanden – die Funktion ist hier vermutlich nicht verfügbar.";
+                    return "Ein benötigter Windows-Dienst ist auf diesem PC nicht vorhanden. Die Funktion ist hier vermutlich nicht verfügbar.";
                 case 1223:                                // ERROR_CANCELLED
-                    return "Die Aktion wurde abgebrochen – vermutlich wurde eine Windows-Nachfrage verneint. → Erneut ausführen und die Nachfrage bestätigen.";
+                    return "Die Aktion wurde abgebrochen, vermutlich wurde eine Windows-Nachfrage verneint. → Erneut ausführen und die Nachfrage bestätigen.";
                 case unchecked((int)0x800F081F):          // CBS_E_SOURCE_MISSING
                     return "Windows konnte die Reparatur-Quelldateien nicht beschaffen (0x800F081F). → Internetverbindung prüfen, dann die Aktion Windows-Update reparieren ausführen und die Reparatur wiederholen.";
                 case unchecked((int)0x800F0906):          // Quelle nicht herunterladbar
@@ -66,7 +66,7 @@ namespace WartungsToolbox
                 if (t.Contains("keine integrit") || t.Contains("did not find any integrity"))
                 {
                     good = true;
-                    return "Verständlich gesagt: Alle geschützten Systemdateien sind in Ordnung – nichts zu reparieren.";
+                    return "Verständlich gesagt: Alle geschützten Systemdateien sind in Ordnung, nichts zu reparieren.";
                 }
                 // /verifyonly meldet Funde ohne Reparaturversuch: "hat Integritätsverletzungen gefunden"
                 // (nach der "keine"-Pruefung, sonst traefe es auch den guten Fall).
@@ -87,7 +87,7 @@ namespace WartungsToolbox
                 if (t.Contains("keine komponentenspeicherbeschädigung") || t.Contains("no component store corruption"))
                 {
                     good = true;
-                    return "Verständlich gesagt: Der Windows-Komponentenspeicher ist gesund – keine Beschädigung gefunden.";
+                    return "Verständlich gesagt: Der Windows-Komponentenspeicher ist gesund, keine Beschädigung gefunden.";
                 }
                 // Windows 11 (26200, deutsch) schreibt "Der Komponentenspeicher kann repariert werden." /
                 // "... kann nicht repariert werden." und "Der Wiederherstellungsvorgang wurde erfolgreich

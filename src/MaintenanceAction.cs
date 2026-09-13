@@ -13,13 +13,12 @@ namespace WartungsToolbox
         public bool Detached;     // im eigenen Fenster starten, nicht abwarten/mitschneiden
         public bool IgnoreExit;   // ExitCode != 0 ist hier erwartbar/harmlos -> nicht als Problem werten
         public bool Progress;     // zeichenweise lesen und Prozent (DISM/SFC: \r-Fortschritt) ans UI melden
+        public int TimeoutMs;     // Zeitgrenze fuer diesen Schritt; 0 = Standard (45 min, helfer/Werkzeuge.cs)
     }
 
-    class Job
-    {
-        public string Title;
-        public System.Collections.Generic.List<Step> Steps;
-    }
+    // Bis 8.0 stand hier "class Job" (Titel + Steps fuer CommandRunner.RunJobs). Seit 8.1
+    // laeuft jedes Werkzeug als Plan aus Kennungen (kern/Plan.cs) ueber CommandRunner.RunPlan;
+    // die Steps baut der Helfer selbst aus dem Katalog (src/Schritte.cs).
 
     class MaintenanceAction
     {

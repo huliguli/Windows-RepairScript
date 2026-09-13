@@ -41,6 +41,68 @@ namespace WartungsToolbox
         // in beiden Prozessen => gleiche Message-ID).
         public static readonly uint WM_WW_RUNAUTO = RegisterWindowMessage("WindowsWartung.RunAuto");
 
+        // ---- Job-Objekte (helfer\Werkzeuge.cs, Nachtrag B4) ----
+        // Jeder Werkzeugschritt haengt an einem Job: TerminateJobObject trifft auch Enkel
+        // (DismHost.exe), nachdem der Hauptprozess schon weg ist, ohne PID-Wiederverwendung;
+        // KILL_ON_JOB_CLOSE raeumt beim Schliessen des Handles (auch bei einem Absturz des
+        // Helfers) alles ab, was noch im Job lebt. Verschachtelte Jobs gibt es seit Windows 8:
+        // ein Prozess, der selbst in einem Job steckt, darf seine Kinder in einen neuen legen.
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern IntPtr CreateJobObject(IntPtr lpJobAttributes, string lpName);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool SetInformationJobObject(IntPtr hJob, int infoClass,
+                                                          ref JOBOBJECT_EXTENDED_LIMIT_INFORMATION info, int size);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool AssignProcessToJobObject(IntPtr hJob, IntPtr hProcess);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool TerminateJobObject(IntPtr hJob, uint exitCode);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool CloseHandle(IntPtr handle);
+
+        public const int JobObjectExtendedLimitInformation = 9;
+        public const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
+
+        // Layout wie in winnt.h (x64: 144 Byte, live gemessen); UIntPtr fuer SIZE_T.
+        [StructLayout(LayoutKind.Sequential)]
+        public struct JOBOBJECT_BASIC_LIMIT_INFORMATION
+        {
+            public long PerProcessUserTimeLimit;
+            public long PerJobUserTimeLimit;
+            public uint LimitFlags;
+            public UIntPtr MinimumWorkingSetSize;
+            public UIntPtr MaximumWorkingSetSize;
+            public uint ActiveProcessLimit;
+            public UIntPtr Affinity;
+            public uint PriorityClass;
+            public uint SchedulingClass;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct IO_COUNTERS
+        {
+            public ulong ReadOperationCount;
+            public ulong WriteOperationCount;
+            public ulong OtherOperationCount;
+            public ulong ReadTransferCount;
+            public ulong WriteTransferCount;
+            public ulong OtherTransferCount;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+        {
+            public JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation;
+            public IO_COUNTERS IoInfo;
+            public UIntPtr ProcessMemoryLimit;
+            public UIntPtr JobMemoryLimit;
+            public UIntPtr PeakProcessMemoryUsed;
+            public UIntPtr PeakJobMemoryUsed;
+        }
+
         // Dunkle Titelleiste unter Windows 10/11
         public static void UseDarkTitleBar(IntPtr hwnd)
         {

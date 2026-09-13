@@ -465,8 +465,12 @@ namespace WartungsToolbox.Kern.Regeln
             // einem Auslagerungsvorgang" auf \Device\Harddisk2 ist meist ein abgezogener Stick
             // (gemessen 12.09.2026: 18 x disk 51 fuer den USB-Stick, beide NVMe ohne Eintrag).
             // Sie werden genannt, nicht bewertet.
+            // Ein Datentraeger, den es im Bild gar nicht mehr gibt (Nummer unbekannt), ist ebenfalls
+            // keiner der festen: feste Platten sind immer da, ein Stick von gestern nicht mehr
+            // (gemessen 13.09.2026: derselbe Stick abgezogen, die 18 Ereignisse blieben im Log).
             var usbNummern = new HashSet<int>(s.Datentraeger.Where(d => d.BusTyp == BusUsb && d.Nummer.HasValue).Select(d => d.Nummer.Value));
-            var disk = diskAlle.Where(x => !IstWechseldatentraeger(x, usbNummern)).ToList();
+            var festeNummern = new HashSet<int>(s.Datentraeger.Where(d => d.BusTyp != BusUsb && d.Nummer.HasValue).Select(d => d.Nummer.Value));
+            var disk = diskAlle.Where(x => !IstWechseldatentraeger(x, usbNummern, festeNummern)).ToList();
             var diskUsb = diskAlle.Count - disk.Count;
             if (disk.Count >= Schwellen.DiskEreignisseWarn)
             {
@@ -570,16 +574,20 @@ namespace WartungsToolbox.Kern.Regeln
         /// Datentraegernummer; steht sie fuer einen USB-Datentraeger, ist das Ereignis eine
         /// Wechseldatentraeger-Meldung. Ohne erkennbare Nummer zaehlt das Ereignis (Vorsicht vor Schweigen).
         /// </summary>
-        static bool IstWechseldatentraeger(Ereignis x, HashSet<int> usbNummern)
+        // Wechseldatentraeger: die Nummer ist als USB im Bild - oder sie fehlt im Bild ganz, obwohl
+        // feste Platten bekannt sind (dann war es ein inzwischen abgezogenes Geraet). Ohne jede
+        // Nummer im Ereignis oder ohne Datentraeger im Bild wird nichts weggefiltert.
+        static bool IstWechseldatentraeger(Ereignis x, HashSet<int> usbNummern, HashSet<int> festeNummern)
         {
-            if (usbNummern.Count == 0) return false;
+            if (usbNummern.Count == 0 && festeNummern.Count == 0) return false;
             foreach (string name in new[] { "0", "1", "DeviceName" })
             {
                 string wert = x.Feld(name);
                 if (string.IsNullOrEmpty(wert)) continue;
                 var m = System.Text.RegularExpressions.Regex.Match(wert, @"Harddisk(\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
                 int n;
-                if (m.Success && int.TryParse(m.Groups[1].Value, out n)) return usbNummern.Contains(n);
+                if (m.Success && int.TryParse(m.Groups[1].Value, out n))
+                    return usbNummern.Contains(n) || (festeNummern.Count > 0 && !festeNummern.Contains(n));
             }
             return false;
         }

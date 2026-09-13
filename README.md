@@ -44,7 +44,9 @@ angelegt; das Programm prüft, ob er wirklich entstanden ist.
 
 Was sich **nicht** feststellen ließ, wird auch so genannt, samt Grund (fehlende Rechte, keine
 Daten). Eine Prüfung ohne Daten wird niemals als Problem ausgegeben, und niemals als „in
-Ordnung“.
+Ordnung“. Werte, die nur mit Administratorrechten lesbar sind, stehen nach der Prüfung als
+Karte „N Werte brauchen einmal Administratorrechte“ mit einer Schaltfläche; nach dem Klick
+werden sie in etwa 10 Sekunden ergänzt.
 
 **Protokoll für zwei Leser.** Jeder Lauf schreibt ein Protokoll: eine Zeile in Alltagssprache
 für den Nutzer, das Fachliche (Messwert, Quelle, Schwelle, Befehl, Dauer) daneben für den
@@ -120,15 +122,47 @@ ist bewusst eng, weil eine falsche Vermutung hier Programme kaputt macht:
 - **Keine erfundenen Diagnosen.** Gedeutet werden nur offiziell dokumentierte Fehlercodes
   und Meldungstexte. Unbekanntes bleibt unkommentiert.
 
+## Rechte, Daten, Selbstprüfung
+
+**Start ohne Administratorrechte.** Das Programm startet ohne die Nachfrage von Windows.
+Prüfen, Ansehen, Verlauf, Bericht speichern: alles läuft mit den normalen Rechten des
+angemeldeten Kontos. Erst wenn etwas geändert werden soll (Tiefenprüfung, Beheben, ein
+Werkzeug, Aufräumen), fragt Windows einmal nach Administratorrechten; die Erlaubnis gilt dann
+für die Sitzung und verfällt nach 10 Minuten ohne Auftrag. „Nein“ im Dialog ist erlaubt: das
+Programm sagt das kurz, lässt alles, wie es ist, und das vorhandene Ergebnis bleibt stehen.
+Den Teil mit Rechten übernimmt ein Helfer (dieselbe Programmdatei, erhöht gestartet), der
+nur einen festen Katalog von Maßnahmen kennt und von der Oberfläche keine Befehle annimmt,
+nur Kennungen. Was nicht im Katalog steht, läuft nicht. Wird im Dialog das Kennwort eines
+anderen Kontos eingegeben, lehnt der Helfer alles ab, was das Benutzerprofil betrifft
+(Aufräumen, Apps entfernen, Werkzeuge, geplante Wartung); Tiefenprüfung, Reparatur und die
+Ergänzung der Messwerte laufen mit jedem Administratorkonto.
+
+**Datenablage.** Alles, was den PC betrifft, liegt unter `C:\ProgramData\WindowsWartung`:
+Protokolle je Lauf (`protokoll\`), Verlauf (`verlauf\history.json`), Zeitplan der geplanten
+Wartung (`zeitplan.json`), Sicherungen (`sicherungen\`), die gemerkten Antworten
+(`entscheidungen.json`) und das App-Protokoll (`logs\app.log`). Im Benutzerprofil
+(`%LOCALAPPDATA%\WindowsWartung`) bleiben die Daten der Oberfläche (WebView2, Zoom) und die
+Arbeitsdateien eines Updates (`update\` mit Download und Sicherung der alten Fassung,
+`pending_update.txt` bis zum nächsten Start). Daten aus Version 8.0 werden beim ersten Start
+übernommen; nach einem ZIP-Update von 8.0 gehören die Dateien noch der Administratorengruppe,
+bis zum ersten Schritt mit Administratorrechten lassen sich Antworten dann nicht speichern
+(der Installer setzt die Rechte selbst). Kein Wert verlässt den Rechner.
+
+**Selbstprüfung beim Start.** Die Programmdatei prüft ihre eigene Signatur und jede Datei der
+Oberfläche gegen eine Liste, die beim Bau eingebettet wird. Wurde eine Datei verändert,
+startet die installierte (signierte) Fassung nicht und bittet um eine Neuinstallation. Ein
+selbst gebauter, unsignierter Stand läuft weiter und schreibt nur eine Warnung ins Protokoll.
+
 ## Aufbau
 
 ```
 kern/        Datenmodell (Systembild, Befund), Regeln je Bereich, Entscheidungen, Protokoll
              hängt von nichts ab: läuft in den Proben ohne Rechte und ohne Fenster
 sammler/     füllt das Systembild im eigenen Prozess (WMI, Ereignisprotokoll, Registry, COM)
-host/        C#-Host: Fenster, WebView2, Nachrichtenbrücke, Hauptweg (CheckFlow), Update
+helfer/      der Teil mit Administratorrechten: Named Pipe, Katalog der Maßnahmen, Ausführung, Messung
+host/        C#-Host: Fenster, WebView2, Nachrichtenbrücke, Hauptweg (CheckFlow), Helfer-Start, Startprüfung, Update
 ui/          Oberfläche in HTML/CSS/JS
-src/         Werkzeugkasten (Aktionskatalog, Befehls-Runner), Verlauf, Signaturbindung
+src/         Werkzeugkasten (Aktionskatalog, Schrittbaukasten, Plan-Runner), Verlauf, Signaturbindung
 tests/       run-tests.ps1, Kernproben (proben/) und aufgezeichnete Testbilder (aufzeichnungen/)
 tools/       Compiler-Aufruf, Kommandozeile (aufzeichnen.exe), Probenläufer
 libs/        WebView2-DLLs (eingecheckt)
@@ -149,12 +183,14 @@ Voraussetzung: Windows 10/11 und das **.NET SDK** (nur zum Bauen). Der Zielrahme
 .NET Framework 4.8, das ab Werk in Windows steckt.
 
 ```powershell
-.\build.ps1 -Release
+.\build.ps1
 .\tests\run-tests.ps1
 ```
 
-Ohne `-Release` entsteht ein Build ohne Admin-Manifest, praktisch zum Ansehen der
-Oberfläche. Echte Reparaturen brauchen den Release-Build.
+Jeder Bau bettet das Manifest (`asInvoker`) und die Prüfliste der Oberflächendateien ein;
+`-Release` ändert nur die Abschlusszeile, `-Sign` signiert. Ein selbst gebauter Stand kann
+alles, was die signierte Fassung kann, und fragt genauso erst bei einer Änderung nach
+Administratorrechten. Einzelheiten in `DEPLOYMENT.md`.
 
 Der in Windows eingebaute Compiler wird bewusst nicht mehr verwendet: er beherrscht nur
 C# 5 und lehnt jede höhere Sprachversion mit `CS1617` ab.
@@ -178,10 +214,15 @@ dort `--shotwait` großzügig setzen.
   Update-Prüfung bei GitHub und, bei der Netzwerkprüfung, die Prüfadresse von Windows selbst.
 - Zurücksetzen der Interneteinstellungen und die Speicherprüfung brauchen danach einen
   Neustart.
+- Ein Update fragt einmal nach Administratorrechten, weil die Programmdateien unter
+  `Program Files` liegen. Der Installer-Weg nennt im Dialog das Programm; wer das ZIP nutzt,
+  sieht dort den Befehlsprozessor (`cmd.exe`). Empfohlen bleibt der Installer.
 - Programm und Installer sind signiert, allerdings mit einem selbst ausgestellten
   Zertifikat (`CN=Jonas (Windows-Wartung)`). Das macht Manipulationen erkennbar und ist die
   Grundlage dafür, dass die Selbstaktualisierung nur Fassungen desselben Herausgebers
-  annimmt. Es ersetzt **kein** Zertifikat einer anerkannten Stelle: beim ersten Start zeigt
+  annimmt (gleicher Name **und** gleicher öffentlicher Schlüssel des Zertifikats; ein
+  Zertifikat mit gleichem Namen, aber neuem Schlüssel wird abgelehnt). Es ersetzt **kein**
+  Zertifikat einer anerkannten Stelle: beim ersten Start zeigt
   Windows weiterhin „Der Computer wurde geschützt“; über *Weitere Informationen → Trotzdem
   ausführen* startet das Programm.
 - Läuft etwas schief: Einstellungen → **Protokoll öffnen**.

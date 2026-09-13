@@ -33,6 +33,12 @@ namespace WartungsToolbox
             string fremd = Path.Combine(basis, "fremd");         // das Ziel der Abzweigung
             string abzweig = Path.Combine(cache, "abzweigung");
 
+            // Das App-Protokoll der Probe bleibt im Wegwerf-Ordner (StorageScan.Aufraeumen ruft
+            // AppLog.Info): ohne die Naht legte der erste Aufruf %ProgramData%\WindowsWartung\logs
+            // an und zoege eine 8.0-Datei aus dem Nutzerprofil nach. Der Ordner entsteht gleich
+            // unten mit; eine Zeile davor ginge verloren, AppLog wirft nie.
+            AppLog.PfadFuerProbe = Path.Combine(basis, "app.log");
+
             try
             {
                 Directory.CreateDirectory(cache);
@@ -110,6 +116,7 @@ namespace WartungsToolbox
                 {
                     try { if (Directory.Exists(a)) Directory.Delete(a, false); } catch { }
                 }
+                AppLog.PfadFuerProbe = null;
                 try { if (Directory.Exists(basis)) Directory.Delete(basis, true); } catch { }
             }
 

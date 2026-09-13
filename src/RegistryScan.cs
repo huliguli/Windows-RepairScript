@@ -97,9 +97,14 @@ namespace WartungsToolbox
             // Die Kennungen werden auf JEDEM Rueckweg vergeben, auch beim Abbruch. Vorher
             // geschah das nur ganz am Ende: ein abgebrochener Lauf lieferte Funde ohne
             // Kennung, und der naechste Zugriff darauf riss den Oberflaechen-Thread mit.
+            //
+            // Seit 8.1 ist die Kennung ein stabiler Kurzhash ueber Hive, Pfad und Wertname
+            // statt "r"+Index: Der Host zeigt die Liste, der Helfer (erhoeht, eigener Prozess)
+            // scannt SELBST neu und findet die Auswahl des Nutzers nur ueber die Kennung
+            // wieder. Ein Index waere nach dem zweiten Lauf ein anderer Eintrag.
             List<Fund> Fertig()
             {
-                for (int i = 0; i < funde.Count; i++) funde[i].Id = "r" + i;
+                for (int i = 0; i < funde.Count; i++) funde[i].Id = StabileId(funde[i]);
                 return funde;
             }
 
@@ -128,6 +133,23 @@ namespace WartungsToolbox
 
             AppLog.Info("Registrierung geprueft: " + funde.Count + " tote Eintraege gefunden.");
             return Fertig();
+        }
+
+        /// <summary>
+        /// Stabile Kennung eines Fundes: die ersten 12 Hex-Zeichen von SHA-256 ueber
+        /// Hive + "\" + Pfad + "|" + (Wertname oder leer). Gleicher Eintrag, gleiche Kennung,
+        /// in jedem Prozess und bei jedem Lauf.
+        /// </summary>
+        public static string StabileId(Fund f)
+        {
+            string quelle = (f.Hive ?? "") + "\\" + (f.Pfad ?? "") + "|" + (f.Wert ?? "");
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+            {
+                byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes(quelle));
+                var sb = new StringBuilder(12);
+                for (int i = 0; i < 6; i++) sb.Append(hash[i].ToString("x2"));
+                return sb.ToString();
+            }
         }
 
         // ---------------------------------------------------------------- Kategorien
@@ -476,15 +498,27 @@ namespace WartungsToolbox
             }
             if (erlaubt.Count == 0) return null;
 
-            string ordner = Sicherungsordner();
+            // Keine Sicherung in eine Abzweigung: das Entfernen laeuft erhoeht, und BUILTIN\Users
+            // darf im Laufzeitordner aendern. Ein anderes lokales Konto koennte sicherungen\
+            // registrierung leeren und als Junction auf einen fremden Ort neu anlegen; die .reg
+            // landete dann dort, und der Nutzer importierte spaeter per Doppelklick eine Datei,
+            // die dieses Konto veraendern kann. Ohne Sicherung wird nichts entfernt (unten).
+            string ordner = Sicherungsordner();   // null: Ablage.Sicherungen hat den Ort schon verweigert (Abzweigung)
+            if (string.IsNullOrEmpty(ordner) || OrdnerIstAbzweigung(ordner))
+            {
+                string wo = string.IsNullOrEmpty(ordner) ? "für die Registrierung (sicherungen\\registrierung)" : ordner;
+                AppLog.Error("Registrierung: der Sicherungsordner " + wo + " liegt hinter einer Abzweigung (Junction oder symbolischer Link); es wird nichts gesichert und nichts entfernt.");
+                throw new InvalidOperationException(
+                    "Der Sicherungsordner " + wo + " liegt hinter einer Verknüpfung auf einen anderen Ort. " +
+                    "Deshalb wurde nichts gesichert und nichts entfernt: Ohne Sicherung fassen wir nichts an.");
+            }
             Directory.CreateDirectory(ordner);
-            string sicherung = Path.Combine(ordner,
-                "registrierung-vorher-" + DateTime.Now.ToString("yyyy-MM-dd-HHmm") + ".reg");
+            string sicherung = Sicherungsdatei(ordner);
 
             // Erst sichern, dann anfassen. Ohne vollstaendige Sicherung wird NICHTS entfernt.
             var schluessel = erlaubt.Select(f => f.Hive + "\\" + f.Pfad)
                                     .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            if (!ExportiereSchluessel(schluessel, sicherung))
+            if (!ExportiereSchluessel(schluessel, ref sicherung))
             {
                 AppLog.Error("Registrierung: Sicherung fehlgeschlagen - es wird nichts entfernt.");
                 throw new InvalidOperationException(
@@ -525,12 +559,64 @@ namespace WartungsToolbox
             return sicherung;
         }
 
-        /// <summary>Ordner, in dem die .reg-Sicherungen liegen.</summary>
+        /// <summary>
+        /// Ordner, in dem die .reg-Sicherungen liegen: %ProgramData%\WindowsWartung\sicherungen\registrierung
+        /// (Kern.Ablage.Sicherungen, legt den Ordner an, weicht ohne Schreibrecht ins Profil aus).
+        ///
+        /// Maschinenweit seit 8.1: das Entfernen laeuft im erhoehten Helfer (Kennung
+        /// registrierung.entfernen), der Nutzer oeffnet den Ordner aus der Oberflaeche ohne
+        /// Rechte - beide muessen denselben Ort meinen. Sicherungen bis 8.0 liegen unter
+        /// %LOCALAPPDATA%\WindowsWartung\registrierung-sicherung und bleiben dort: sie sind
+        /// Beweisstuecke des Nutzers, kein Laufzeitzustand, und kein Lauf liest sie zurueck.
+        /// Ein Umzug ist deshalb nicht noetig.
+        /// </summary>
         public static string Sicherungsordner()
         {
-            return Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "WindowsWartung", "registrierung-sicherung");
+            if (!string.IsNullOrEmpty(OrdnerFuerProbe)) return OrdnerFuerProbe;
+            return WartungsToolbox.Kern.Ablage.Sicherungen("registrierung");
+        }
+
+        /// <summary>
+        /// Nur fuer die Probe in tests/ (RegistryProbe): verlegt die .reg-Sicherung in einen
+        /// Wegwerf-Ordner, damit der Test weder ProgramData anlegt noch eine echte Sicherung
+        /// des Nutzers daneben schreibt. Geht der Ablage vor, wie History.PfadFuerProbe und
+        /// Protokoll.OrdnerFuerProbe. Im laufenden Programm bleibt das Feld immer null.
+        /// </summary>
+        internal static string OrdnerFuerProbe;
+
+        /// <summary>
+        /// Name der Sicherungsdatei: registrierung-vorher-yyyy-MM-dd-HHmmss-xxxx.reg mit Sekunden
+        /// und 4 Hex-Zeichen. Bis 8.1.0 war der Name minutengenau, und ExportiereSchluessel
+        /// schrieb ueberschreibend: wer innerhalb derselben Minute zweimal entfernte (die
+        /// Oberflaeche sucht nach dem Lauf sofort neu), verlor die Sicherung des ersten Laufs,
+        /// das einzige Beweisstueck fuer den Rueckweg. Geschrieben wird mit FileMode.CreateNew;
+        /// eine Kollision wird nicht ueberschrieben, sondern mit dem naechsten Namen versucht.
+        /// </summary>
+        static string Sicherungsdatei(string ordner)
+        {
+            string kennung = Guid.NewGuid().ToString("N").Substring(0, 4);
+            return Path.Combine(ordner,
+                "registrierung-vorher-" + DateTime.Now.ToString("yyyy-MM-dd-HHmmss") + "-" + kennung + ".reg");
+        }
+
+        /// <summary>
+        /// Liegt der Sicherungsordner hinter einer Abzweigung? Im Programm entscheidet
+        /// Ablage.IstAbzweigung (der Pfad und jede Komponente unterhalb des maschinenweiten
+        /// Ordners); fuer den Wegwerf-Ordner der Probe (OrdnerFuerProbe, ausserhalb der Ablage)
+        /// nur das Attribut des Ordners selbst. Wirft die Pruefung, gilt "ja": was sich nicht
+        /// pruefen laesst, bekommt keinen erhoehten Schreibzugriff.
+        /// </summary>
+        static bool OrdnerIstAbzweigung(string ordner)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(ordner)) return true;
+                if (!string.IsNullOrEmpty(OrdnerFuerProbe))
+                    return Directory.Exists(ordner)
+                           && (File.GetAttributes(ordner) & FileAttributes.ReparsePoint) != 0;
+                return WartungsToolbox.Kern.Ablage.IstAbzweigung(ordner);
+            }
+            catch (Exception) { return true; }
         }
 
         /// <summary>
@@ -541,8 +627,11 @@ namespace WartungsToolbox
         /// als vollstaendig galt - danach wurden auch die uebrigen Eintraege entfernt,
         /// ohne dass sie irgendwo gesichert gewesen waeren. Die Zusage "ohne vollstaendige
         /// Sicherung wird nichts entfernt" war damit keine.
+        ///
+        /// ziel ist ref: bei einer Namenskollision (Datei gibt es schon) wird ein neuer Name
+        /// gewaehlt, und der Aufrufer meldet den Namen, unter dem wirklich geschrieben wurde.
         /// </summary>
-        static bool ExportiereSchluessel(List<string> schluessel, string ziel)
+        static bool ExportiereSchluessel(List<string> schluessel, ref string ziel)
         {
             if (schluessel == null || schluessel.Count == 0) return false;
 
@@ -584,15 +673,33 @@ namespace WartungsToolbox
                 if (!ok) return false;
             }
 
-            try
+            // CreateNew statt WriteAllText: eine vorhandene Datei gleichen Namens (zweiter Lauf
+            // in derselben Sekunde mit gleicher Kennung, praktisch nie) wird nicht ueberschrieben,
+            // sondern ein neuer Name versucht; nach 3 Kollisionen scheitert die Sicherung, und
+            // damit das Entfernen.
+            string text = gesamt.ToString();
+            for (int versuch = 0; ; versuch++)
             {
-                File.WriteAllText(ziel, gesamt.ToString(), Encoding.Unicode);
-                return new FileInfo(ziel).Length > 0;
-            }
-            catch (Exception ex)
-            {
-                AppLog.Error("Sicherung konnte nicht geschrieben werden", ex);
-                return false;
+                try
+                {
+                    using (var fs = new FileStream(ziel, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                    using (var w = new StreamWriter(fs, Encoding.Unicode))   // UTF-16 mit BOM, wie reg.exe und File.WriteAllText
+                    {
+                        w.Write(text);
+                    }
+                    return new FileInfo(ziel).Length > 0;
+                }
+                catch (IOException ex) when (File.Exists(ziel) && versuch < 3)
+                {
+                    string neu = Sicherungsdatei(Path.GetDirectoryName(ziel));
+                    AppLog.Warn("Sicherung " + Path.GetFileName(ziel) + " gibt es schon (" + ex.Message.Trim() + "); neuer Name " + Path.GetFileName(neu));
+                    ziel = neu;
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Error("Sicherung konnte nicht geschrieben werden", ex);
+                    return false;
+                }
             }
         }
 

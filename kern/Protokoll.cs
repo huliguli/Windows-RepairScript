@@ -34,6 +34,7 @@ namespace WartungsToolbox.Kern
         public const string Regeln = "regeln";
         public const string Helfer = "helfer";
         public const string Host = "host";
+        public const string AblageSchicht = "ablage";   // Zeilen der Ablage selbst (Ordner nicht angenommen)
 
         public const string Messung = "messung";
         public const string BefundArt = "befund";
@@ -47,6 +48,7 @@ namespace WartungsToolbox.Kern
         public const string FehlerArt = "fehler";
         public const string Anfang = "anfang";
         public const string Ende = "ende";
+        public const string Abgelehnt = "abgelehnt";   // Plan oder Anfrage nicht angenommen (Helfer)
 
         readonly object _gate = new object();
         readonly string _pfad;
@@ -56,17 +58,48 @@ namespace WartungsToolbox.Kern
         /// <summary>Testnaht: Ordner fuer die Proben.</summary>
         public static string OrdnerFuerProbe;
 
+        /// <summary>
+        /// Der Protokollordner; null, wenn er eine Abzweigung ist (Ablage.Protokolle, Junction): dann
+        /// gibt es keine Datei, nichts zu listen und nichts aufzuraeumen.
+        /// </summary>
         public static string Ordner()
         {
-            return OrdnerFuerProbe ?? Path.Combine(Ablage.Maschinenweit(), "protokoll");
+            return OrdnerFuerProbe ?? Ablage.Protokolle();
         }
 
         public Protokoll(string laufId)
         {
-            LaufId = laufId;
+            // Die Lauf-Id wird Teil eines Dateinamens. Sie kommt auch von aussen (Plan ueber die
+            // Pipe, Plandatei); eine Id mit Pfadzeichen wuerde den erhoehten Helfer an eine
+            // beliebige Stelle schreiben lassen. Ungueltige Ids werden ersetzt, nie uebernommen.
+            LaufId = LaufIdGueltig(laufId) ? laufId : NeueLaufId();
             string ordner = Ordner();
+            // Kein Ordner oder eine Abzweigung (Ablage.IstAbzweigung): keine Datei. Ein anderer
+            // lokaler Nutzer koennte den erhoehten Helfer sonst an einen beliebigen Ort schreiben
+            // lassen. Die Zeilen bleiben im Speicher (Zeilen) und erreichen Oberflaeche und Verlauf
+            // wie sonst; Pfad ist null, und die erste Zeile sagt, warum (nie still).
+            if (ordner == null || Ablage.IstAbzweigung(ordner))
+            {
+                _pfad = null;
+                Schreibe(AblageSchicht, FehlerArt, "protokoll",
+                    "Das Laufprotokoll wird nicht als Datei gespeichert: der Protokollordner ist eine Abzweigung (Junction) und wurde nicht angenommen",
+                    new { ordner = ordner ?? Path.Combine(Ablage.Maschinenweit(), "protokoll") });
+                return;
+            }
             try { Directory.CreateDirectory(ordner); } catch (Exception) { }
-            _pfad = Path.Combine(ordner, "lauf-" + laufId + ".jsonl");
+            _pfad = Path.Combine(ordner, "lauf-" + LaufId + ".jsonl");
+        }
+
+        /// <summary>Nur Buchstaben, Ziffern, Punkt, Bindestrich, Unterstrich; 1 bis 64 Zeichen. Kein Pfad, kein Datenstrom.</summary>
+        public static bool LaufIdGueltig(string id)
+        {
+            if (string.IsNullOrEmpty(id) || id.Length > 64) return false;
+            foreach (char c in id)
+            {
+                bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_';
+                if (!ok) return false;
+            }
+            return id != "." && id != "..";
         }
 
         public static string NeueLaufId()
@@ -75,6 +108,7 @@ namespace WartungsToolbox.Kern
                    + "-" + Guid.NewGuid().ToString("N").Substring(0, 6);
         }
 
+        /// <summary>Die Datei des Laufs; null, wenn der Ordner nicht angenommen wurde (nur Zeilen im Speicher).</summary>
         public string Pfad { get { return _pfad; } }
 
         public void Schreibe(string schicht, string art, string kennung, string laie, object fachmann = null)
@@ -92,6 +126,7 @@ namespace WartungsToolbox.Kern
             lock (_gate)
             {
                 Zeilen.Add(z);
+                if (_pfad == null) return;   // Ordner nicht angenommen: nur im Speicher (Konstruktor)
                 try { File.AppendAllText(_pfad, Json.Schreiben(z) + "\n", new UTF8Encoding(false)); }
                 catch (Exception) { /* Protokollieren darf nie zum Problem werden */ }
             }

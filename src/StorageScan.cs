@@ -28,6 +28,25 @@ namespace WartungsToolbox
     /// </summary>
     static class StorageScan
     {
+        /// <summary>
+        /// Alle Schluessel, die Run() vergibt und Aufraeumen() kennt: genau diese sechs, keine
+        /// laufwerksabhaengigen Muster (der Papierkorb wird ueber alle festen Laufwerke unter
+        /// EINEM Schluessel gefuehrt). Der Helfer prueft jeden Schluessel eines Plans dagegen
+        /// (docs/M2-ENTWURF.md, Abschnitt 3, speicher.aufraeumen). Wer hier einen Posten
+        /// ergaenzt, traegt den Schluessel auch in diese Liste ein.
+        /// </summary>
+        public static readonly string[] BekannteSchluessel =
+            { "papierkorb", "temp", "updates", "vorschau", "browser", "spiele" };
+
+        /// <summary>true, wenn der Schluessel in BekannteSchluessel steht (Vergleich ohne Gross/Klein, wie Aufraeumen).</summary>
+        public static bool IstBekannterSchluessel(string schluessel)
+        {
+            if (string.IsNullOrEmpty(schluessel)) return false;
+            foreach (string s in BekannteSchluessel)
+                if (string.Equals(s, schluessel, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
         public class Posten
         {
             public string Schluessel;  // stabile Kennung; die Oberflaeche waehlt NUR darueber

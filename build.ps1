@@ -9,8 +9,17 @@
 # Der eingebaute csc.exe des Frameworks kann das NICHT: er lehnt jedes
 # /langversion oberhalb von 5 mit CS1617 ab. Deshalb ist das SDK Pflicht.
 #
-# Schalter -Release bindet das Admin-Manifest ein (UAC). Ohne -Release: Dev-Build ohne Manifest.
+# Manifest (src\app.manifest, asInvoker seit 8.1): wird IMMER eingebettet, Dev wie Release.
+# Die EXE startet ohne UAC-Dialog; Administratorrechte holt sich erst der Helfer, wenn eine
+# Massnahme sie braucht (docs\M2-ENTWURF.md, Abschnitt 0 Punkt 1 und 8).
+# Schalter -Release aendert nur noch die Abschlusszeile ("(Release)" statt "(Dev)"); er wird
+# sonst nirgends gelesen. Die Signatur haengt allein an -Sign, /optimize+ ist immer an, das
+# Manifest immer dabei: ein Bau ohne -Sign ist technisch dieselbe EXE, nur unsigniert.
 # CertPassword ohne Vorgabe: sign.ps1 fragt sonst nach bzw. nimmt WW_CERT_PASSWORD.
+#
+# Startpruefung: vor dem Uebersetzen entsteht ui-hashes.txt (SHA-256 jeder Datei unter ui\,
+# ohne shot_*.png) und wird als Ressource "ui-hashes.txt" in die EXE eingebettet. Die App
+# prueft beim Start die kopierten Oberflaechendateien dagegen (host\Selbstpruefung.cs).
 param([switch]$Release, [switch]$Sign, [string]$CertPassword)
 
 $ErrorActionPreference = 'Stop'
@@ -32,10 +41,14 @@ Abhilfe: https://dotnet.microsoft.com/download  (SDK, nicht nur Runtime)
 "@
 }
 $sdkRoot = Join-Path (Split-Path -Parent $dotnet.Source) 'sdk'
-$csc = Get-ChildItem (Join-Path $sdkRoot '*\Roslyn\bincore\csc.dll') -ErrorAction SilentlyContinue |
-       Sort-Object { [version]($_.FullName -replace '.*\\sdk\\([0-9.]+)\\.*','$1') } |
-       Select-Object -Last 1
-if (-not $csc) { throw "Kein Roslyn-Compiler im SDK gefunden (gesucht unter $sdkRoot\*\Roslyn\bincore\csc.dll)." }
+# Nur SDK-Ordner, deren Name eine reine Versionsnummer ist (10.0.401). Ein Vorab-SDK heisst
+# 10.0.200-preview.1.25120.5; der [version]-Cast wirft daran, und unter 'Stop' brach der ganze
+# Bau ab, obwohl ein stabiles SDK daneben lag (13.09.2026). Vorab-Fassungen bleiben aussen vor.
+$sdkDir = Get-ChildItem $sdkRoot -Directory -ErrorAction SilentlyContinue |
+          Where-Object { $_.Name -match '^[0-9.]+$' -and (Test-Path (Join-Path $_.FullName 'Roslyn\bincore\csc.dll')) } |
+          Sort-Object { [version]$_.Name } | Select-Object -Last 1
+if (-not $sdkDir) { throw "Kein Roslyn-Compiler in einem freigegebenen SDK gefunden (gesucht unter $sdkRoot\<version>\Roslyn\bincore\csc.dll; Ordner mit Bindestrich im Namen sind Vorab-Fassungen und zaehlen nicht)." }
+$csc = Get-Item (Join-Path $sdkDir.FullName 'Roslyn\bincore\csc.dll')
 
 # Referenzassemblies fuer .NET Framework 4.8. Bevorzugt das SDK-Paket (auf Bau-Servern
 # vorhanden), sonst die lokal installierten Targeting Packs.
@@ -65,6 +78,28 @@ if (-not (Test-Path (Join-Path $root 'assets\app.ico'))) {
     & (Join-Path $root 'tools\generate-icon.ps1')
 }
 
+# ---------- Pruefliste der Oberflaechendateien ----------
+# Eine Zeile je Datei unter ui\ (rekursiv, ohne shot_*.png):  <sha256 klein hex>  <pfad>
+# Pfad relativ zu ui\ mit "/" als Trenner, ordinal sortiert, UTF-8 ohne BOM, LF-Enden.
+# Die Datei wird als Ressource "ui-hashes.txt" eingebettet; host\Selbstpruefung.cs liest
+# sie mit demselben Format. Wer das Format aendert, aendert beide Seiten.
+# Windows PowerShell 5.1 (CI) schreibt mit Set-Content -Encoding UTF8 eine BOM - deshalb
+# WriteAllText mit eigenem Encoding.
+$uiRoot = Join-Path $root 'ui'
+$uiHashDatei = Join-Path $env:TEMP 'ui-hashes.txt'
+$uiPfade = New-Object System.Collections.Generic.List[string]
+$uiHashes = @{}
+foreach ($f in @(Get-ChildItem $uiRoot -File -Recurse | Where-Object { $_.Name -notlike 'shot_*.png' })) {
+    $rel = $f.FullName.Substring($uiRoot.Length).TrimStart('\') -replace '\\', '/'
+    $uiPfade.Add($rel)
+    $uiHashes[$rel] = (Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+if ($uiPfade.Count -eq 0) { throw "Keine Oberflaechendatei unter $uiRoot gefunden - die Pruefliste waere leer." }
+$uiPfade.Sort([StringComparer]::Ordinal)
+$uiZeilen = foreach ($p in $uiPfade) { $uiHashes[$p] + '  ' + $p }
+[IO.File]::WriteAllText($uiHashDatei, (($uiZeilen -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding $false))
+"Pruefliste: $($uiPfade.Count) Oberflaechendateien -> $uiHashDatei"
+
 # ---------- Uebersetzen ----------
 
 Push-Location $root
@@ -90,14 +125,11 @@ try {
     # kern\ und sammler\ kommen als Ordner - eine neue Regel- oder Quellendatei ist automatisch
     # dabei. AufzeichnenCli.cs hat einen eigenen Main und gehoert nur zur Kommandozeile
     # (tools\bau-kern.ps1). src\Diagnostics.cs ist seit v8 durch kern\Regeln ersetzt.
-    $sources = @(
-        'host\Program.cs','host\ShellForm.cs','host\CheckFlow.cs','host\ScanFlow.cs','host\Autostart.cs',
-        'src\ActionCatalog.cs','src\MaintenanceAction.cs','src\CommandRunner.cs',
-        'src\NativeMethods.cs','src\History.cs','src\RestorePoints.cs','src\PowerPlans.cs',
-        'src\AppxCleaner.cs','src\Explain.cs','src\Scheduler.cs','src\AutoRunner.cs',
-        'src\AppLog.cs','src\Shell.cs','src\UpdateTrust.cs','src\StorageScan.cs','src\RegistryScan.cs',
-        'src\Nutzerkontext.cs','src\AssemblyInfo.cs'
-    )
+    # host\, src\ und helfer\ kommen ebenfalls als Ordner (seit 8.1): eine neue Datei ist automatisch dabei.
+    $sources = @()
+    $sources += Get-ChildItem 'host\*.cs' | ForEach-Object { 'host\' + $_.Name }
+    $sources += Get-ChildItem 'src\*.cs' | ForEach-Object { 'src\' + $_.Name }
+    $sources += Get-ChildItem 'helfer\*.cs' -ErrorAction SilentlyContinue | ForEach-Object { 'helfer\' + $_.Name }
     $sources += Get-ChildItem 'kern\*.cs' | ForEach-Object { 'kern\' + $_.Name }
     $sources += Get-ChildItem 'kern\Regeln\*.cs' | ForEach-Object { 'kern\Regeln\' + $_.Name }
     $sources += Get-ChildItem 'sammler\*.cs' | Where-Object { $_.Name -ne 'AufzeichnenCli.cs' } | ForEach-Object { 'sammler\' + $_.Name }
@@ -111,7 +143,11 @@ try {
         '/warnaserror-','/nowarn:1701,1702'
     )
     if (Test-Path 'assets\app.ico') { $argList += '/win32icon:assets\app.ico' }
-    if ($Release) { $argList += '/win32manifest:src\app.manifest' }
+    # Manifest immer (asInvoker), nicht nur im Release: ein Dev-Bau ohne Manifest bekaeme
+    # von Windows die Installer-Erkennung und wuerde anders starten als das Release.
+    # Die Testprobe verlangt diese Zeile ohne Release-Bedingung davor.
+    $argList += '/win32manifest:src\app.manifest'
+    $argList += "/resource:$uiHashDatei,ui-hashes.txt"
     $argList += $frameworkRefs
     $argList += $localRefs
     $argList += $sources
@@ -127,6 +163,9 @@ if ($code -ne 0) { "`nBUILD FEHLGESCHLAGEN (ExitCode $code)"; exit $code }
 Copy-Item (Join-Path $root 'libs\*.dll') $bin -Force
 $uiDst = Join-Path $bin 'ui'
 New-Item -ItemType Directory -Force -Path $uiDst | Out-Null
+# Erst leeren, dann kopieren: eine unter ui\ geloeschte Datei bliebe sonst in bin\ui liegen,
+# und die Startpruefung meldete sie bei jedem Dev-Start als "zusaetzlich".
+Remove-Item (Join-Path $uiDst '*') -Recurse -Force -ErrorAction SilentlyContinue
 Copy-Item (Join-Path $root 'ui\*') $uiDst -Recurse -Force -Exclude 'shot_*.png'
 
 if ($Sign) {
@@ -140,6 +179,6 @@ if ($Sign) {
     }
 }
 
-$sdkVer = ($csc.FullName -replace '.*\\sdk\\([0-9.]+)\\.*','$1')
-"`nBUILD OK  ->  bin\WindowsWartung.exe" + $(if ($Release) { '  (Release/Admin)' } else { '  (Dev)' })
+$sdkVer = $sdkDir.Name
+"`nBUILD OK  ->  bin\WindowsWartung.exe" + $(if ($Release) { '  (Release)' } else { '  (Dev)' })
 "           Compiler: Roslyn aus SDK $sdkVer, C# latest, Ziel .NET Framework 4.8"

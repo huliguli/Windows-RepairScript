@@ -270,7 +270,9 @@ namespace WartungsToolbox
                 Info = "Erstellt einen Bericht über den Akku Ihres Laptops und öffnet ihn. Darin steht unter anderem, wie viel Kapazität der Akku im Vergleich zum Neuzustand noch hat. Bei einem Desktop-PC ohne Akku bleibt der Bericht leer.",
                 Steps = {
                     Cmd("powercfg /batteryreport /output \"%USERPROFILE%\\Desktop\\Akkubericht.html\""),
-                    Cmd("if exist \"%USERPROFILE%\\Desktop\\Akkubericht.html\" start \"\" \"%USERPROFILE%\\Desktop\\Akkubericht.html\""),
+                    // explorer.exe statt "start": uebergibt an die laufende, nicht erhoehte Shell und endet
+                    // sofort (seit 8.1 haengt jeder Schritt an einem Job-Objekt, das "start" mitreissen wuerde).
+                    Cmd("if exist \"%USERPROFILE%\\Desktop\\Akkubericht.html\" explorer.exe \"%USERPROFILE%\\Desktop\\Akkubericht.html\""),
                 }
             });
             l.Add(new MaintenanceAction {

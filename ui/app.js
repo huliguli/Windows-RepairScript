@@ -44,16 +44,29 @@ const S = {
   storage: null,        // letztes Ergebnis "wo steckt der Platz?"
   registry: null,       // letztes Ergebnis der Registrierungs-Pruefung
   cat: null,            // gewaehlte Werkzeug-Kategorie
-  mode: null,           // 'check' | 'fix'
+  mode: null,           // 'check' | 'deep' | 'fix' | 'ergaenzen' | 'action'
   steps: [],
   stepIndex: 0,
   stepTotal: 0,
   result: null,
+  herkunft: 'tools',    // wohin „Zurück“ nach einem Werkzeug-Lauf führt (Werkzeugkasten oder die Ansicht, aus der der Host den Lauf gestartet hat)
+  erhoeht: false,       // die letzte Messung lief mit Rechten (Helfer oder erhöhter Host)
+  updateVersion: '',    // Fassung aus der letzten update-Nachricht (für die Leiste nach einem abgelehnten Dialog)
   queue: [],            // vorgemerkte Aktionen (Werkzeugkasten)
+  queueLaeuft: false,   // die Liste ist gesendet, aber vom Host noch nicht angenommen
   post: 'none',         // was nach dem letzten Lauf passieren soll
   delay: 60,            // Sekunden zum Abbrechen, bevor es passiert
   selfStart: false,     // startet die App mit dem PC?
-  admin: true,
+  selfStartVeraltet: false, // Selbststart-Aufgabe stammt noch aus 8.0 (startet erhoeht)
+  /* Rechte seit 8.1 (Modell B): der Host selbst laeuft ohne Administratorrechte.
+     admin  = der Host wurde trotzdem erhoeht gestartet (erhoehte Shell, eingebauter Administrator)
+     helfer = der erhoehte Helfer ist in dieser Sitzung schon verbunden (UAC-Dialog war schon)
+     abnahme = Abnahmeweg der Tests (--pipe): der Helfer laeuft von aussen, kein Dialog
+     Keiner der drei Werte sperrt einen Klick: was Rechte braucht, holt sie sich beim Start. */
+  admin: false,
+  helfer: false,
+  abnahme: false,
+  adminFehlend: 0,      // Messwerte des letzten Laufs, die erst mit Rechten lesbar sind
   shot: false,          // Belegaufnahme (--shot): Haken fuer Screenshots erlaubt
   glanceFehler: '',     // der Erstbefund ist gescheitert (Text vom Host)
   fremdesKonto: false,  // laeuft unter einem anderen Konto als dem angemeldeten
@@ -109,7 +122,10 @@ function show(name){
   Object.keys(SCREENS).forEach(k => $(SCREENS[k]).classList.toggle('on', k === name));
   const box = $(SCREENS[name]);
   const h = box.querySelector('h1');
-  if(h){ h.setAttribute('tabindex','-1'); h.focus({preventScroll:true}); }
+  // Kein Fokus auf die Überschrift, solange ein Dialog offen ist: der Fokus läge sonst
+  // hinter dem Overlay, Tab wanderte auf „PC jetzt prüfen“, Enter startete erneut, und
+  // die Fokusfalle des Dialogs griff nicht (sie kennt nur Elemente IM Dialog).
+  if(h){ h.setAttribute('tabindex','-1'); if(!openDialog) h.focus({preventScroll:true}); }
   // Nach dem Fokuswechsel wieder ganz nach oben. Das Setzen im selben Durchlauf
   // reicht nicht: der Browser rollt danach noch zum fokussierten Knoten.
   box.scrollTop = 0;
@@ -172,11 +188,44 @@ function renderStart(){
     S.checks.forEach(c => box.appendChild(areaRow(c)));
   }
 
-  $('#admin-line').innerHTML = S.admin
-    ? svg('shield') + '<span>Läuft mit Administratorrechten. Vor Änderungen legen wir einen Sicherungspunkt an.</span>'
-    : svg('alert') + '<span>Ohne Administratorrechte. Prüfen geht, Reparieren nicht. Bitte starten Sie das Programm über die rechte Maustaste als Administrator.</span>';
+  // Seit 8.1 ist „ohne Administratorrechte“ der Normalfall und kein Mangel: Windows fragt
+  // erst beim ersten Eingriff (UAC-Dialog aus dem Helfer-Start), nie beim Prüfen.
+  $('#admin-line').innerHTML = svg('shield') + '<span>' + rechteSatz() + '</span>';
+
+  if(S.adminFehlend > 0 && S.checks.length && rechteHinweisNoetig(S.erhoeht)){
+    const h = el('p','hint areas-wide', esc(adminFehlendTitel(S.adminFehlend)) +
+      '. Die Prüfung bietet am Ende an, sie zu ergänzen.');
+    box.appendChild(h);
+  }
 
   kontoHinweis(box);
+}
+
+/* Die Startzeile zu den Rechten. Reihenfolge: erhöhter Host schlägt alles (dann läuft der
+   Helfer im selben Prozess), danach der schon verbundene Helfer, dann der Abnahmeweg.
+   Der Helfer-Satz nennt die Bedingung: der Helfer beendet sich nach 10 Minuten ohne Auftrag,
+   und die Oberfläche erfährt das nicht in dem Moment, sondern erst mit der nächsten
+   admin-Nachricht des Hosts (die kommt nach jedem Lauf, sobald sich der Stand ändert). */
+function rechteSatz(){
+  if(S.admin)   return 'Läuft mit Administratorrechten. Vor Änderungen legen wir einen Sicherungspunkt an.';
+  if(S.helfer)  return 'Administratorrechte wurden in dieser Sitzung erteilt. Nach 10 Minuten ohne Auftrag fragt Windows erneut.';
+  if(S.abnahme) return 'Der Helfer ist über die Abnahme-Pipe verbunden. Windows fragt in dieser Sitzung nicht nach Rechten.';
+  return 'Prüfen läuft ohne Administratorrechte. Windows fragt erst, wenn Sie etwas ändern lassen.';
+}
+
+/* „N Werte brauchen einmal Administratorrechte“, mit richtiger Einzahl. */
+function adminFehlendTitel(n){
+  return n === 1 ? 'Ein Wert braucht einmal Administratorrechte'
+                 : n + ' Werte brauchen einmal Administratorrechte';
+}
+
+/* Ist das Angebot „mit Administratorrechten ergänzen“ überhaupt sinnvoll? Nicht bei
+   erhöhtem Host und nicht nach einer Messung, die schon mit Rechten lief: dann holt kein
+   Dialog mehr Werte herein, die Fehlerliste trägt die zugriff-Einträge trotzdem (Richtlinie,
+   die Ausschlüsse auch vor Administratoren verbirgt), und die Karte führte im Kreis (B20).
+   erhoeht = das Feld der Nachricht (flowResult) oder der gemerkte Stand der letzten Messung. */
+function rechteHinweisNoetig(erhoeht){
+  return !S.admin && erhoeht !== true;
 }
 
 /* Läuft das Programm unter einem anderen Konto als der angemeldete Mensch?
@@ -187,14 +236,28 @@ function kontoHinweis(box){
   if(!S.fremdesKonto || !box) return;
   const k = el('div','catnote');
   k.style.marginTop = '11px';
+  // Der Grund unterscheidet sich: Wurde das Programm erhöht gestartet, hat Windows im
+  // UAC-Dialog nach einem anderen Konto gefragt. Ohne Erhöhung wurde es unter diesem
+  // Konto gestartet (etwa über „Als anderer Benutzer ausführen“).
+  const grund = S.admin
+    ? 'Weil das Programm mit Administratorrechten gestartet wurde, läuft es unter dem Konto, ' +
+      'dessen Kennwort im Dialog eingegeben wurde. '
+    : 'Das Programm wurde unter diesem Konto gestartet. ';
   k.innerHTML = svg('alert') +
     '<div><b>Sie arbeiten gerade unter dem Konto „' + esc(S.laeuftAls) + '“.</b><br>' +
-    'Angemeldet ist aber „' + esc(S.angemeldet) + '“. Weil das Programm Administratorrechte ' +
-    'braucht, läuft es unter dem Konto, dessen Kennwort eingegeben wurde. Alles, was zu ' +
+    'Angemeldet ist aber „' + esc(S.angemeldet) + '“. ' + grund + 'Alles, was zu ' +
     '„Ihren“ Dateien und Programmen gehört, zeigen wir deshalb für „' + esc(S.laeuftAls) + '“: ' +
     'Startprogramme, Verlauf, der belegte Speicherplatz und die Einträge der Registrierung.<br>' +
     'Am PC selbst wird trotzdem alles richtig repariert.</div>';
   box.appendChild(k);
+}
+
+/* Das Wort auf der Plakette. Ein Bereich ohne Daten, weil eine Quelle erst mit Rechten
+   lesbar ist, heißt „nicht prüfbar“ und nicht „keine Daten“: das ist kein Fehler des PCs,
+   sondern eine Grenze dieser Sitzung, die sich mit einem Klick aufheben lässt. */
+function stateWord(c){
+  if(c.state === 'unknown' && Array.isArray(c.fehlend) && c.fehlend.length) return 'nicht prüfbar';
+  return STATE_WORD[c.state];
 }
 
 function areaRow(c){
@@ -204,8 +267,8 @@ function areaRow(c){
     '<span class="dot ' + c.state + '" aria-hidden="true"></span>' +
     '<span class="area-b"><span class="area-t">' + esc(c.title) + '</span>' +
     '<span class="area-s">' + esc(c.summary) + '</span></span>' +
-    '<span class="pill ' + c.state + '">' + STATE_WORD[c.state] + '</span>';
-  b.setAttribute('aria-label', c.title + ': ' + STATE_WORD[c.state] + '. ' + c.summary);
+    '<span class="pill ' + c.state + '">' + stateWord(c) + '</span>';
+  b.setAttribute('aria-label', c.title + ': ' + stateWord(c) + '. ' + c.summary);
   b.onclick = () => detailModal(c);
   return b;
 }
@@ -221,51 +284,75 @@ function overallOf(list){
   return bad ? 'bad' : (warn ? 'warn' : 'ok');
 }
 
-$('#btn-check').onclick = () => {
-  if(!S.admin){
-    infoModal('Administratorrechte fehlen',
-      'Zum Prüfen und Reparieren braucht das Programm Administratorrechte.\n\n' +
-      'Schließen Sie es bitte, klicken Sie das Symbol mit der rechten Maustaste an und ' +
-      'wählen Sie „Als Administrator ausführen“.', 'warn');
-    return;
-  }
-  startFlow('check');
-};
+/* Kein Rechte-Riegel mehr vor dem Knopf: Prüfen läuft ohne Rechte, und alles, was Rechte
+   braucht, holt sie sich beim Start (der Host meldet „Windows fragt gleich …“ als flowDetail). */
+$('#btn-check').onclick = () => startFlow('check');
 
 /* =====================================================================
    Ablauf
    ===================================================================== */
-function startFlow(mode){
+/* Was der Ablauf-Bildschirm je Lauf sagt. Vier Läufe: 'check' liest den PC in Sekunden
+   (Sammler + Regeln), 'deep' lässt DISM und SFC lesend über die Windows-Dateien laufen
+   (Minuten), 'fix' repariert nur, was die Tiefenprüfung gefunden hat, 'ergaenzen' holt die
+   Messwerte nach, die erst mit Administratorrechten lesbar sind (ein UAC-Dialog, dann
+   etwa 10 Sekunden). 'deep' und 'fix' laufen seit 8.1 ebenfalls über den erhöhten Helfer;
+   der Dialog kommt nur, wenn er in dieser Sitzung noch nicht verbunden ist. */
+/* Ein Satz für alle Wege, die den Helfer brauchen. Bedingt formuliert, weil die Oberfläche
+   nicht sicher weiß, ob der Helfer noch lebt (er beendet sich nach 10 Minuten Leerlauf). */
+const UAC_SATZ = 'Windows fragt vorher nach Administratorrechten, falls sie in dieser Sitzung noch nicht erteilt wurden.';
+
+const FLOW_TEXT = {
+  check: {
+    icon:'shield', befehl:'startCheck',
+    title:'Ihr PC wird gelesen',
+    lead:'Das dauert wenige Sekunden. Es wird nur gelesen, nichts verändert.',
+    foot:'Sie können jederzeit abbrechen. Die Prüfung verändert nichts an Ihrem PC.' },
+  deep: {
+    icon:'shield', befehl:'startDeepCheck',
+    title:'Die Windows-Dateien werden tief geprüft',
+    lead:'Das dauert 5 bis 10 Minuten. Sie können das Fenster zur Seite legen und weiterarbeiten. ' +
+         'Es wird nur gelesen, nichts verändert. ' + UAC_SATZ,
+    foot:'Sie können jederzeit abbrechen. Die Prüfung verändert nichts an Ihrem PC.' },
+  fix: {
+    icon:'wrench', befehl:'startFix',
+    title:'Ihr PC wird repariert',
+    lead:'Wir beheben jetzt, was die Tiefenprüfung gefunden hat. ' + UAC_SATZ + ' Als Erstes legen wir ' +
+         'einen Sicherungspunkt an. Bitte lassen Sie den PC dabei eingeschaltet.',
+    foot:'Sie können abbrechen. Was bereits repariert wurde, bleibt erhalten.' },
+  ergaenzen: {
+    icon:'shield', befehl:'ergaenzen',
+    title:'Die Messwerte werden ergänzt',
+    lead:UAC_SATZ + ' Danach werden die fehlenden Werte gelesen; das dauert etwa 10 Sekunden.',
+    foot:'Es wird nur gelesen, nichts verändert. Lehnen Sie den Dialog ab, bleibt das bisherige Ergebnis stehen.' },
+};
+
+/* Ablauf-Bildschirm für einen Lauf herrichten, ohne ihn zu starten. Getrennt von
+   startFlow, damit auch ein Lauf, den der Host von sich aus meldet (flowStart ohne
+   vorherigen Klick), einen passenden Bildschirm bekommt statt des zuletzt gezeigten. */
+function zeigeAblauf(mode){
+  const t = FLOW_TEXT[mode] || FLOW_TEXT.check;
   S.mode = mode;
   S.steps = [];
   S.stepIndex = 0;
   $('#console-body').innerHTML = '';
   $('#run-steps').innerHTML = '';
   $('#run-pct').textContent = '';
+  $('#run-status').textContent = 'Wird vorbereitet …';
   setBar(-1);
 
-  /* Drei Läufe: 'check' liest den PC in Sekunden (Sammler + Regeln), 'deep' lässt DISM
-     und SFC lesend über die Windows-Dateien laufen (Minuten), 'fix' repariert nur, was
-     die Tiefenprüfung gefunden hat. */
   $('#run-ico').className = 'vico';
-  $('#run-ico').innerHTML = svg(mode === 'fix' ? 'wrench' : 'shield');
-  $('#run-title').textContent = mode === 'fix' ? 'Ihr PC wird repariert'
-                              : (mode === 'deep' ? 'Die Windows-Dateien werden tief geprüft' : 'Ihr PC wird gelesen');
-  $('#run-lead').textContent = mode === 'fix'
-    ? 'Wir beheben jetzt, was die Tiefenprüfung gefunden hat. Bitte lassen Sie den PC dabei eingeschaltet. ' +
-      'Vorher legen wir einen Sicherungspunkt an.'
-    : (mode === 'deep'
-      ? 'Das dauert 5 bis 10 Minuten. Sie können das Fenster zur Seite legen und weiterarbeiten. ' +
-        'Es wird nur gelesen, nichts verändert.'
-      : 'Das dauert wenige Sekunden. Es wird nur gelesen, nichts verändert.');
-  $('#run-foot').innerHTML = svg('info') +
-    '<span>' + (mode === 'fix'
-      ? 'Sie können abbrechen. Was bereits repariert wurde, bleibt erhalten.'
-      : 'Sie können jederzeit abbrechen. Die Prüfung verändert nichts an Ihrem PC.') + '</span>';
+  $('#run-ico').innerHTML = svg(t.icon);
+  $('#run-title').textContent = t.title;
+  $('#run-lead').textContent = t.lead;
+  $('#run-foot').innerHTML = svg('info') + '<span>' + t.foot + '</span>';
 
   renderPostChoice();
   show('run');
-  send({ type: mode === 'fix' ? 'startFix' : (mode === 'deep' ? 'startDeepCheck' : 'startCheck') });
+}
+
+function startFlow(mode){
+  zeigeAblauf(mode);
+  send({ type: (FLOW_TEXT[mode] || FLOW_TEXT.check).befehl });
   // Der Hauptweg schickt seine Wahl getrennt: startCheck/startFix tragen sie nicht mit,
   // und der Nutzer darf sie waehrend des Laufs noch aendern.
   send({ type:'setPost', post:S.post, delay:S.delay });
@@ -359,6 +446,15 @@ function renderResult(r){
 
   const box = $('#res-list');
   box.innerHTML = '';
+  // Ganz oben, wenn Messwerte fehlen, weil eine Quelle erst mit Administratorrechten
+  // lesbar ist. Das ist der einzige Ort, an dem der UAC-Dialog angeboten wird, bevor
+  // etwas verändert wird: einmal klicken, einmal bestätigen, etwa 10 Sekunden.
+  const fehlend = Number(r.adminFehlend) || 0;
+  S.adminFehlend = fehlend;
+  S.erhoeht = r.erhoeht === true;
+  // Nicht bei erhöhtem Host und nicht nach einer erhöhten Messung: dort brächte der Klick
+  // nichts als dieselbe Karte erneut (B20); der Host zählt dann ohnehin 0.
+  if(fehlend > 0 && rechteHinweisNoetig(r.erhoeht)) box.appendChild(rechteCard(fehlend, r.checks || []));
   fragen.forEach(b => box.appendChild(frageCard(b)));
   if(fileIssue) box.appendChild(resultCard(fileIssue));
   issues.forEach(b => box.appendChild(resultCard(b)));
@@ -391,8 +487,9 @@ function renderResult(r){
     const b = el('button','btn btn-primary btn-md','Windows-Dateien reparieren');
     b.onclick = () => startFlow('fix');
     next.appendChild(b);
-  } else if(!r.filesGeprueft && (r.mode === 'check' || r.mode === 'answer') && S.admin){
-    // Die Tiefenprüfung ist ein eigener, bewusster Schritt: sie dauert Minuten.
+  } else if(!r.filesGeprueft && (r.mode === 'check' || r.mode === 'answer' || r.mode === 'ergaenzt')){
+    // Die Tiefenprüfung ist ein eigener, bewusster Schritt: sie dauert Minuten. Sie hängt
+    // seit 8.1 nicht mehr an den Rechten des Hosts: der Helfer holt sie sich beim Start.
     next.appendChild(el('span','next-b',
       '<div class="next-t">' + (r.problems ? 'Was Sie jetzt tun sollten' : 'Wenn Sie es genau wissen wollen') + '</div>' +
       '<div class="next-s">' + (r.problems ? 'Die Hinweise oben sagen bei jedem Punkt, was zu tun ist. '
@@ -449,6 +546,47 @@ function groupCard(state, list, title){
       (c.detail ? '<br><span style="color:var(--text-3);white-space:pre-line">' + esc(c.detail) + '</span>' : '') +
       '</p>').join('') + '</div>';
   card.querySelector('.rbody').appendChild(d);
+  return card;
+}
+
+/* „N Werte brauchen einmal Administratorrechte“: die Karte über dem Ergebnis, wenn der
+   Sammler ohne Rechte lief und Quellen nicht lesen konnte. Kein Alarm, keine Farbe: es ist
+   ein Angebot. Die Schaltfläche startet den Helfer (UAC-Dialog), der dann vollständig
+   erhöht misst; das Ergebnis kommt als flowResult mit mode 'ergaenzt'.
+
+   Der Text verspricht keine Markierung mehr: „nicht prüfbar“ steht nur auf der Plakette
+   eines Bereichs, der GAR keine Daten hat. Fehlt nur eine von mehreren Quellen (der
+   Verschleißzähler eines Datenträgers, der Größe und Belegung liefert), heißt der Bereich
+   weiter „in Ordnung“. Welche Quelle fehlt, steht deshalb hier in der Karte selbst, je
+   Bereich unter „Fachlich“ (B31). */
+function rechteCard(n, checks){
+  const card = el('div','rcard rechte');
+  card.innerHTML =
+    '<span class="rico">' + svg('shield') + '</span>' +
+    '<span class="rbody">' +
+      '<span class="rt">' + esc(adminFehlendTitel(n)) + '</span>' +
+      '<div class="rs">Ohne sie ' + (n === 1
+        ? 'bleibt dieser Wert ungeprüft; welche Quelle fehlt, steht beim betroffenen Bereich unter „Fachlich“. '
+        : 'bleiben diese Werte ungeprüft; welche Quelle fehlt, steht bei jedem Bereich unter „Fachlich“. ') +
+      UAC_SATZ + ' Das Ergänzen dauert danach etwa 10 Sekunden.</div>' +
+    '</span>';
+  const row = el('div','rbtns');
+  const b = el('button','btn btn-primary btn-md','Mit Administratorrechten ergänzen');
+  b.onclick = () => startFlow('ergaenzen');
+  row.appendChild(b);
+  card.querySelector('.rbody').appendChild(row);
+  // Je Bereich die Quellen, die ohne Rechte nichts geliefert haben (Feld fehlend der
+  // Bereichszeile). Steht nichts drin, entfällt das Aufklappbare, der Satz oben bleibt.
+  const fach = (checks || [])
+    .filter(c => Array.isArray(c.fehlend) && c.fehlend.length)
+    .map(c => c.title + ': ' + c.fehlend.join(', '));
+  if(fach.length){
+    const d = el('details','disc');
+    d.style.marginTop = '0';
+    d.innerHTML = '<summary>' + svg('chevron') + ' <b>Fachlich</b></summary>' +
+                  '<div class="disc-body"><p class="fach" style="white-space:pre-line">' + esc(fach.join('\n')) + '</p></div>';
+    card.querySelector('.rbody').appendChild(d);
+  }
   return card;
 }
 
@@ -528,6 +666,23 @@ function frageCard(b){
   return card;
 }
 
+/* Die Antwort-Knöpfe wieder freigeben. Sie sperren sich beim Klick und verlassen sich auf
+   ein flowResult; lehnt der Host die Antwort ab (flowBusy, weil gerade die geplante Wartung
+   läuft) oder scheitert das Speichern (flowError), kommt keins. Ohne diese Freigabe blieben
+   beide Knöpfe tot, bis der Nutzer eine ganze neue Prüfung startet (B21). */
+function frageKnoepfeFrei(){
+  $$('#res-list .frage-btns button').forEach(b => { b.disabled = false; });
+}
+
+/* Wohin nach einem Lauf, der ohne Ergebnis endete (Fehler, Abbruch)? Wurde er vom Ergebnis
+   aus gestartet (Ergänzen, Tiefenprüfung, Reparatur), bleibt dieses Ergebnis gültig: dort
+   stehen die Schaltflächen für den nächsten Versuch, und „erneut versuchen“ heißt dann ein
+   Klick statt einer ganzen neuen Prüfung (B24). Ohne solches Ergebnis geht es zum Anfang. */
+function zumErgebnisOderStart(){
+  if(S.result && (S.mode === 'ergaenzen' || S.mode === 'deep' || S.mode === 'fix')) show('result');
+  else go('start');
+}
+
 $('#btn-save').onclick = () => send({type:'save'});
 
 /* =====================================================================
@@ -604,6 +759,15 @@ function addToQueue(id){
   renderQueueBar();
 }
 function removeFromQueue(i){ S.queue.splice(i,1); renderQueueBar(); }
+
+/* Der Host hat die gesendete Liste angenommen (erster Schritt, Laufzustand oder Ende):
+   jetzt ist sie abgearbeitet oder unterwegs und verschwindet aus der Leiste. */
+function queueLoslassen(){
+  if(!S.queueLaeuft) return;
+  S.queueLaeuft = false;
+  S.queue = [];
+  renderQueueBar();
+}
 
 function renderQueueBar(){
   const bar = $('#queue-bar');
@@ -750,13 +914,13 @@ function postGeaendert(){
 }
 
 function startQueue(){
-  if(!S.admin){ needAdmin(); return; }
   const ids = S.queue.slice();
   const gefaehrlich = ids.filter(id => (S.catalog.actions.find(a => a.id === id) || {}).danger).length;
   const namen = ids.map(id => (S.catalog.actions.find(a => a.id === id) || {}).title).join('\n');
   const los = () => {
     $('#console-body').innerHTML = '';
     S.mode = 'action';
+    S.herkunft = 'tools';
     S.steps = ids.map(id => (S.catalog.actions.find(a => a.id === id) || {}).title);
     S.stepIndex = 1;
     S.stepTotal = ids.length;
@@ -764,31 +928,29 @@ function startQueue(){
     $('#run-ico').innerHTML = svg('list');
     $('#run-title').textContent = 'Ihre Liste wird abgearbeitet';
     $('#run-lead').textContent = 'Die vorgemerkten Aktionen laufen jetzt nacheinander. ' +
-      'Vor der ersten Reparatur legen wir einen Sicherungspunkt an.';
+      'Vor der ersten Reparatur legen wir einen Sicherungspunkt an. ' + UAC_SATZ;
     $('#run-foot').innerHTML = svg('info') + '<span>Sie können jederzeit abbrechen.</span>';
     renderSteps();
     setBar(-1);
     show('run');
     send({ type:'runQueue', ids:ids, restore:true, post:S.post, delay:S.delay });
-    S.queue = [];
-    renderQueueBar();
+    // Die Liste fällt erst, wenn der Host den Lauf wirklich begonnen hat (queueLoslassen
+    // bei flowStep/state/done). Lehnt er ab (flowBusy), kehrt der Nutzer mit der Liste
+    // in den Werkzeugkasten zurück statt vor eine leere Leiste.
+    S.queueLaeuft = true;
   };
   confirmModal('Liste starten?',
     namen + (S.post !== 'none'
       ? '\n\nDanach wird der PC ' + (S.post === 'restart' ? 'neu gestartet' : 'heruntergefahren') + '.'
-      : ''),
+      : '') + '\n\n' + UAC_SATZ,
     'Los geht es', los, gefaehrlich > 0);
 }
 
-function needAdmin(){
-  infoModal('Administratorrechte fehlen',
-    'Dafür braucht das Programm Administratorrechte. Bitte schließen Sie es, klicken Sie das ' +
-    'Symbol mit der rechten Maustaste an und wählen Sie „Als Administrator ausführen“.', 'warn');
-}
-
+/* Seit 8.1 gibt es hier keinen Riegel „Administratorrechte fehlen“ mehr: der Host startet
+   für jedes Werkzeug den erhöhten Helfer und meldet vorher als Protokollzeile, dass Windows
+   gleich fragt. Lehnt der Nutzer den Dialog ab, kommt 'done' mit kind 'bad' und dem Satz
+   „Ohne Administratorrechte kann dieser Schritt nicht laufen …“; die Liste bleibt liegen. */
 function runAction(a){
-  if(!S.admin){ needAdmin(); return; }
-
   // Sonderaktionen: erst die Eingabe, dann ein eigener Befehl.
   if(a.special === 'netdiag'){
     promptModal(a.title,
@@ -807,7 +969,8 @@ function runAction(a){
   }
   if(a.special === 'driverbackup'){
     confirmModal(a.title,
-      a.info + '\n\nIm nächsten Schritt öffnet sich ein Fenster, in dem Sie den Zielordner aussuchen.',
+      a.info + '\n\nIm nächsten Schritt öffnet sich ein Fenster, in dem Sie den Zielordner aussuchen. ' +
+      'Danach fragt Windows nach Administratorrechten, falls sie in dieser Sitzung noch nicht erteilt wurden.',
       'Ordner aussuchen', () => { prepareSingleRun(a); send({ type:'driverBackup' }); });
     return;
   }
@@ -822,28 +985,60 @@ function runAction(a){
       (a.info || a.desc) +
       (a.restore ? '\n\nVorher legen wir einen Sicherungspunkt an, damit sich das rückgängig machen lässt.' : '') +
       (S.post !== 'none' ? '\n\nDanach wird der PC ' +
-        (S.post === 'restart' ? 'neu gestartet' : 'heruntergefahren') + '.' : ''),
+        (S.post === 'restart' ? 'neu gestartet' : 'heruntergefahren') + '.' : '') +
+      '\n\n' + UAC_SATZ,
       'Jetzt ausführen', start, a.danger);
   } else start();
 }
 
 /* Bereitet den Ablauf-Bildschirm für eine einzelne Aktion vor. */
 function prepareSingleRun(a){
+  S.herkunft = 'tools';
+  zeigeAktion(a.title, a.desc, a.icon || 'wrench', 1);
+}
+
+/* Ablauf-Bildschirm für einen Lauf, den der Host von sich aus startet (flowStart mit mode
+   'action' und titel: die geplante Wartung, die auf das Ende der laufenden Aktion gewartet
+   hat). Vorher lief so ein Lauf auf dem Bildschirm des eben fertigen Werkzeugs weiter: alter
+   Titel, Balken springt von 100 zurück, „Zurück“ statt „Abbrechen“, Fußzeile mit dem alten
+   Erfolg (B29). Aufgebaut wie ein Werkzeug, damit 'done' ihn genauso beendet. Gemerkt wird,
+   wo der Nutzer gerade stand: dorthin führt „Zurück“ danach. */
+function zeigeHostAktion(titel, lead, total){
+  S.herkunft = S.screen === 'run' ? (S.mode === 'action' ? (S.herkunft || 'tools') : 'start')
+             : S.screen === 'sub' ? (S.sub || 'tools')
+             : S.screen;
+  zeigeAktion(titel, lead ||
+    'Dieser Lauf wurde nicht von Ihnen, sondern vom Zeitplan gestartet; er läuft jetzt in diesem Fenster. ' +
+    'Sie können es zur Seite legen und weiterarbeiten. Bitte lassen Sie den PC dabei eingeschaltet.',
+    'calendar', total);
+}
+
+/* Gemeinsamer Unterbau: ein Schritt (oder total Schritte) unter einem Titel, Balken ohne
+   Prozent, „Abbrechen“ als Knopf (show('run') setzt ihn zurück). */
+function zeigeAktion(titel, lead, icon, total){
   renderPostChoice();
   $('#console-body').innerHTML = '';
   S.mode = 'action';
-  S.steps = [a.title];
+  S.steps = [titel];
   S.stepIndex = 1;
-  S.stepTotal = 1;
+  S.stepTotal = total || 1;
   $('#run-ico').className = 'vico';
-  $('#run-ico').innerHTML = svg(a.icon || 'wrench');
-  $('#run-title').textContent = a.title;
-  $('#run-lead').textContent = a.desc;
+  $('#run-ico').innerHTML = svg(icon);
+  $('#run-title').textContent = titel;
+  $('#run-lead').textContent = lead || '';
   $('#run-foot').innerHTML = svg('info') + '<span>Sie können jederzeit abbrechen.</span>';
   renderSteps();
   setBar(-1);
   $('#run-status').textContent = 'Läuft …';
   show('run');
+}
+
+/* „Zurück“ nach einem fertigen Lauf: Werkzeugkasten, Start, das Ergebnis (falls noch da)
+   oder die Nebenansicht, aus der der Host den Lauf gestartet hat (die lädt dabei neu). */
+function zurueckNach(ziel){
+  if(ziel === 'result'){ if(S.result){ show('result'); return; } ziel = 'start'; }
+  if(ziel === 'run' || !ziel) ziel = 'start';
+  go(ziel);
 }
 
 /* ---------- Eingabe-Dialog ---------- */
@@ -955,7 +1150,7 @@ function renderSettings(){
 
   const p4 = el('div','panel');
   p4.innerHTML = '<div class="panel-h"><div class="panel-t">Über dieses Programm</div>' +
-    '<div class="panel-d">Fassung ' + esc(S.version || '–') + '</div></div>';
+    '<div class="panel-d">Fassung ' + esc(S.version || 'unbekannt') + '</div></div>';
   const r4 = el('div','row');
   r4.innerHTML = '<span class="row-b"><span class="row-t">Fehlerprotokoll</span>' +
     '<span class="row-s">Falls einmal etwas nicht klappt, steht hier, was passiert ist.</span></span>';
@@ -1008,7 +1203,16 @@ function buildModal(opts){
     ov.remove();
     openDialog = null;
     document.removeEventListener('keydown', keys, true);
-    try{ prev && prev.focus(); }catch(_){}
+    // Zurück zum Element von vorher, sofern es noch im Dokument steht und bedienbar ist.
+    // Wurde der Bildschirm inzwischen gewechselt oder die Karte neu gezeichnet, bekommt
+    // die Überschrift des sichtbaren Bildschirms den Fokus (wie bei show()).
+    try{
+      if(prev && prev !== document.body && document.contains(prev) && !prev.disabled) prev.focus();
+      else {
+        const h = $(SCREENS[S.screen] + ' h1');
+        if(h){ h.setAttribute('tabindex','-1'); h.focus({preventScroll:true}); }
+      }
+    }catch(_){}
   }
   function keys(e){
     if(e.key === 'Escape'){ e.preventDefault(); close(); return; }
@@ -1097,6 +1301,15 @@ function toast(title, msg, kind){
   setTimeout(() => t.remove(), 6000);
 }
 
+/* Zwischenstand als Zeile „… läuft …“: die Auslassungspunkte kommen nur an einen Text ohne
+   Schlusszeichen. Der Host schickt beides: „Ereignisse werden gelesen“ (ohne) und
+   „Windows fragt gleich nach Administratorrechten.“ (mit Punkt); aus dem zweiten wurde
+   sonst „…rechten. …“. */
+function laufText(text){
+  const t = String(text == null ? '' : text).trim();
+  return /[.!?…]$/.test(t) ? t : t + ' …';
+}
+
 function appendLine(text, kind){
   const box = $('#console-body');
   const ln = el('div','ln ' + (kind || 'norm'));
@@ -1128,7 +1341,12 @@ function onHost(m){
       break;
 
     case 'admin':
+      // on = Host erhöht gestartet; helfer = erhöhter Helfer schon verbunden; abnahme =
+      // Abnahmeweg (--pipe). Der Host darf die Nachricht mehrfach schicken, etwa nach
+      // dem ersten UAC-Dialog: die Startzeile wird dann an Ort und Stelle erneuert.
       S.admin = !!m.on;
+      S.helfer = !!m.helfer;
+      S.abnahme = !!m.abnahme;
       S.fremdesKonto = !!m.fremdesKonto;
       S.laeuftAls = m.laeuftAls || '';
       S.angemeldet = m.angemeldet || '';
@@ -1143,10 +1361,27 @@ function onHost(m){
       S.checks = m.checks || [];
       S.fragen = m.fragen || 0;
       S.glanceFehler = m.fehler || '';
+      // adminFehlend ist hier freiwillig: fehlt das Feld, bleibt der letzte Stand stehen.
+      if(m.adminFehlend != null) S.adminFehlend = Number(m.adminFehlend) || 0;
       if(S.screen === 'start') renderStart();
       break;
 
     case 'flowStart':
+      // Ein Lauf, den der Host selbst anstößt (mode 'action' mit titel: die geplante
+      // Wartung nach dem Ende der laufenden Aktion), bekommt einen frischen Ablauf-
+      // Bildschirm wie ein Werkzeug; 'done' beendet ihn genauso (B29).
+      if(m.mode === 'action'){
+        zeigeHostAktion(m.titel || m.title || 'Geplante Wartung', m.lead, m.total);
+        break;
+      }
+      // Meldet der Host einen Lauf, den kein Klick hier vorbereitet hat (der Ablauf-
+      // Bildschirm ist nicht zu sehen, oder er zeigt noch das Ende des vorigen Laufs mit
+      // „Zurück“), bekommt er den Bildschirm zu seinem Modus: sonst stünde die Überschrift
+      // des vorigen Laufs über dem neuen Balken.
+      if(m.mode && FLOW_TEXT[m.mode]){
+        if(S.screen !== 'run' || $('#btn-cancel').textContent !== 'Abbrechen') zeigeAblauf(m.mode);
+        else S.mode = m.mode;
+      }
       S.stepTotal = m.total || 0;
       S.steps = [];
       S.stepIndex = 0;
@@ -1154,6 +1389,7 @@ function onHost(m){
       break;
 
     case 'flowStep':
+      queueLoslassen();
       S.stepIndex = m.index;
       if(S.steps.length < m.index) S.steps.push(m.label);
       else S.steps[m.index - 1] = m.label;
@@ -1163,7 +1399,7 @@ function onHost(m){
       break;
 
     case 'flowDetail':
-      if(S.screen === 'run') $('#run-status').textContent = m.text + ' …';
+      if(S.screen === 'run') $('#run-status').textContent = laufText(m.text);
       break;
 
     case 'flowPercent':
@@ -1174,8 +1410,16 @@ function onHost(m){
       S.befunde = m.befunde || [];
       S.checks = (m.checks || []).filter(c => c.key !== 'files');
       S.fragen = m.fragen || 0;
+      // Ein erhöhtes Bild bei nicht erhöhtem Host kann nur vom Helfer stammen: dann war
+      // der UAC-Dialog schon, und die Startzeile darf das sagen (mode 'ergaenzt', oder
+      // ein Lauf, bei dem der Helfer ohnehin verbunden war). Maßgeblich bleibt die
+      // admin-Nachricht des Hosts (auch nach jedem Lauf, sobald sich der Stand ändert);
+      // dies hier ist nur der frühere Zeitpunkt für denselben Satz.
+      if(m.erhoeht === true && !S.admin) S.helfer = true;
       // Eine Antwort auf eine Frage liefert ein neues Ergebnis, ohne dass ein Lauf lief.
-      // Der Ergebnis-Bildschirm wird dann an Ort und Stelle erneuert.
+      // Der Ergebnis-Bildschirm wird dann an Ort und Stelle erneuert. 'ergaenzt' (die
+      // nachgeholte erhöhte Messung) sieht aus wie 'check': dieselben Karten, dieselbe
+      // Empfehlung, nur ohne die Rechte-Karte, weil adminFehlend dann 0 ist.
       renderResult(m);
       // Nur fuer Belegaufnahmen (--view check,antwort-ja): die erste Frage mit „Ja, so
       // lassen“ beantworten, damit der Zustand „so gewollt“ ohne Klick belegt werden kann.
@@ -1183,41 +1427,87 @@ function onHost(m){
         const ja = $('#res-list .frage .frage-btns .btn-ghost');
         if(ja) ja.click();
       }
+      // Belegaufnahme des Ergänzens (--view check,ergaenzen): die Rechte-Karte anklicken,
+      // sobald sie da ist; über --pipe kommt dann kein Dialog, sonst der UAC-Dialog.
+      if(S.shot && m.mode === 'check' && HASH.indexOf('ergaenzen') >= 0 && (m.adminFehlend|0) > 0){
+        setTimeout(() => startFlow('ergaenzen'), 800);
+      }
       // Belegaufnahme des unteren Teils (Karte „so gewollt“, Gruppen, Empfehlung).
       if(S.shot && HASH.indexOf('unten') >= 0) requestAnimationFrame(() => { $('#s-result').scrollTop = 1e6; });
       break;
 
+    /* Reihenfolge in den vier Zweigen darunter: ERST der Bildschirm, DANN der Dialog.
+       Andersherum setzte show() den Fokus auf die Überschrift des neuen Bildschirms, also
+       hinter das Overlay: Tab wanderte auf „PC jetzt prüfen“, Enter startete erneut, der
+       Dialog blieb stehen und ließ sich nur noch mit Escape schließen (B22). */
     case 'flowCancelled':
+      // Vom Ergebnis aus gestartet (Ergänzen, Tiefenprüfung, Reparatur)? Dann zurück
+      // dorthin, das Ergebnis samt seiner Schaltflächen bleibt gültig (B24).
+      zumErgebnisOderStart();
       toast('Abgebrochen', 'Der Vorgang wurde beendet. Ihrem PC ist nichts passiert.', 'warn');
-      go('start');
       break;
 
     case 'flowError':
+      // Eine abgelehnte Antwort auf eine Frage („ließ sich nicht speichern“, oder der Host
+      // war beschäftigt) kommt auf dem Ergebnis-Bildschirm an: dort bleiben, und die
+      // Knöpfe der Frage wieder freigeben, sonst wären sie bis zur nächsten Prüfung tot (B21).
+      if(S.screen === 'result') frageKnoepfeFrei();
+      // Abgelehnter UAC-Dialog: kein Fehler des PCs und kein Dialog obendrauf (Entwurf
+      // Abschnitt 9: „ohne Modal“). Eine Meldung am Rand, und zurück zum Ergebnis, falls
+      // eines da ist: dort steht die Schaltfläche für den nächsten Versuch. Das Feld
+      // abgelehnt ist der Vertrag (Abschnitt 13); der Satzanfang bleibt als Rückfall für
+      // einen Host, der das Feld noch nicht schickt.
+      if(m.abgelehnt === true || /^Ohne Administratorrechte/.test(m.message || '')){
+        if(S.result) show('result'); else go('start');
+        toast('Nicht gestartet', m.message, 'warn');
+        break;
+      }
+      // Sonst: das Ergebnis behalten, von dem aus der Lauf gestartet wurde (Helfer meldet
+      // sich nicht binnen 60 s, „bleibt gültig, jederzeit erneut versuchen“, B24); ohne
+      // solches Ergebnis zum Anfang. Auf dem Ergebnis-Bildschirm selbst wird nicht gewechselt.
+      if(S.screen !== 'result') zumErgebnisOderStart();
       infoModal('Das hat nicht geklappt', m.message, 'warn');
-      go('start');
       break;
 
     case 'flowBusy':
       // Der Host hat den Start abgelehnt, weil schon etwas anderes läuft. Ohne diese
       // Antwort blieb die Oberfläche auf dem Ablauf-Bildschirm hängen, den startFlow()
       // bereits angezeigt hatte - mit einem Balken, der nie wieder etwas tat.
+      // Zurück dorthin, wo der Klick herkam. Vorher ging es immer zum Start: ein Werkzeug
+      // aus dem Werkzeugkasten landete auf der Startseite, und ein Sicherungspunkt aus der
+      // Nebenansicht riss den Nutzer aus der Liste, in der er gerade stand.
+      S.queueLaeuft = false;   // eine abgelehnte Liste bleibt vorgemerkt
+      if(S.screen === 'run'){
+        if(S.mode === 'action') go('tools');
+        else if(S.result && S.mode !== 'check') show('result');
+        else go('start');
+      }
+      // Ergebnis-Bildschirm: die Antwort auf eine Frage wurde abgewiesen (geplante Wartung
+      // läuft gerade). Die Knöpfe kommen frei, das Ergebnis bleibt stehen (B21).
+      if(S.screen === 'result') frageKnoepfeFrei();
+      // Nebenansichten (Sicherungspunkt, Apps, Zeitplan) haben keinen Ablauf-Bildschirm
+      // gezeigt: dort bleibt alles stehen; nur die wartenden Knöpfe kommen frei, denn ein
+      // 'done' kommt für einen abgelehnten Start nicht (B26).
+      subKnoepfeFrei();
+      umstellenFrei();
+      // Der Satz nennt, was läuft (aus m.message), mehr nicht: die „Technischen Details“
+      // gibt es nur auf dem Ablauf-Bildschirm, und den hat die Oberfläche eben verlassen.
       infoModal('Das geht gerade noch nicht',
-        m.message + '\n\nBitte warten Sie, bis das fertig ist, und starten Sie es dann ' +
-        'erneut. Was gerade läuft, sehen Sie unten unter „Technische Details“.', 'warn');
-      go('start');
+        m.message + '\n\nBitte warten Sie, bis das fertig ist, und starten Sie es dann erneut.', 'warn');
       break;
 
     case 'flowNichts':
       // Grundsatz 4: keine Reparatur ohne Befund. Der Host hat „Beheben“ abgelehnt, weil
       // die Tiefenprüfung nichts gefunden hat (oder noch nicht lief). Zurück dorthin,
       // wo der Nutzer herkam.
-      infoModal('Es gibt nichts zu beheben', m.message, '');
       if(S.result) show('result'); else go('start');
+      infoModal('Es gibt nichts zu beheben', m.message, '');
       break;
 
     case 'flowIdle':
-      // „Abbrechen“ auf einem Bildschirm, hinter dem gar nichts mehr lief.
-      go('start');
+      // „Abbrechen“ auf einem Bildschirm, hinter dem gar nichts mehr lief: dieselbe Regel
+      // wie beim Abbruch, das Ergebnis bleibt, falls der Lauf von dort kam.
+      zumErgebnisOderStart();
       break;
 
     // --- Einzelaktionen aus dem Werkzeugkasten ---
@@ -1232,6 +1522,7 @@ function onHost(m){
     case 'state':
       // Gleiche Begründung wie bei 'done': maßgeblich ist der sichtbare Bildschirm,
       // nicht der Modus.
+      if(m.running) queueLoslassen();
       if(!m.running && S.screen === 'run'){ S.stepIndex = (S.steps.length || 1) + 1; renderSteps(); }
       break;
 
@@ -1248,22 +1539,29 @@ function onHost(m){
         setBar(100);
         $('#run-status').textContent = m.message;
         $('#run-foot').innerHTML = svg(m.kind === 'good' ? 'check' : 'alert') + '<span>' + esc(m.message) + '</span>';
-        // Ein Lauf aus dem Werkzeugkasten führt dorthin zurück, alles andere zum Start.
-        const ziel = S.mode === 'action' ? 'tools' : 'start';
+        // Ein Lauf aus dem Werkzeugkasten führt dorthin zurück; ein Lauf, den der Host
+        // gestartet hat, dorthin, wo der Nutzer vorher stand (S.herkunft); alles andere zum Start.
+        const ziel = S.mode === 'action' ? (S.herkunft || 'tools') : 'start';
         $('#btn-cancel').textContent = 'Zurück';
         $('#btn-cancel').onclick = () => {
           $('#btn-cancel').textContent = 'Abbrechen';
           $('#btn-cancel').onclick = cancelClick;
-          go(ziel);
+          zurueckNach(ziel);
         };
       }
-      if(SET.notify) toast(m.title, m.message, m.kind);
+      // In einer Nebenansicht (Sicherungspunkt, Apps, Zeitplan) ist die Meldung am Rand die
+      // einzige sichtbare Antwort auf den Klick; sie hängt dort nicht am Schalter für die
+      // Windows-Mitteilung (B26). Die Liste selbst schickt der Host nach 'done' neu.
+      if(SET.notify || S.screen === 'sub') toast(m.title, m.message, m.kind);
+      queueLoslassen();
+      subKnoepfeFrei();  // wartende Knöpfe der Nebenansichten (B26)
+      umstellenFrei();   // Selbststart-Umstellung lief ohne Ablauf-Bildschirm, siehe dort
       break;
 
     // --- Speicher- und Registrierungs-Suche ---
     case 'scanProgress': {
       const st = $('#scan-status');
-      if(st) st.textContent = m.text + ' …';
+      if(st) st.textContent = laufText(m.text);
       break;
     }
 
@@ -1277,15 +1575,24 @@ function onHost(m){
       // der Papierkorb dabei war: dort liegen genau diese Dateien. Wer sich darauf
       // verlässt, sucht später gar nicht erst im Papierkorb nach.
       const korbDabei = (m.posten || []).some(p => p.schluessel === 'papierkorb');
-      infoModal('Aufgeräumt',
-        (m.gesamtBytes > 0
+      // Ein abgebrochener Lauf (Abbrechen auf dem Wartebildschirm) hat denselben Bericht:
+      // der Helfer hält an der nächsten sicheren Stelle an und meldet, was bis dahin frei
+      // wurde. Das steht dann auch so da, nicht als „Aufgeräumt“.
+      const abgebrochen = m.abgebrochen === true;
+      infoModal(abgebrochen ? 'Abgebrochen' : 'Aufgeräumt',
+        (abgebrochen
+          ? 'Das Aufräumen wurde angehalten. ' + (m.gesamtBytes > 0
+              ? 'Bis dahin sind ' + m.gesamt + ' frei geworden.\n\n' + zeilen
+              : 'Bis dahin ist nichts frei geworden.' + (zeilen ? '\n\n' + zeilen : ''))
+          : m.gesamtBytes > 0
           ? 'Es sind ' + m.gesamt + ' frei geworden.\n\n' + zeilen
           : 'Es ist nichts frei geworden. Vermutlich waren die Dateien gerade in Benutzung; ' +
             'nach einem Neustart klappt es meist.\n\n' + zeilen) +
         (korbDabei
           ? '\n\nDer Papierkorb wurde geleert. Was darin lag, lässt sich nicht mehr ' +
             'zurückholen. Ihre übrigen Dokumente, Fotos und Programme wurden nicht angerührt.'
-          : '\n\nIhre Dokumente, Fotos und Programme wurden nicht angerührt.'));
+          : '\n\nIhre Dokumente, Fotos und Programme wurden nicht angerührt.'),
+        abgebrochen ? 'warn' : '');
       break;
     }
 
@@ -1294,6 +1601,21 @@ function onHost(m){
       break;
 
     case 'registryCleaned': {
+      // Der Helfer weiß, warum es keinen neuen Sicherungspunkt gab (24-Stunden-Drossel von
+      // Windows, Systemschutz aus, nicht lesbar) und schickt den Satz wörtlich mit
+      // (sicherungspunktSatz, ohne Schlusspunkt). Die Vermutung „Systemschutz ausgeschaltet“
+      // steht nur noch da, wenn der Satz fehlt.
+      const punktSatz = String(m.sicherungspunktSatz || '').trim().replace(/\.$/, '');
+      const punktNr = (punktSatz.match(/Nr\. (\d+)/) || [])[1];
+      // „trotzdem geschrieben“ nur, wenn es die Sicherungsdatei wirklich gibt; ohne sie
+      // wurde nichts verändert, das steht weiter unten.
+      const trotzdem = m.sicherung ? ' Die Sicherungsdatei unten wurde trotzdem geschrieben.' : '';
+      const punktText = m.sicherungspunkt
+        ? 'Vorher wurde ein Sicherungspunkt von Windows angelegt' + (punktNr ? ' (Nr. ' + punktNr + ')' : '') + '.\n\n'
+        : (punktSatz
+            ? punktSatz + '.' + trotzdem + '\n\n'
+            : 'Ein Sicherungspunkt ließ sich nicht anlegen (vermutlich ist der Systemschutz ' +
+              'ausgeschaltet).' + trotzdem + '\n\n');
       const dlg = buildModal({
         title: m.entfernt === 0 ? 'Es wurde nichts entfernt'
              : m.entfernt === 1 ? 'Ein Eintrag wurde entfernt'
@@ -1301,10 +1623,7 @@ function onHost(m){
         body: (m.fehlgeschlagen > 0
                 ? m.fehlgeschlagen + ' Eintrag/Einträge ließen sich nicht entfernen und wurden ' +
                   'unverändert gelassen.\n\n' : '') +
-              (m.sicherungspunkt
-                ? 'Vorher wurde ein Sicherungspunkt von Windows angelegt.\n\n'
-                : 'Ein Sicherungspunkt ließ sich nicht anlegen (vermutlich ist der Systemschutz ' +
-                  'ausgeschaltet). Die Sicherungsdatei unten wurde trotzdem geschrieben.\n\n') +
+              punktText +
               (m.sicherung
                 ? 'Die Sicherung liegt hier:\n' + m.sicherung + '\n\nEin Doppelklick auf diese ' +
                   'Datei holt die Einträge zurück.'
@@ -1322,11 +1641,28 @@ function onHost(m){
       break;
     }
 
-    case 'scanError':
-      infoModal('Das hat nicht geklappt', m.message, 'warn');
-      if(S.screen === 'sub' && $('#scan-status'))
-        $('#sub-body').innerHTML = '<div class="empty">Es liegt kein Ergebnis vor.</div>';
+    case 'scanError': {
+      // Aufräumen oder Entfernen kam nicht zustande (UAC-Dialog abgelehnt, Helfer beschäftigt
+      // oder nicht gestartet): nichts lief, das Suchergebnis gilt weiter, der Host hält es
+      // ebenfalls. Deshalb kommt die Liste mit der Auswahl zurück, damit der nächste Versuch
+      // ein Klick ist und keine neue Suche (auf einem vollen Laufwerk Minuten). Vorher leerte
+      // der Fehlerzweig die Liste, obwohl sich nichts verändert hatte (B25). Nur wenn die
+      // Suche selbst gescheitert ist (S.storage bzw. S.registry seit openSub null), gibt es
+      // wirklich kein Ergebnis.
+      const welche = m.scan || S.sub;
+      const alt = welche === 'registry' ? S.registry : (welche === 'storage' ? S.storage : null);
+      const abgelehnt = m.abgelehnt === true || /^Ohne Administratorrechte/.test(m.message || '');
+      if(S.screen === 'sub' && S.sub === welche && $('#scan-status')){
+        if(alt && welche === 'registry') renderRegistry(alt);
+        else if(alt && welche === 'storage') renderStorage(alt);
+        else $('#sub-body').innerHTML = '<div class="empty">Es liegt kein Ergebnis vor.</div>';
+      }
+      // Abgelehnter Dialog: kein Fehler des PCs, Meldung am Rand statt Dialog (Entwurf
+      // Abschnitt 13). Das Feld abgelehnt ist der Vertrag, der Satzanfang der Rückfall.
+      if(abgelehnt) toast('Nicht gestartet', m.message, 'warn');
+      else infoModal('Das hat nicht geklappt', m.message, 'warn');
       break;
+    }
 
     // --- Nebenansichten ---
     case 'history':      renderHistory(m.items); break;
@@ -1339,30 +1675,76 @@ function onHost(m){
         'Windows hat die Änderung nicht angenommen. Der Schalter steht wieder so, wie es ' +
         'wirklich ist.', 'bad');
       break;
-    case 'selfstart':
+    case 'selfstart': {
+      const warVeraltet = S.selfStartVeraltet;
       S.selfStart = !!m.on;
+      // veraltet = die Aufgabe startet noch mit höchsten Rechten (Bestand aus 8.0); der
+      // nicht erhöhte Host kann sie weder löschen noch ersetzen, nur der Helfer.
+      S.selfStartVeraltet = !!m.veraltet;
+      // hinweis 'erhoeht' (Entwurf Abschnitt 14): der Host läuft selbst erhöht und legt
+      // deshalb keine Aufgabe an; sie würde bei jedem Anmelden nach Rechten fragen.
+      const erhoeht = m.hinweis === 'erhoeht' || S.admin;
       { const i = $('#as-self'); if(i) i.checked = S.selfStart; }
-      if(m.changed === true)  toast(S.selfStart ? 'Eingerichtet' : 'Entfernt',
+      { const alt = $('#as-alt'); if(alt) alt.hidden = !S.selfStartVeraltet; }
+      { const eh = $('#as-erhoeht'); if(eh) eh.hidden = !erhoeht; }
+      umstellenFrei();
+      if(m.changed === true && warVeraltet && !S.selfStartVeraltet && S.selfStart)
+        toast('Umgestellt', 'Die Selbststart-Aufgabe läuft jetzt ohne Administratorrechte.', 'good');
+      else if(m.changed === true) toast(S.selfStart ? 'Eingerichtet' : 'Entfernt',
         S.selfStart ? 'Windows-Wartung startet künftig mit dem PC.' : 'Windows-Wartung startet nicht mehr automatisch.', 'good');
-      if(m.changed === false) toast('Nicht geändert','Der Eintrag ließ sich nicht anpassen.','bad');
+      if(m.changed === false){
+        // Vier Gründe, vier Sätze. Der Rat „Nutzen Sie „Umstellen““ steht nur dann, wenn
+        // der Nutzer diesen Knopf NICHT gerade gedrückt hat: nach einer abgelehnten
+        // Umstellung (warVeraltet) zeigte er sonst auf den eben verneinten Weg (B27).
+        let satz;
+        if(erhoeht) satz = 'Bitte das Programm normal (ohne Administratorrechte) starten, um den Selbststart zu ändern.';
+        else if(warVeraltet) satz = 'Die Umstellung wurde nicht durchgeführt; die Aufgabe startet weiter mit ' +
+                                    'Administratorrechten. Sie können „Umstellen“ erneut versuchen.';
+        else if(S.selfStartVeraltet) satz = 'Die Selbststart-Aufgabe lässt sich nur mit Administratorrechten ändern. Nutzen Sie „Umstellen“.';
+        else satz = 'Der Eintrag ließ sich nicht anpassen.';
+        toast('Nicht geändert', satz, 'bad');
+      }
       break;
+    }
     case 'schedule':     renderSchedule(m); break;
 
     // --- Update ---
+    /* „Jetzt aktualisieren“ ist vom Klick bis zum Ende des Updates gesperrt: ein zweiter
+       Klick startete im Host einen zweiten Download in denselben Arbeitsordner (B28). Frei
+       wird der Knopf mit jeder update-Nachricht (der Host schickt sie erneut, wenn das
+       Update warten muss oder der UAC-Dialog verneint wurde) und mit updateError. */
     case 'update':
-      $('#ub-text').textContent = 'Es gibt eine neue Fassung (' + (m.version || '') + ').';
+      S.updateVersion = m.version || '';
+      $('#ub-text').textContent = 'Es gibt eine neue Fassung (' + S.updateVersion + ').';
+      $('#ub-get').disabled = false;
       $('#update-bar').classList.add('show');
       break;
     case 'updateProgress':
+      $('#ub-get').disabled = true;
       $('#ub-text').textContent = m.percent >= 0
         ? 'Neue Fassung wird geladen … ' + m.percent + ' %'
         : 'Neue Fassung wird geladen …';
       break;
     case 'updateStatus':
+      // 'admin' schickt der Host unmittelbar vor dem UAC-Dialog des Austauschs (Entwurf
+      // Abschnitt 13); vorher stand hier solange „Wird geladen …“, obwohl nichts mehr lud.
+      $('#ub-get').disabled = true;
       $('#ub-text').textContent = m.phase === 'extract' ? 'Wird ausgepackt …'
+        : m.phase === 'admin' ? 'Windows fragt gleich nach Administratorrechten …'
         : (m.phase === 'restart' ? 'Das Programm startet gleich neu …' : 'Wird geladen …');
       break;
     case 'updateError': {
+      $('#ub-get').disabled = false;
+      // Verneinter UAC-Dialog: kein Fehler, kein Dialog, kein Rat zum Herunterladen von
+      // Hand. Die Leiste bleibt stehen, der zweite Klick ist der Weg (Entwurf Abschnitt 14).
+      // Das Feld abgelehnt ist der Vertrag, der Satzanfang der Rückfall.
+      if(m.abgelehnt === true || /^Ohne Administratorrechte/.test(m.message || '')){
+        $('#ub-text').textContent = 'Es gibt eine neue Fassung' + (S.updateVersion ? ' (' + S.updateVersion + ')' : '') + '.';
+        $('#update-bar').classList.add('show');
+        toast('Nicht installiert', /erneut versuchen/.test(m.message || '')
+          ? m.message : m.message + ' Sie können es erneut versuchen.', 'warn');
+        break;
+      }
       $('#update-bar').classList.remove('show');
       const dlg = buildModal({
         title: 'Die Aktualisierung hat nicht geklappt',
@@ -1432,10 +1814,31 @@ function renderHistory(items){
     'Leeren', () => send({type:'historyClear'}));
 }
 
+/* Knöpfe der Nebenansichten, die einen Plan über den Helfer starten (Sicherungspunkt,
+   Zurücksetzen, Apps entfernen, Zeitplan): vom Klick bis zur Antwort des Hosts gesperrt,
+   mit Zwischentext. Ein zweiter Klick startete sonst einen zweiten Plan, den der Host als
+   „läuft schon“ abweist (flowBusy-Dialog). Frei werden sie mit 'done' (Ende des Laufs),
+   'flowBusy' (Start abgewiesen, kein 'done' folgt) oder wenn die Liste neu gezeichnet wird
+   (der Host schickt sie nach 'done' erneut) (B26). */
+function knopfWartet(btn, text){
+  if(!btn || btn.disabled) return;
+  btn.dataset.wartetText = btn.textContent;
+  btn.disabled = true;
+  if(text) btn.textContent = text;
+}
+function subKnoepfeFrei(){
+  $$('#sub-body [data-wartet-text]').forEach(b => {
+    b.disabled = false;
+    b.textContent = b.dataset.wartetText;
+    delete b.dataset.wartetText;
+  });
+}
+
 function renderRestore(items){
   const b = $('#sub-body');
   let h = '<div class="panel"><div class="panel-h"><div class="panel-t">Neuen Sicherungspunkt anlegen</div>' +
-    '<div class="panel-d">Sichert den aktuellen Zustand. Sinnvoll, bevor Sie etwas Größeres ändern.</div></div>' +
+    '<div class="panel-d">Sichert den aktuellen Zustand. Sinnvoll, bevor Sie etwas Größeres ändern. ' +
+    esc(UAC_SATZ) + '</div></div>' +
     '<div class="row"><span class="row-b"><input type="text" id="rp-desc" maxlength="60" ' +
     'placeholder="Beschreibung (freiwillig)" style="width:100%" /></span>' +
     '<button class="btn btn-primary btn-md" id="rp-new">Anlegen</button></div></div>';
@@ -1454,17 +1857,31 @@ function renderRestore(items){
     h += '</div></div>';
   }
   b.innerHTML = h;
-  $('#rp-new').onclick = () => send({type:'restoreCreate', desc:($('#rp-desc').value || '').trim()});
+  // Während der Punkt entsteht (oder Windows zurückgesetzt wird), wartet die ganze
+  // Ansicht: der eine Knopf mit Zwischentext, die anderen nur gesperrt.
+  const alleSperren = (aktiv, text) => {
+    knopfWartet(aktiv, text);
+    knopfWartet($('#rp-new'));
+    b.querySelectorAll('[data-seq]').forEach(x => knopfWartet(x));
+  };
+  $('#rp-new').onclick = () => {
+    const desc = ($('#rp-desc').value || '').trim();
+    alleSperren($('#rp-new'), 'Wird angelegt …');
+    send({type:'restoreCreate', desc:desc});
+  };
   b.querySelectorAll('[data-seq]').forEach(btn => {
     btn.onclick = () => {
       const seq = parseInt(btn.dataset.seq, 10);
       confirmModal('Windows zurücksetzen?',
         'Windows wird auf diesen früheren Stand zurückgesetzt und der PC startet dabei neu.\n\n' +
         'Ihre persönlichen Dateien bleiben erhalten. Programme, Treiber und Einstellungen, die Sie ' +
-        'seitdem geändert haben, gehen verloren.',
+        'seitdem geändert haben, gehen verloren.\n\n' + UAC_SATZ,
         'Weiter', () => confirmModal('Wirklich? Letzte Nachfrage',
           'Bitte speichern Sie jetzt Ihre Arbeit. Der PC startet gleich neu.',
-          'Jetzt zurücksetzen', () => send({type:'restoreRevert', seq:seq}), true), true);
+          'Jetzt zurücksetzen', () => {
+            alleSperren(btn, 'Wird zurückgesetzt …');
+            send({type:'restoreRevert', seq:seq});
+          }, true), true);
     };
   });
 }
@@ -1500,12 +1917,47 @@ function renderAutostart(items){
   const kopf = el('div','panel');
   kopf.innerHTML = '<div class="panel-h"><div class="panel-t">Windows-Wartung selbst</div>' +
     '<div class="panel-d">Das Programm kann sich beim Anmelden von allein starten. ' +
-    'Es fragt dann nicht jedes Mal nach Administratorrechten.</div></div>';
+    'Es läuft dann ohne Administratorrechte; Windows fragt erst, wenn Sie etwas ändern lassen.</div></div>';
   const selbst = switchRow('Mit dem PC starten',
     'Wird über die Aufgabenplanung von Windows eingerichtet.',
     !!S.selfStart, v => send({type:'selfStartSet', on:v}));
   selbst.querySelector('input').id = 'as-self';
   kopf.appendChild(selbst);
+  // Eine ältere Aufgabe startet noch mit höchsten Rechten (UAC-Dialog bei jedem Anmelden).
+  // Der nicht erhöhte Host kann sie weder löschen noch ersetzen („Zugriff verweigert“, das
+  // Rezept „aus- und wieder einschalten“ scheiterte deshalb genau dann, wenn der Hinweis
+  // stand). Die Umstellung geht über den Helfer: selfStartSet mit umstellen:true, der Host
+  // löscht die Aufgabe erhöht und legt sie ohne Rechte neu an (Entwurf Abschnitt 13).
+  // Der Hinweis hängt am Feld veraltet der Nachricht selfstart; die kommt getrennt von der
+  // Liste, deshalb wird er hier angelegt und dort ein- oder ausgeblendet.
+  const alt = el('div','catnote');
+  alt.id = 'as-alt';
+  alt.hidden = !S.selfStartVeraltet;
+  alt.innerHTML = svg('alert') + '<div>Die Selbststart-Aufgabe startet noch mit Administratorrechten; ' +
+    'die Umstellung braucht einmal Administratorrechte.</div>';
+  const um = el('button','btn btn-ghost','Umstellen');
+  um.type = 'button';
+  um.id = 'as-umstellen';
+  um.onclick = () => {
+    // Bis „done“ oder die nächste selfstart-Nachricht kommt, wartet die Schaltfläche:
+    // ein zweiter Klick würde einen zweiten Plan starten, den der Host als „läuft schon“
+    // abweist.
+    um.disabled = true;
+    um.textContent = 'Wird umgestellt …';
+    send({type:'selfStartSet', on:true, umstellen:true});
+  };
+  alt.appendChild(um);
+  kopf.appendChild(alt);
+  // Läuft das Programm selbst erhöht, legt der Host keine Aufgabe an (sie würde bei jedem
+  // Anmelden nach Rechten fragen, Entwurf Abschnitt 14). Der Satz steht hier, bevor der
+  // Schalter umgelegt wird; die Nachricht selfstart (hinweis 'erhoeht') blendet ihn ein.
+  const eh = el('div','catnote');
+  eh.id = 'as-erhoeht';
+  eh.hidden = !S.admin;
+  eh.innerHTML = svg('info') + '<div>Bitte das Programm normal (ohne Administratorrechte) starten, ' +
+    'um den Selbststart zu ändern. Mit Administratorrechten angelegt, würde die Aufgabe bei jedem ' +
+    'Anmelden nach Rechten fragen.</div>';
+  kopf.appendChild(eh);
   b.appendChild(kopf);
 
   const ordner = el('div','panel');
@@ -1547,6 +1999,18 @@ function renderAutostart(items){
   b.appendChild(box);
 }
 
+/* Gibt die Schaltfläche „Umstellen“ wieder frei, wenn sie gerade wartet. Die Umstellung
+   läuft als Plan über den Runner, ohne Ablauf-Bildschirm: 'done' gibt die Schaltfläche
+   frei, egal wie der Lauf ausging, der Stand selbst kommt mit der nächsten selfstart-
+   Nachricht (die ruft ebenfalls hierher). Außerhalb der Startprogramme-Ansicht gibt es
+   die Schaltfläche nicht, dann passiert nichts. */
+function umstellenFrei(){
+  const um = $('#as-umstellen');
+  if(!um || !um.disabled) return;
+  um.disabled = false;
+  um.textContent = 'Umstellen';
+}
+
 function renderApps(items){
   const b = $('#sub-body');
   if(!items || !items.length){
@@ -1579,8 +2043,12 @@ function renderApps(items){
     if(!sel.length){ toast('Nichts ausgewählt','Wählen Sie zuerst mindestens eine App aus.','warn'); return; }
     const names = sel.map(x => x.closest('.row').querySelector('.row-t').textContent);
     confirmModal('Diese Apps entfernen?',
-      names.join('\n') + '\n\nSie können sie später jederzeit kostenlos aus dem Microsoft Store zurückholen.',
-      'Entfernen', () => send({type:'bloatRemove', restore:true, fulls:sel.map(x => x.dataset.full)}), true);
+      names.join('\n') + '\n\nSie können sie später jederzeit kostenlos aus dem Microsoft Store zurückholen.\n\n' + UAC_SATZ,
+      'Entfernen', () => {
+        // Bis 'done' gesperrt; danach schickt der Host die Liste ohne die entfernten Apps neu.
+        knopfWartet(go2, 'Wird entfernt …');
+        send({type:'bloatRemove', restore:true, fulls:sel.map(x => x.dataset.full)});
+      }, true);
   };
   bar.appendChild(go2);
   b.appendChild(bar);
@@ -1589,6 +2057,13 @@ function renderApps(items){
 function renderSchedule(m){
   const b = $('#sub-body');
   const tasks = (S.catalog && S.catalog.autoTasks) || [];
+  // Zwei Zusatzfelder des Hosts: fehler = die Eingabe wurde abgewiesen, nichts lief (der
+  // Grund stand vorher nur in der unsichtbaren Konsole); justCreated = der Plan
+  // zeitplan.anlegen ist durch, true heißt eingerichtet. Beides als Meldung am Rand, das
+  // Formular darunter wird wie immer neu gezeichnet.
+  if(m.fehler) toast('Nicht eingerichtet', m.fehler, 'bad');
+  if(m.justCreated === true) toast('Eingerichtet', 'Der PC wartet sich künftig von allein.', 'good');
+  if(m.justCreated === false) toast('Nicht eingerichtet', 'Der Zeitplan ließ sich nicht anlegen. Den Grund sehen Sie im Verlauf.', 'bad');
   let h = '';
   if(m.exists && m.config){
     const c = m.config;
@@ -1622,15 +2097,21 @@ function renderSchedule(m){
       '<span class="switch"><input type="checkbox" data-key="' + esc(t.key) + '"' +
       (t.std ? ' checked' : '') + ' aria-label="' + esc(t.title) + '" /><i></i></span></label>';
   });
+  // Die Aufgabe braucht höchste Rechte (DISM und SFC), also den Helfer: der UAC-Satz steht
+  // hier, bevor geklickt wird, nicht erst in der verborgenen Konsole des Ablauf-Bildschirms.
   h += '</div><div class="next"><span class="next-b"><span class="next-t">Automatische Wartung einrichten</span>' +
-    '<span class="next-s">Sie können das jederzeit wieder abschalten.</span></span>' +
+    '<span class="next-s">Sie können das jederzeit wieder abschalten. ' + esc(UAC_SATZ) + '</span></span>' +
     '<button class="btn btn-primary btn-md" id="sc-save">Einrichten</button></div>';
 
   b.innerHTML = h;
   const del = $('#sc-del');
   if(del) del.onclick = () => confirmModal('Automatische Wartung abschalten?',
-    'Der PC wartet sich dann nicht mehr von allein. Sie können sie jederzeit wieder einrichten.',
-    'Abschalten', () => send({type:'scheduleDelete'}));
+    'Der PC wartet sich dann nicht mehr von allein. Sie können sie jederzeit wieder einrichten.\n\n' + UAC_SATZ,
+    'Abschalten', () => {
+      knopfWartet(del, 'Wird abgeschaltet …');
+      knopfWartet($('#sc-save'));
+      send({type:'scheduleDelete'});
+    });
   $('#sc-save').onclick = () => {
     const mode = $('#sc-mode').value;
     const parts = ($('#sc-time').value || '12:00').split(':');
@@ -1639,6 +2120,9 @@ function renderSchedule(m){
     const msg = {type:'scheduleCreate', mode:mode, hh:parseInt(parts[0],10), mm:parseInt(parts[1],10), actions:keys};
     if(mode === 'weekly') msg.days = ['SAT'];
     if(mode === 'monthly') msg.dom = 1;
+    // Bis 'done' oder zur nächsten schedule-Nachricht gesperrt (die zeichnet das Formular neu).
+    knopfWartet($('#sc-save'), 'Wird eingerichtet …');
+    knopfWartet(del);
     send(msg);
   };
 }
@@ -1665,10 +2149,17 @@ function groesse(bytes){
 /* Wartezustand der beiden Suchläufe. Ein Suchlauf ohne Ausweg wäre eine Sackgasse:
    auf einem vollen Rechner kann das Durchsehen der eigenen Ordner dauern.
 
-   Beim Entfernen aus der Registrierung gibt es bewusst KEIN Abbrechen: dort laufen
-   Sicherungspunkt und Sicherungsdatei, und ein Knopf, der mittendrin nichts mehr
-   ausrichtet, wäre ein Versprechen, das die App nicht halten kann. */
-function scanLaeuft(text, unterzeile, abbrechbar){
+   Drei Spielarten des Abbrechens:
+   - Suchlauf (abbrechbar, bleiben=false): der Host meldet nach dem Abbruch nichts mehr
+     (ein halbes Ergebnis wird nicht gezeigt), also geht es sofort in den Werkzeugkasten.
+   - Aufräumen (abbrechbar, bleiben=true): der Helfer hält an der nächsten sicheren Stelle
+     an und meldet, was bis dahin frei wurde (storageCleaned mit abgebrochen, danach die
+     Neumessung). Der Wartebildschirm bleibt bis dahin stehen; ein Sprung in den
+     Werkzeugkasten hätte diese Meldung als Dialog ins Nichts geworfen.
+   - Entfernen aus der Registrierung (abbrechbar=false): dort laufen Sicherungspunkt und
+     Sicherungsdatei, und ein Knopf, der mittendrin nichts mehr ausrichtet, wäre ein
+     Versprechen, das die App nicht halten kann. */
+function scanLaeuft(text, unterzeile, abbrechbar, bleiben){
   const b = $('#sub-body');
   b.innerHTML = '';
   const p = el('div','panel');
@@ -1678,7 +2169,14 @@ function scanLaeuft(text, unterzeile, abbrechbar){
   row.innerHTML = '<span class="row-b"><span class="row-s" id="scan-status">Einen Moment bitte …</span></span>';
   if(abbrechbar !== false){
     const ab = el('button','btn btn-ghost','Abbrechen');
-    ab.onclick = () => { send({type:'cancel'}); go('tools'); };
+    ab.onclick = () => {
+      send({type:'cancel'});
+      if(!bleiben){ go('tools'); return; }
+      ab.disabled = true;
+      ab.textContent = 'Wird angehalten …';
+      const st = $('#scan-status');
+      if(st) st.textContent = 'Wird an der nächsten sicheren Stelle angehalten …';
+    };
     row.appendChild(ab);
   }
   p.appendChild(row);
@@ -1781,7 +2279,6 @@ function renderStorage(m){
 }
 
 function starteAufraeumen(b, posten){
-  if(!S.admin){ needAdmin(); return; }
   const sel = Array.prototype.slice.call(b.querySelectorAll('input[data-key]:checked'));
   if(!sel.length){ toast('Nichts ausgewählt','Wählen Sie zuerst aus, was wir wegräumen sollen.','warn'); return; }
   const keys = sel.map(x => x.dataset.key);
@@ -1795,9 +2292,12 @@ function starteAufraeumen(b, posten){
     zeilen + (endgueltig
       ? '\n\nDer Papierkorb ist dabei. Was darin liegt, ist danach endgültig weg und lässt sich ' +
         'nicht mehr zurückholen. Schauen Sie vorher kurz nach, ob noch etwas Wichtiges darin ist.'
-      : '\n\nAll das legt Windows bei Bedarf von allein neu an.'),
+      : '\n\nAll das legt Windows bei Bedarf von allein neu an.') +
+    '\n\n' + UAC_SATZ,
     'Jetzt aufräumen', () => {
-      scanLaeuft('Wird aufgeräumt', 'Wir räumen die ausgewählten Punkte weg und messen danach neu.');
+      // Abbrechbar, aber ohne Sprung: der Host hält zwischen zwei Posten an und schickt
+      // den Bericht (storageCleaned) oder scanError; bis dahin bleibt dieser Bildschirm.
+      scanLaeuft('Wird aufgeräumt', 'Wir räumen die ausgewählten Punkte weg und messen danach neu. ' + UAC_SATZ, true, true);
       send({type:'storageClean', keys:keys});
     }, endgueltig);
 }
@@ -1923,7 +2423,6 @@ function zugeklappt(panel, anzahl){
 }
 
 function starteRegistryClean(b){
-  if(!S.admin){ needAdmin(); return; }
   const sel = Array.prototype.slice.call(b.querySelectorAll('input[data-ids]:checked'));
   if(!sel.length){ toast('Nichts ausgewählt','Wählen Sie zuerst aus, was entfernt werden soll.','warn'); return; }
 
@@ -1945,11 +2444,11 @@ function starteRegistryClean(b){
     '\n\nVorher schreiben wir eine Sicherungsdatei mit genau diesen Einträgen. Lässt sie ' +
     'sich nicht vollständig schreiben, wird nichts verändert. Zusätzlich versuchen wir, ' +
     'einen Sicherungspunkt von Windows anzulegen; ob das geklappt hat, sagen wir Ihnen ' +
-    'hinterher.',
+    'hinterher.\n\n' + UAC_SATZ,
     'Entfernen', () => {
       scanLaeuft('Einträge werden entfernt',
         'Erst der Sicherungspunkt, dann die Sicherungsdatei, dann die Einträge. ' +
-        'Das dauert einen Moment und lässt sich nicht mehr anhalten.', false);
+        'Das dauert einen Moment und lässt sich nicht mehr anhalten. ' + UAC_SATZ, false);
       send({type:'registryClean', ids:ids});
     }, true);
 }
@@ -1964,7 +2463,8 @@ document.addEventListener('mousedown', e => {
 document.addEventListener('contextmenu', e => e.preventDefault());
 
 $('#sb-cancel').onclick = () => send({type:'cancelShutdown'});
-$('#ub-get').onclick = () => send({type:'startUpdate'});
+// Gesperrt bis update/updateError (siehe die Zweige dort): ein Doppelklick war zwei Downloads.
+$('#ub-get').onclick = () => { $('#ub-get').disabled = true; send({type:'startUpdate'}); };
 $('#ub-skip').onclick = () => $('#update-bar').classList.remove('show');
 
 /* ---------- Los ---------- */

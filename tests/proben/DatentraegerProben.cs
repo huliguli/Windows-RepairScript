@@ -446,6 +446,21 @@ namespace WartungsToolbox.Proben
             var usbHinweis = Harness.Einer(ergUsb, "datentraeger.ereignis.disk.usb");
             h.Ist("USB-Datenträger: ok-Hinweis mit Zahl und 'Wechseldatenträger'", usbHinweis != null && usbHinweis.Zustand == Zustand.Ok && usbHinweis.Satz.Contains("1-mal") || (usbHinweis != null && usbHinweis.Satz.Contains("einmal")), usbHinweis == null ? null : usbHinweis.Satz);
             s.Datentraeger[0].BusTyp = 17;
+            // Abgezogener Stick (gemessen 13.09.2026): das Ereignis nennt eine Nummer, die es im Bild
+            // nicht mehr gibt, waehrend die festen Platten bekannt sind -> ebenfalls kein Laufwerksbefund.
+            // Gegenprobe darunter: dieselbe Nummer, aber KEINE feste Platte im Bild -> nichts weggefiltert.
+            var disk7 = s.Ereignisse.Von("disk", 7).First();
+            var feldAlt = disk7.Feld("0");
+            var felder = disk7.Felder;
+            felder["0"] = @"\Device\Harddisk9\DR9";
+            var ergWeg = Pruefen(h, s);
+            h.Ist("Ereignis fuer Harddisk9 (nicht im Bild): kein warn-Befund, ok-Hinweis Wechseldatenträger",
+                !Harness.Befunde(ergWeg).Any(b => b.Schluessel == "datentraeger.ereignis.disk") && Harness.Einer(ergWeg, "datentraeger.ereignis.disk.usb") != null);
+            var nummernAlt = s.Datentraeger.Select(d => d.Nummer).ToList();
+            foreach (var d in s.Datentraeger) d.Nummer = null;
+            h.Ist("Gegenprobe: ohne bekannte Plattennummern wird nichts weggefiltert", Harness.Befunde(Pruefen(h, s)).Any(b => b.Schluessel == "datentraeger.ereignis.disk"));
+            for (int i = 0; i < s.Datentraeger.Count; i++) s.Datentraeger[i].Nummer = nummernAlt[i];
+            felder["0"] = feldAlt;
             s.Ereignisse.Von("disk", 7).First().ZeitUtc = "2026-07-01T00:00:00Z";
             h.Ist("Gegenprobe: disk 7 vor 72 Tagen -> kein disk-Befund", Harness.Einer(Pruefen(h, s), "datentraeger.ereignis.disk") == null);
         }

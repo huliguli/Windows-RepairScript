@@ -23,9 +23,12 @@ $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $dotnet = Get-Command dotnet -ErrorAction SilentlyContinue
 if (-not $dotnet) { throw "dotnet nicht gefunden - das .NET SDK ist zum Bauen noetig (nur zum Bauen)." }
 $sdkRoot = Join-Path (Split-Path -Parent $dotnet.Source) 'sdk'
-$sdkDir = Get-ChildItem $sdkRoot -Directory | Where-Object { Test-Path (Join-Path $_.FullName 'Roslyn\bincore\csc.dll') } |
+# Nur Ordner mit reiner Versionsnummer: ein Vorab-SDK (10.0.200-preview.1.25120.5) liesse den
+# [version]-Cast werfen, und jede Probe braeche ab, obwohl ein stabiles SDK daneben liegt.
+$sdkDir = Get-ChildItem $sdkRoot -Directory -ErrorAction SilentlyContinue |
+          Where-Object { $_.Name -match '^[0-9.]+$' -and (Test-Path (Join-Path $_.FullName 'Roslyn\bincore\csc.dll')) } |
           Sort-Object { [version]$_.Name } | Select-Object -Last 1
-if (-not $sdkDir) { throw "Kein Roslyn-Compiler im SDK gefunden (gesucht unter $sdkRoot\*\Roslyn\bincore\csc.dll)." }
+if (-not $sdkDir) { throw "Kein Roslyn-Compiler in einem freigegebenen SDK gefunden (gesucht unter $sdkRoot\<version>\Roslyn\bincore\csc.dll; Ordner mit Bindestrich im Namen sind Vorab-Fassungen und zaehlen nicht)." }
 $csc = Join-Path $sdkDir.FullName 'Roslyn\bincore\csc.dll'
 
 $refDir = @(

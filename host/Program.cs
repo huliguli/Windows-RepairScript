@@ -5,20 +5,54 @@ using System.Windows.Forms;
 
 namespace WartungsToolbox
 {
+    /// <summary>
+    /// Einstieg. Kommandozeile im Ueberblick (alles ausser dem ersten Punkt laeuft ohne Fenster,
+    /// Ergebnis im Exit-Code und in logs\app.log):
+    ///
+    ///   (ohne Argumente)                          Oberflaeche (WebView2), nicht erhoeht (Manifest asInvoker seit 8.1)
+    ///   --pipe &lt;name&gt;                             Oberflaeche verbindet sich mit einem schon laufenden Helfer
+    ///                                             statt einen per UAC zu starten (Program.PipeNameArg, Abnahmeweg)
+    ///   --helfer --pipe &lt;name&gt; --sid &lt;sid&gt;        erhoehter Helfer, bedient den Host ueber die Named Pipe
+    ///   --helfer --plan &lt;datei.json&gt; [--trocken]  Plan aus Datei ausfuehren, Exit = PlanErgebnis.Exit (Abnahme)
+    ///   --helfer --messen &lt;ausgabe.json&gt;          erhoehte Messung unredigiert in eine Datei (Abnahme)
+    ///   --auto                                    geplante Wartung ohne Oberflaeche (Aufgabenplanung)
+    ///   --aufzeichnen &lt;datei.json&gt; [--roh]        Systembild aufnehmen, redigiert (--roh: unredigiert)
+    ///   --pruefen &lt;datei.json&gt;                    Regeln ueber eine Aufzeichnung, Ergebnis nach &lt;datei&gt;.befunde.txt
+    ///   --shot &lt;png&gt; [--view &lt;name&gt;] [--shotwait &lt;ms&gt;]  Bildschirmfoto der Oberflaeche (Tests)
+    ///
+    /// "--helfer" wird vor allem anderen behandelt (helfer/Helfer.cs): kein WinForms, keine
+    /// MessageBox, keine Einzelinstanz-Sperre – der Helfer laeuft neben dem Host.
+    /// </summary>
     static class Program
     {
         // Ein Name je Sitzung. Verhindert, dass ein zweiter Start in den gesperrten
         // WebView2-Datenordner laeuft und mit einem leeren schwarzen Fenster endet.
         const string SingleInstanceMutex = "WindowsWartung_UI_SingleInstance";
 
+        /// <summary>
+        /// Aus "--pipe &lt;name&gt;" (ohne --helfer): der Host verbindet sich mit diesem laufenden Helfer,
+        /// statt einen zu starten. null im Normalfall. Gelesen von HelferClient.
+        /// </summary>
+        public static string PipeNameArg;
+
         [STAThread]
         static void Main(string[] args)
         {
+            // Der erhoehte Helfer: vor der Oberflaeche, vor WinForms, vor den Auffangnetzen
+            // (die zeigen eine MessageBox). Rueckgabe ist der Exit-Code.
+            if (Array.IndexOf(args, "--helfer") >= 0)
+            {
+                // Dieselbe Startpruefung wie fuer die Oberflaeche: ein veraendertes Programm
+                // bekommt auch als Helfer keine Administratorrechte (Exit 5, Grund im Protokoll).
+                Environment.ExitCode = Selbstpruefung.BeimStart() ? Helfer.Helfer.Starten(args) : 5;
+                return;
+            }
+
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             AppLog.InstallGlobalHandlers();
 
-            string shot = null, view = "", aufzeichnen = null, pruefen = null;
+            string shot = null, view = "", aufzeichnen = null, pruefen = null, selbstpruefung = null;
             bool auto = false, roh = false;
             int shotWait = 950;
             for (int i = 0; i < args.Length; i++)
@@ -30,10 +64,37 @@ namespace WartungsToolbox
                 else if (args[i] == "--aufzeichnen" && i + 1 < args.Length) aufzeichnen = args[++i];
                 else if (args[i] == "--pruefen" && i + 1 < args.Length) pruefen = args[++i];
                 else if (args[i] == "--roh") roh = true;
+                else if (args[i] == "--pipe" && i + 1 < args.Length) PipeNameArg = args[++i];
+                else if (args[i] == "--selbstpruefung" && i + 1 < args.Length) selbstpruefung = args[++i];
+            }
+
+            // --selbstpruefung <datei>: nur pruefen und berichten (Test), nichts starten.
+            if (selbstpruefung != null)
+            {
+                Environment.ExitCode = Selbstpruefung.Kommandozeile(selbstpruefung);
+                return;
+            }
+
+            // Startpruefung (Konzept 3.8): eigene Signatur und die Oberflaechendateien gegen die
+            // eingebettete Liste. Eine signierte Fassung mit Abweichung laeuft nicht weiter;
+            // der Dev-Bau ohne Signatur bekommt nur eine Warnung im Protokoll.
+            if (!Selbstpruefung.BeimStart())
+            {
+                if (shot == null && !auto && aufzeichnen == null && pruefen == null)
+                    MessageBox.Show(Selbstpruefung.Meldung(), "Windows-Wartung", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                Environment.ExitCode = 5;
+                return;
             }
 
             // Stiller, geplanter Wartungslauf ohne Oberflaeche.
-            if (auto) { AutoRunner.Run(); return; }
+            if (auto) { Environment.ExitCode = AutoRunner.Run(); return; }
+
+            // Laeuft dieser Prozess erhoeht (8.0-Selbststartaufgabe mit HighestAvailable,
+            // "Als Administrator ausführen"), schreibt er Verlauf, Antworten und app.log als
+            // Administrator: die Dateien gehoerten dann der Administratorengruppe, und der
+            // naechste normale Start koennte sie nicht mehr ueberschreiben (Entwurf, Abschnitt
+            // 14, B32). Deshalb dieselbe Rechtezeile wie Helfer und --auto (die haben ihre eigene).
+            RechteSichernWennErhoeht();
 
             // Kommandozeile ohne Oberflaeche (Grundsatz 8: testbar ohne Fenster):
             //   --aufzeichnen <datei.json>  Systembild aufnehmen, redigiert (--roh: unredigiert)
@@ -54,6 +115,27 @@ namespace WartungsToolbox
             AppLog.Info("Start (Version " + typeof(Program).Assembly.GetName().Version + ")");
             Application.Run(new ShellForm(shot, view, shotWait));
             AppLog.Info("Beendet.");
+        }
+
+        /// <summary>
+        /// Erhoehter Host: BUILTIN\Users bekommt Aenderungsrecht (vererbt) auf den maschinenweiten
+        /// Ordner, wie helfer/Helfer.cs beim Start und src/AutoRunner.cs. Nicht erhoeht passiert
+        /// nichts (RechteSichern setzt nur, wer erhoeht ist oder den Ordner angelegt hat). Nie
+        /// werfen: ein Fehler hier steht im app.log, der Start geht weiter.
+        /// </summary>
+        static void RechteSichernWennErhoeht()
+        {
+            try
+            {
+                if (!Sammler.Quellen.Rechte.Erhoeht()) return;
+                bool rechte = Kern.Ablage.RechteSichern();
+                if (rechte) AppLog.Info("Start erhöht: Rechte auf " + Kern.Ablage.Maschinenweit() + " gesichert (Benutzer dürfen ändern).");
+                else AppLog.Warn("Start erhöht: Rechte auf " + Kern.Ablage.Maschinenweit() + " konnten nicht gesetzt werden (kein Zugriff); neue Dateien gehören dann der Administratorengruppe.");
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Start erhöht: Rechte sichern fehlgeschlagen: " + ex.Message);
+            }
         }
 
         static int Kommandozeile(string aufzeichnen, string pruefen, bool roh)

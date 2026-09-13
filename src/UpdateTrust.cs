@@ -13,7 +13,8 @@ namespace WartungsToolbox
     /// 1. Die Pruefsumme liegt im selben Release wie die Datei. Wer das Release
     ///    austauschen kann, tauscht beides. Sie beweist Unversehrtheit des Downloads,
     ///    nicht die Herkunft. Dagegen hilft die Authenticode-Signatur - aber nur, wenn
-    ///    man sie an den bereits installierten Herausgeber bindet ("Pinning").
+    ///    man sie an den bereits installierten Herausgeber bindet ("Pinning"): Name UND
+    ///    oeffentlicher Schluessel des Signaturzertifikats, siehe PruefeHerausgeber.
     ///
     /// 2. Wurde die App ueber den Installer eingerichtet, fuehrt ein blosser Dateitausch
     ///    dazu, dass der Eintrag unter "Apps und Features" auf der alten Version stehen
@@ -85,6 +86,23 @@ namespace WartungsToolbox
         }
 
         /// <summary>
+        /// Oeffentlicher Schluessel des Signaturzertifikats (Hex, GetPublicKeyString) oder null,
+        /// wenn die Datei nicht signiert ist. Das ist die zweite Haelfte der Herausgeber-Bindung:
+        /// den Namen kann sich jeder in ein selbst ausgestelltes Zertifikat schreiben, den
+        /// privaten Schluessel zu diesem oeffentlichen hat nur der Herausgeber.
+        /// </summary>
+        public static string OeffentlicherSchluessel(string datei)
+        {
+            try
+            {
+                var cert = new X509Certificate2(X509Certificate.CreateFromSignedFile(datei));
+                string k = cert.GetPublicKeyString();
+                return string.IsNullOrEmpty(k) ? null : k;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
         /// Bindet das Update an den Herausgeber der laufenden Fassung.
         ///
         /// Regel: Ist die laufende Datei signiert, MUSS die neue denselben Herausgeber
@@ -92,17 +110,28 @@ namespace WartungsToolbox
         /// gibt es nichts zu binden - das wird protokolliert und durchgelassen, sonst
         /// koennte sich die App nie wieder aktualisieren.
         ///
-        /// Verglichen wird der HERAUSGEBERNAME, nicht der Fingerabdruck des Zertifikats.
-        /// Grund: Ein Fingerabdruck gehoert zu genau einem Zertifikat. Laeuft das ab und
-        /// wird erneuert, aendert er sich - und eine Bindung darauf wuerde ab diesem Tag
-        /// JEDES weitere Update ablehnen, obwohl alles in Ordnung ist. Beim Testen ist
-        /// genau das aufgefallen: die beiden WebView2-DLLs stammen beide von Microsoft,
-        /// tragen aber verschiedene Zertifikate.
+        /// Verglichen werden HERAUSGEBERNAME UND OEFFENTLICHER SCHLUESSEL des Signaturzertifikats,
+        /// nicht der Fingerabdruck.
         ///
-        /// Der Name ist etwas schwaecher als der Fingerabdruck (theoretisch koennte jemand
-        /// ein Zertifikat auf denselben Namen bekommen), aber er ist die einzige Bindung,
-        /// die eine Zertifikatserneuerung ueberlebt. Der Fingerabdruck wird protokolliert,
-        /// damit sich ein Wechsel nachvollziehen laesst.
+        /// Warum nicht der Name allein: Das Release ist mit einem selbst ausgestellten Zertifikat
+        /// signiert (tools\make-cert.ps1), und dessen Name ist frei waehlbar; make-cert.ps1 setzt
+        /// den ausgelieferten Namen sogar als Vorgabe. Wer das GitHub-Release austauschen kann,
+        /// also genau der Angreifer aus dem Kopfkommentar, braeuchte nur ein eigenes Zertifikat
+        /// mit demselben Namen, und jede installierte Fassung naehme sein Update an. Den privaten
+        /// Schluessel zum hier gebundenen oeffentlichen hat dagegen nur der Herausgeber.
+        ///
+        /// Warum nicht der Fingerabdruck: Er gehoert zu genau einem Zertifikat und aendert sich
+        /// bei jeder Erneuerung, auch wenn das Schluesselpaar gleich bleibt (die beiden WebView2-
+        /// DLLs von Microsoft tragen verschiedene Zertifikate). Der oeffentliche Schluessel
+        /// ueberlebt eine Erneuerung, solange dasselbe Schluesselpaar weiterverwendet wird.
+        ///
+        /// FOLGE FUER DEN HERAUSGEBER: Ein NEUES Schluesselpaar sperrt alle installierten
+        /// Fassungen aus: sie lehnen jedes damit signierte Update als "anderer Schluessel" ab,
+        /// und der Nutzer muss von Hand neu installieren. Das Zertifikat (Ablauf 2031) ist deshalb
+        /// mit demselben Schluesselpaar zu verlaengern, nicht mit make-cert.ps1 neu zu erzeugen;
+        /// ein Schluesselwechsel braucht vorher eine Uebergangsfassung, die mit dem alten Schluessel
+        /// signiert ist und den neuen zusaetzlich kennt. Der Fingerabdruck wird protokolliert,
+        /// damit sich ein Zertifikatswechsel nachvollziehen laesst.
         ///
         /// Gibt null zurueck, wenn alles in Ordnung ist, sonst eine Meldung fuer den Nutzer.
         /// </summary>
@@ -130,7 +159,24 @@ namespace WartungsToolbox
                        "Aus Sicherheitsgründen wurde nichts installiert.";
             }
 
-            AppLog.Info("Herausgeber bestaetigt: " + neu + " (Zertifikat " + (Fingerabdruck(neueDatei) ?? "?") + ")");
+            // Gleicher Name reicht nicht (siehe oben): auch das Schluesselpaar muss dasselbe sein.
+            // Laesst sich ein Schluessel nicht lesen, obwohl die Datei signiert ist, wird
+            // abgelehnt, nicht durchgewinkt: eine Bindung, die bei Lesefehlern still entfaellt,
+            // ist keine.
+            string schluesselLaufend = OeffentlicherSchluessel(eigeneExe);
+            string schluesselNeu = OeffentlicherSchluessel(neueDatei);
+            if (schluesselLaufend == null || schluesselNeu == null
+                || !string.Equals(schluesselLaufend, schluesselNeu, StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Error("Update abgelehnt: gleicher Herausgebername, aber anderer öffentlicher Schlüssel. Laufend Zertifikat ["
+                             + (Fingerabdruck(eigeneExe) ?? "?") + "], neu [" + (Fingerabdruck(neueDatei) ?? "?") + "]"
+                             + (schluesselLaufend == null || schluesselNeu == null ? " (Schlüssel nicht lesbar)" : ""));
+                return "Die neue Fassung ist zwar auf denselben Herausgebernamen signiert, aber mit einem anderen Schlüssel. " +
+                       "Aus Sicherheitsgründen wurde nichts installiert.";
+            }
+
+            AppLog.Info("Herausgeber bestaetigt: " + neu + " (Zertifikat " + (Fingerabdruck(neueDatei) ?? "?")
+                        + ", öffentlicher Schlüssel unverändert)");
             return null;
         }
     }
