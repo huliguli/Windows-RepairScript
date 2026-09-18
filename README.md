@@ -39,8 +39,10 @@ Nutzer selbst so eingerichtet hat.
 **Tiefenprüfung** (auf Wunsch, 5 bis 10 Minuten): lässt Windows seine eigenen Dateien und
 Bausteine durchsehen. Meldet nur, repariert nichts.
 
-**Beheben**: gibt es nur für das, was ein Befund benennt. Vorher wird ein Sicherungspunkt
-angelegt; das Programm prüft, ob er wirklich entstanden ist.
+**Beheben**: gibt es nur für das, was ein Befund benennt. Bei der Reparatur der
+Windows-Dateien wird vorher ein Sicherungspunkt angelegt; das Programm prüft, ob er wirklich
+entstanden ist. 17 weitere Maßnahmen hängen seit 8.2 an der Karte, siehe unten; was das
+Programm nicht selbst ausführt, bleibt ein Hinweis.
 
 Was sich **nicht** feststellen ließ, wird auch so genannt, samt Grund (fehlende Rechte, keine
 Daten). Eine Prüfung ohne Daten wird niemals als Problem ausgegeben, und niemals als „in
@@ -56,21 +58,70 @@ Auf einem fremden Rechner ohne Klick: `WindowsWartung.exe --aufzeichnen bild.jso
 Systembild auf (Rechnername, Benutzername, Seriennummern und Adressen werden entfernt),
 `--pruefen bild.json` schreibt die Befunde daneben.
 
+### Maßnahmen: Beheben, Nachweis, Rückgängig
+
+**Karte „Beheben“.** Jede Karte, deren Befund eine Maßnahme kennt, trägt die Schaltfläche
+„Beheben: <Name>“ (bei zwei Maßnahmen zwei Schaltflächen). 17 Maßnahmen hängen an Karten:
+DNS-Cache leeren, Adresse neu vom Router anfordern, Namensserver auf automatisch
+zurücksetzen, Virensignaturen aktualisieren, Schnellscan ausführen, Firewall einschalten,
+SmartScreen auf „Warnen“ stellen, Benutzerkontensteuerung wieder einschalten, TRIM
+einschalten, Laufwerk prüfen (nur Scan), Wiederherstellungspunkt anlegen, Startprogramm
+deaktivieren, Geplante Aufgabe deaktivieren, Startart eines Dienstes ändern, Update-Dienst
+wieder einschalten, Update verbergen, Gerät wieder einschalten (nur nach der Antwort „wieder
+einschalten“ auf die Frage zum Gerät). Was das Programm nicht selbst ausführt (Hosts-Datei,
+Treiber, Reparatur des Dateisystems, Speichertest), bleibt ein Hinweis ohne Schaltfläche.
+
+**Vorschau.** Der Klick öffnet zuerst eine Vorschau: Was passiert, Was bleibt, Risiko, dazu
+Sicherung, Rückweg, Dauer, der Hinweis auf einen nötigen Neustart und die Nachfrage von
+Windows. Erst „Jetzt ausführen“ startet; läuft gerade etwas anderes oder fehlt dem Befund
+ein Wert, steht der Grund in der Vorschau, und es gibt nur „Schließen“.
+
+**Nachweis.** Nach der Maßnahme liest das Programm den PC erneut und prüft am neuen Bild,
+ob sie gewirkt hat. Die Nachweiskarte oben im Ergebnis kennt drei Ergebnisarten: bestanden,
+nicht bestanden (der alte Zustand gilt nachweislich noch) und nicht messbar (der Wert ließ
+sich nicht lesen; das zählt nie als bestanden). Beim DNS-Cache belegt der Nachweis nur die
+Ausführung ohne Fehler, weil Windows den Zwischenspeicher nicht im Bild führt.
+
+**Rückgängig.** Maßnahmen, die einen Wert ändern, schreiben die alten Werte vorher in eine
+Sicherungsdatei unter `C:\ProgramData\WindowsWartung\sicherungen\massnahmen`; scheitert die
+Sicherung, wird nichts geändert. Nachweiskarte und Verlauf zeigen dann „Rückgängig“: nach
+einer Nachfrage schreibt der Helfer die Werte zurück, misst erneut und weist auch das nach.
+Die Dateien gehören dem Programm (Benutzer lesen nur); der Helfer spielt nur eine Datei
+zurück, die er selbst geschrieben hat. Ausnahme ohne „Rückgängig“: der Update-Dienst wird nie
+wieder abgeschaltet.
+
+**Freigaben in der automatischen Wartung.** In den Einstellungen unter „Was das Programm von
+selbst beheben darf“ lassen sich sechs Maßnahmen der Stufe 1 freischalten (DNS-Cache leeren,
+Virensignaturen aktualisieren, Schnellscan ausführen, Firewall einschalten, Laufwerk prüfen
+(nur Scan), Wiederherstellungspunkt anlegen); Voreinstellung: alle aus. Die geplante Wartung
+führt eine freigegebene Maßnahme nur aus, wenn die Prüfung sie in diesem Lauf vorschlägt,
+misst danach erneut und schreibt den Nachweis ins Protokoll.
+
 ## Alle Werkzeuge
+
+27 sichtbare Einträge in vier Kategorien. Drei Einträge aus 8.1 (gemerkte Internet-Adressen
+verwerfen, neue Netzwerk-Adresse vom Router holen, kurzer Virenscan) stehen seit 8.2 nicht
+mehr hier, sondern als Maßnahme an der passenden Karte der Prüfung, und nur dann, wenn die
+Prüfung den passenden Befund liefert: DNS-Cache leeren bei gestörter Namensauflösung, Adresse
+neu anfordern bei einer Notadresse 169.254.x.x oder einem fehlenden Router-Eintrag an einem
+DHCP-Anschluss, Schnellscan, wenn der letzte mehr als 14 Tage zurückliegt und in dieser Zeit
+kein Vollscan lief. Im Werkzeugkasten gibt es seit 8.2 keinen Schnellscan ohne Befund mehr; in
+der geplanten Wartung bleiben die Werkzeugsätze „Kurzen Virenscan starten“ und „Gemerkte
+Internet-Adressen verwerfen“ wählbar und laufen dann bei jeder Wartung, ohne Befund und ohne
+Nachweis. Eine Warteschlange aus einer früheren Fassung läuft damit weiter.
 
 **Reparieren**: Rundum-Reparatur, Windows über das Internet reparieren, Windows-Dateien
 prüfen und reparieren, nur nachsehen, alte Update-Reste löschen, nachsehen ob Aufräumen
 lohnt, Windows-Update von vorn starten, Festplatte beim Neustart prüfen, Drucker wieder zum
 Laufen bringen, Uhrzeit richtig stellen, Windows-Suche neu aufbauen
 
-**Netzwerk**: alle Interneteinstellungen zurücksetzen, gemerkte Internet-Adressen
-verwerfen, neue Netzwerk-Adresse vom Router holen
+**Netzwerk**: alle Interneteinstellungen zurücksetzen, Verbindung zu einer Seite testen
 
 **Aufräumen**: temporäre Dateien, heruntergeladene Update-Dateien, Papierkorb,
 Windows-Aufräumfenster, Vorschaubilder, Microsoft Store zurücksetzen
 
 **Diagnose**: Überblick über den PC, Festplatten auf Verschleiß prüfen, Akkubericht,
-kurzer Virenscan, Arbeitsspeicher prüfen, Abstürze anzeigen, Netzwerk-Daten, Startdauer
+Arbeitsspeicher prüfen, Abstürze anzeigen, Netzwerk-Daten, Startdauer, Gerätetreiber sichern
 
 Dazu: **Sicherungspunkte** anlegen und zurücksetzen, **automatische Wartung** nach Zeitplan,
 **Verlauf**, **Startprogramme** an- und abschalten, **vorinstallierte Apps** entfernen
@@ -117,8 +168,11 @@ ist bewusst eng, weil eine falsche Vermutung hier Programme kaputt macht:
   ausschließlich, was sich belegen lässt, nie eine Vermutung. Nichts ist dort
   vorausgewählt, und vor dem Entfernen steht eine Sicherung, die sich per Doppelklick
   zurückspielen lässt.
-- **Rückgängig vor Rückfrage.** Vor jedem Eingriff wird ein Sicherungspunkt angelegt, auch
-  bei den riskanten Aktionen. Bestätigungsdialoge gibt es nur, wo etwas unumkehrbar ist.
+- **Rückgängig vor Rückfrage.** Vor jedem Eingriff steht eine Sicherung: ein Sicherungspunkt
+  bei den Werkzeugen und der Reparatur, auch bei den riskanten Aktionen; die gemerkten Werte in
+  einer Sicherungsdatei bei den Maßnahmen, die einen Wert ändern (mit „Rückgängig“). Vor
+  jeder Maßnahme steht eine Vorschau mit „Jetzt ausführen“; eine zusätzliche Rückfrage gibt es
+  nur vor „Rückgängig“ und dort, wo etwas unumkehrbar ist.
 - **Keine erfundenen Diagnosen.** Gedeutet werden nur offiziell dokumentierte Fehlercodes
   und Meldungstexte. Unbekanntes bleibt unkommentiert.
 
@@ -139,8 +193,10 @@ Ergänzung der Messwerte laufen mit jedem Administratorkonto.
 
 **Datenablage.** Alles, was den PC betrifft, liegt unter `C:\ProgramData\WindowsWartung`:
 Protokolle je Lauf (`protokoll\`), Verlauf (`verlauf\history.json`), Zeitplan der geplanten
-Wartung (`zeitplan.json`), Sicherungen (`sicherungen\`), die gemerkten Antworten
-(`entscheidungen.json`) und das App-Protokoll (`logs\app.log`). Im Benutzerprofil
+Wartung mit den Freigaben (`zeitplan.json`), Sicherungen (`sicherungen\`, darunter die
+Sicherungsdateien der Maßnahmen in `sicherungen\massnahmen`, die dem Programm gehören und
+für Benutzer nur lesbar sind), die gemerkten Antworten (`entscheidungen.json`) und das
+App-Protokoll (`logs\app.log`). Im Benutzerprofil
 (`%LOCALAPPDATA%\WindowsWartung`) bleiben die Daten der Oberfläche (WebView2, Zoom) und die
 Arbeitsdateien eines Updates (`update\` mit Download und Sicherung der alten Fassung,
 `pending_update.txt` bis zum nächsten Start). Daten aus Version 8.0 werden beim ersten Start
@@ -202,7 +258,10 @@ C# 5 und lehnt jede höhere Sprachversion mit `CS1617` ab.
 ```
 
 `--view` versteht `light`, `dark`, eine Ansicht (`tools`, `history`, `settings`, `storage`,
-`registry` …) und `check` für einen automatisch gestarteten Prüflauf. Kommagetrennt
+`registry`, `schedule` …) und `check` für einen automatisch gestarteten Prüflauf; seit 8.2
+dazu `check,massnahme:<kennung>` (führt nach der Prüfung die erste Karte mit dieser Maßnahme
+aus, über die Vorschau) und `check,massnahme:<kennung>,rueckweg` (klickt danach „Rückgängig“).
+Beides braucht einen Helfer, also den Abnahmeweg aus `DEPLOYMENT.md`. Kommagetrennt
 kombinierbar. Die beiden Suchläufe starten beim Öffnen ihrer Ansicht von selbst, deshalb
 dort `--shotwait` großzügig setzen.
 

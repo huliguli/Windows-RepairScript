@@ -16,6 +16,8 @@ namespace WartungsToolbox.Proben
     /// Die Befunde der Widerlegungsrunde vom 2026-09-13 (WSC-Gesundheit, Defender im Normalmodus,
     /// SMB1-Serverkonfiguration, RDP-Richtlinie, Grund der Ausschlussliste, UAC-Neustart,
     /// Firewall-Rueckfallquelle, stille Fehlend-Faelle) haben je eine eigene Probe mit Datum.
+    /// Gegenlesen M3 vom 2026-09-18: Fremd-Firewall (Gruppe e2, im Speicher aus dem gesunden Bild
+    /// gepflanzt) und SmartScreen aus der Richtlinie (in der SmartScreen-Gruppe), je mit Datum.
     /// </summary>
     public static class SicherheitProben
     {
@@ -392,12 +394,23 @@ namespace WartungsToolbox.Proben
                     h.Ist("genau ein warn-Befund, fuer Profil 4", aus.Count == 1 && aus[0].Zustand == Zustand.Warn && aus[0].Schluessel == "sicherheit.firewall.aus.4");
                     h.Ist("Titel nennt Oeffentlich", aus.Count == 1 && aus[0].Titel.Contains("Öffentlich"));
                     h.Ist("Massnahme Firewall einschalten", aus.Count == 1 && aus[0].Massnahmen.Contains("sicherheit.firewall.einschalten"));
+                    // M3: je Profil ein Befund, das Profil steht als Parameter dabei (INetFwPolicy2.FirewallEnabled[profil]).
+                    h.Ist("Befund traegt Parameter profil = 4", aus.Count == 1 && aus[0].Parameter.ContainsKey(WartungsToolbox.Kern.Regeln.Sicherheit.ParamProfil) && aus[0].Parameter[WartungsToolbox.Kern.Regeln.Sicherheit.ParamProfil] == "4", aus.Count == 1 ? string.Join(",", aus[0].Parameter.Select(kv => kv.Key + "=" + kv.Value)) : null);
                     h.Ist("kein ok-Befund 'Firewall an'", Harness.Einer(erg, "sicherheit.firewall.an") == null);
                     // Eingehend = Allow (1) im privaten Profil -> warn.
                     s.Sicherheit.Firewall.Single(p => p.Profil == 4).An = true;
                     s.Sicherheit.Firewall.Single(p => p.Profil == 2).Eingehend = 1;
                     var erg2 = h.Pruefen(s);
                     alleBefunde.AddRange(Sicherheit(erg2));
+                    var eingehend2 = Harness.Einer(erg2, "sicherheit.firewall.eingehend.2");
+                    h.Ist("Gegenprobe: 'eingehend erlaubt' traegt weder Massnahme noch Parameter profil (nur melden)", eingehend2 != null && eingehend2.Massnahmen.Count == 0 && !eingehend2.Parameter.ContainsKey(WartungsToolbox.Kern.Regeln.Sicherheit.ParamProfil));
+                    // Zwei Profile aus: zwei Befunde, jeder mit seinem eigenen Profil als Parameter.
+                    s.Sicherheit.Firewall.Single(p => p.Profil == 4).An = false;
+                    s.Sicherheit.Firewall.Single(p => p.Profil == 1).An = false;
+                    var ausZwei = Harness.AlleMit(h.Pruefen(s), "sicherheit.firewall.aus").OrderBy(b => b.Schluessel).ToList();
+                    h.Ist("Profile 1 und 4 aus: zwei Befunde mit Parameter profil 1 und 4", ausZwei.Count == 2 && ausZwei[0].Parameter[WartungsToolbox.Kern.Regeln.Sicherheit.ParamProfil] == "1" && ausZwei[1].Parameter[WartungsToolbox.Kern.Regeln.Sicherheit.ParamProfil] == "4", string.Join(" | ", ausZwei.Select(b => b.Schluessel)));
+                    s.Sicherheit.Firewall.Single(p => p.Profil == 4).An = true;
+                    s.Sicherheit.Firewall.Single(p => p.Profil == 1).An = true;
                     h.Ist("Gegenprobe: alle an -> kein 'aus'-Befund", Harness.Einer(erg2, "sicherheit.firewall.aus") == null);
                     h.Ist("Eingehend Allow (1) im Profil 2 -> warn", Harness.Einer(erg2, "sicherheit.firewall.eingehend.2") != null && Harness.Einer(erg2, "sicherheit.firewall.eingehend.2").Zustand == Zustand.Warn);
                     // Rueckfall-Bild: Eingehend null (Persistent Store) -> kein Eingehend-Befund, ok-Befund ohne Block-Aussage.
@@ -418,6 +431,89 @@ namespace WartungsToolbox.Proben
                     s.Sicherheit.Firewall.Clear();
                     var erg4 = h.Pruefen(s);
                     h.Ist("keine Profile -> Fehlend 'Firewall-Status', kein Befund", Harness.Einer(erg4, "sicherheit.firewall") == null && Harness.Bereich(erg4, B).Fehlend.Contains("Firewall-Status"));
+                }
+            }
+
+            // ---------------------------------------------------------------- (e2) Fremd-Firewall
+            // Befund des Gegenlesens M3 (18.09.2026): eine in SecurityCenter2 registrierte Fremd-Firewall
+            // (Norton, ESET, Bitdefender, Kaspersky) schaltet die Windows-Firewall in allen Profilen ab;
+            // die Regel meldete das als "ohne Schutz erreichbar" und haengte "Firewall einschalten" an,
+            // als Freigabe jede Nacht erneut. Gepflanzt im Speicher aus dem gesunden Bild: drittFirewall
+            // gesetzt, drei Profile aus. Wirksamkeitsprobe 18.09.2026: "if (fremd) continue;" in Firewall() entfernt
+            // -> "kein 'aus'-Befund" und drei weitere rot (4 von 7810), zurueckgebaut.
+            h.Gruppe("Sicherheit (e2): Fremd-Firewall registriert, Windows-Profile aus");
+            {
+                var s = h.Bild("gepflanzt-sicherheit-gesund.json");
+                if (Grundmenge(h, s, "gesund"))
+                {
+                    const string P = WartungsToolbox.Kern.Regeln.Sicherheit.ParamProfil;
+                    s.Sicherheit.DrittFirewall.Add("Fremd Smart Firewall");
+                    foreach (var p in s.Sicherheit.Firewall) p.An = false;
+                    s.Sicherheit.FirewallGesundheit = Schwellen.VirenschutzGesundheitGut;
+                    h.Ist("Vorbedingung: 1 Fremd-Firewall, 3 Profile aus, WSC GOOD", s.Sicherheit.DrittFirewall.Count == 1 && s.Sicherheit.Firewall.Count == 3 && s.Sicherheit.Firewall.All(p => !p.An) && s.Sicherheit.FirewallGesundheit == 0);
+                    var erg = h.Pruefen(s);
+                    var ber = Harness.Bereich(erg, B);
+                    var fremd = Harness.AlleMit(erg, "sicherheit.firewall.fremd").ToList();
+                    h.Ist("genau ein Befund sicherheit.firewall.fremd, ok", fremd.Count == 1 && fremd[0].Schluessel == "sicherheit.firewall.fremd" && fremd[0].Zustand == Zustand.Ok, string.Join(" | ", fremd.Select(b => b.Schluessel + "=" + b.Zustand)));
+                    h.Ist("kein 'aus'-Befund, kein 'Firewall an'", Harness.Einer(erg, "sicherheit.firewall.aus") == null && Harness.Einer(erg, "sicherheit.firewall.an") == null);
+                    h.Ist("keine Kennung, kein Parameter profil", fremd.Count == 1 && fremd[0].Massnahmen.Count == 0 && !fremd[0].Parameter.ContainsKey(P));
+                    h.Ist("Titel 'Firewall eines anderen Herstellers', Satz nennt Produkt und '3 von 3'", fremd.Count == 1 && fremd[0].Titel == "Firewall eines anderen Herstellers" && fremd[0].Satz.Contains("„Fremd Smart Firewall“") && fremd[0].Satz.Contains("3 von 3"), fremd.Count == 1 ? fremd[0].Satz : null);
+                    h.Ist("Quelle WSC Provider FIREWALL, Messwert 0", fremd.Count == 1 && fremd[0].Quelle.Contains("WSC_SECURITY_PROVIDER_FIREWALL") && fremd[0].Messwert.Wert == "0", fremd.Count == 1 ? fremd[0].Quelle : null);
+                    h.Ist("Detail nennt alle 3 Profile mit 0 und die fehlende Maßnahme", fremd.Count == 1 && fremd[0].Detail.Any(d => d.Contains("Domäne 0") && d.Contains("Privat 0") && d.Contains("Öffentlich 0")) && fremd[0].Detail.Any(d => d.Contains("Keine Maßnahme")));
+                    h.Ist("Bereich nicht warn/bad durch die Firewall, kein Fehlend", KeinProblem(erg, "sicherheit.firewall") && !ber.Fehlend.Any(f => f.Contains("Firewall")), string.Join("; ", ber.Fehlend));
+                    h.Ist("DatenVorhanden", ber.DatenVorhanden);
+                    alleBefunde.AddRange(fremd);
+                    // POOR: abgeschaltet oder abgelaufen -> warn mit Rat, weiterhin ohne Kennung.
+                    s.Sicherheit.FirewallGesundheit = Schwellen.VirenschutzGesundheitSchlecht;
+                    var ergP = h.Pruefen(s);
+                    var poor = Harness.Einer(ergP, "sicherheit.firewall.fremd.aus");
+                    h.Ist("WSC POOR -> warn 'sicherheit.firewall.fremd.aus' mit Rat, ohne Kennung, Messwert 2", poor != null && poor.Zustand == Zustand.Warn && !string.IsNullOrEmpty(poor.Rat) && poor.Massnahmen.Count == 0 && poor.Messwert.Wert == "2", poor == null ? "fehlt" : poor.Rat);
+                    h.Ist("POOR: kein ok-Befund fremd daneben, kein 'aus.<profil>'", Harness.Befunde(ergP).All(b => b.Schluessel != "sicherheit.firewall.fremd") && Harness.Einer(ergP, "sicherheit.firewall.aus") == null);
+                    if (poor != null) alleBefunde.Add(poor);
+                    // SNOOZE: Pause -> warn, eigener Schluessel.
+                    s.Sicherheit.FirewallGesundheit = 3;
+                    var snooze = Harness.Einer(h.Pruefen(s), "sicherheit.firewall.fremd.pausiert");
+                    h.Ist("WSC SNOOZE -> warn 'sicherheit.firewall.fremd.pausiert' ohne Kennung", snooze != null && snooze.Zustand == Zustand.Warn && snooze.Massnahmen.Count == 0 && snooze.Satz.Contains("Schlummern"), snooze == null ? "fehlt" : snooze.Satz);
+                    if (snooze != null) alleBefunde.Add(snooze);
+                    // Gesundheit nicht gemessen (aeltere Aufzeichnung, wscsvc aus): unknown plus Fehlend, nie ok, nie warn.
+                    s.Sicherheit.FirewallGesundheit = null;
+                    var ergU = h.Pruefen(s);
+                    var unb = Harness.Einer(ergU, "sicherheit.firewall.fremd");
+                    h.Ist("Gesundheit null -> unknown, Rat auf Windows-Sicherheit, ohne Kennung, Fehlend nennt die Fremd-Firewall", unb != null && unb.Zustand == Zustand.Unknown && unb.Massnahmen.Count == 0 && (unb.Rat ?? "").Contains("Windows-Sicherheit") && Harness.Bereich(ergU, B).Fehlend.Any(f => f.Contains("Fremd-Firewall")), string.Join("; ", Harness.Bereich(ergU, B).Fehlend));
+                    h.Ist("unknown: Quelle FirewallProduct.displayName, Messwert 1 Produkt", unb != null && unb.Quelle == "SecurityCenter2.FirewallProduct.displayName" && unb.Messwert.Wert == "1");
+                    if (unb != null) alleBefunde.Add(unb);
+                    // NOTMONITORED (1): ebenfalls unknown, der Fehlend-Grund nennt das Sicherheitscenter.
+                    s.Sicherheit.FirewallGesundheit = 1;
+                    var ergN = h.Pruefen(s);
+                    h.Ist("WSC NOTMONITORED -> unknown, Fehlend 'vom Sicherheitscenter nicht überwacht'", Harness.Einer(ergN, "sicherheit.firewall.fremd") != null && Harness.Einer(ergN, "sicherheit.firewall.fremd").Zustand == Zustand.Unknown && Harness.Bereich(ergN, B).Fehlend.Any(f => f.Contains("nicht überwacht")));
+                    // Nur ein Profil aus: derselbe Weg, der Satz sagt "1 von 3", das Profil steht im Satz.
+                    s.Sicherheit.FirewallGesundheit = Schwellen.VirenschutzGesundheitGut;
+                    foreach (var p in s.Sicherheit.Firewall) p.An = p.Profil != 4;
+                    var ergE = h.Pruefen(s);
+                    var eins = Harness.Einer(ergE, "sicherheit.firewall.fremd");
+                    h.Ist("1 Profil aus bei Fremd-Firewall -> ok-Befund sagt '1 von 3' und 'Öffentlich', kein 'aus.4'", eins != null && eins.Zustand == Zustand.Ok && eins.Satz.Contains("1 von 3") && eins.Satz.Contains("„Öffentlich“") && Harness.Einer(ergE, "sicherheit.firewall.aus") == null, eins == null ? "fehlt" : eins.Satz);
+                    // Zwei Produkte: Satz zaehlt sie.
+                    s.Sicherheit.DrittFirewall.Add("Zweite Firewall");
+                    var zwei = Harness.Einer(h.Pruefen(s), "sicherheit.firewall.fremd");
+                    h.Ist("2 registrierte Produkte -> Satz sagt '2 Firewall-Programme' und nennt beide", zwei != null && zwei.Satz.Contains("2 Firewall-Programme") && zwei.Satz.Contains("„Zweite Firewall“"), zwei == null ? "fehlt" : zwei.Satz);
+                    s.Sicherheit.DrittFirewall.RemoveAt(1);
+                    // Gegenprobe: Fremd-Firewall registriert, aber alle Windows-Profile an -> 'Firewall an' bleibt, Detail nennt das Produkt.
+                    foreach (var p in s.Sicherheit.Firewall) p.An = true;
+                    var ergA = h.Pruefen(s);
+                    var an = Harness.Einer(ergA, "sicherheit.firewall.an");
+                    h.Ist("Gegenprobe: alle an trotz Fremd-Firewall -> 'Firewall an' ok, Detail nennt das Produkt, kein fremd-Befund", an != null && an.Zustand == Zustand.Ok && an.Detail.Any(d => d.Contains("„Fremd Smart Firewall“")) && Harness.Einer(ergA, "sicherheit.firewall.fremd") == null, an == null ? "fehlt" : string.Join(" | ", an.Detail));
+                    // Gegenprobe: keine Fremd-Firewall registriert, Profil 4 aus -> der alte Weg mit Kennung und Parameter bleibt.
+                    s.Sicherheit.DrittFirewall.Clear();
+                    s.Sicherheit.Firewall.Single(p => p.Profil == 4).An = false;
+                    var ergO = h.Pruefen(s);
+                    var alt = Harness.Einer(ergO, "sicherheit.firewall.aus.4");
+                    h.Ist("Gegenprobe: DrittFirewall leer + Profil 4 aus -> warn mit Kennung und profil = 4, kein fremd-Befund", alt != null && alt.Zustand == Zustand.Warn && alt.Massnahmen.Contains("sicherheit.firewall.einschalten") && alt.Parameter[P] == "4" && Harness.Einer(ergO, "sicherheit.firewall.fremd") == null);
+                    h.Ist("Gegenprobe: Detail des alten Wegs sagt, dass kein Fremdprodukt registriert ist", alt != null && alt.Detail.Any(d => d.Contains("FirewallProduct") && d.Contains("kein Fremdprodukt")));
+                    // Gegenprobe Wirksamkeit der Vorbedingung: Fremd-Firewall registriert, keine Profile gelesen -> Fehlend wie zuvor, kein fremd-Befund.
+                    s.Sicherheit.DrittFirewall.Add("Fremd Smart Firewall");
+                    s.Sicherheit.Firewall.Clear();
+                    var ergL = h.Pruefen(s);
+                    h.Ist("Fremd-Firewall registriert, keine Profile -> Fehlend 'Firewall-Status', kein Befund, DatenVorhanden", Harness.Einer(ergL, "sicherheit.firewall") == null && Harness.Bereich(ergL, B).Fehlend.Contains("Firewall-Status") && Harness.Bereich(ergL, B).DatenVorhanden);
                 }
             }
 
@@ -465,7 +561,26 @@ namespace WartungsToolbox.Proben
                     s.Sicherheit.SmartScreen = "Off";
                     var b = Harness.Einer(h.Pruefen(s), "sicherheit.smartscreen.aus");
                     h.Ist("SmartScreen Off -> warn mit Massnahme", b != null && b.Zustand == Zustand.Warn && b.Massnahmen.Contains("sicherheit.smartscreen.warn"));
+                    h.Ist("Off ohne Herkunft (aeltere Aufzeichnung): Quelle Explorer.SmartScreenEnabled, Detail sagt 'nicht gelesen'", b != null && b.Quelle == "Explorer.SmartScreenEnabled" && b.Detail.Any(d => d.Contains("Herkunft: nicht gelesen")));
                     if (b != null) alleBefunde.Add(b);
+                    // Befund des Gegenlesens M3 (18.09.2026): Off aus der Richtlinie EnableSmartScreen = 0 bekam die
+                    // Kennung, die der Helfer immer ablehnt (der lokale Wert wirkt unter der Richtlinie nicht), und
+                    // nannte Explorer.SmartScreenEnabled als Quelle, obwohl der Sammler den gar nicht gelesen hatte.
+                    // Wirksamkeitsprobe 18.09.2026: "verwaltet" in SmartScreen() fest auf false -> "ohne Kennung" und drei Richtlinien-Proben rot (4 von 7810), zurueckgebaut.
+                    s.Sicherheit.SmartScreenHerkunft = "richtlinie";
+                    var br = Harness.Einer(h.Pruefen(s), "sicherheit.smartscreen.aus");
+                    h.Ist("Off + Herkunft richtlinie -> warn ohne Kennung", br != null && br.Zustand == Zustand.Warn && br.Massnahmen.Count == 0, br == null ? "fehlt" : string.Join(",", br.Massnahmen));
+                    h.Ist("richtlinie: Quelle Policies\\System.EnableSmartScreen, Messwert 0, Einheit EnableSmartScreen", br != null && br.Quelle == "Policies\\System.EnableSmartScreen" && br.Messwert.Wert == "0" && br.Messwert.Einheit == "EnableSmartScreen", br == null ? "fehlt" : br.Quelle);
+                    h.Ist("richtlinie: Titel und Rat nennen die Richtlinie, Rat verlangt nicht 'wieder auf Warnen stellen' allein", br != null && br.Titel.Contains("Richtlinie") && br.Rat.Contains("Richtlinie") && !br.Rat.StartsWith("SmartScreen wieder auf"), br == null ? "fehlt" : br.Rat);
+                    h.Ist("richtlinie: Detail sagt, dass Explorer\\SmartScreenEnabled nicht wirkt und der Helfer ablehnt", br != null && br.Detail.Any(d => d.Contains("Herkunft: Richtlinie")) && br.Detail.Any(d => d.Contains("Keine Maßnahme")));
+                    if (br != null) alleBefunde.Add(br);
+                    s.Sicherheit.SmartScreenHerkunft = "lokal";
+                    var bl = Harness.Einer(h.Pruefen(s), "sicherheit.smartscreen.aus");
+                    h.Ist("Gegenprobe: Off + Herkunft lokal -> Kennung wie zuvor, Quelle Explorer.SmartScreenEnabled, Detail 'Herkunft: lokal'", bl != null && bl.Massnahmen.Contains("sicherheit.smartscreen.warn") && bl.Quelle == "Explorer.SmartScreenEnabled" && bl.Detail.Any(d => d.Contains("Herkunft: lokal")), bl == null ? "fehlt" : string.Join(" | ", bl.Detail));
+                    s.Sicherheit.SmartScreenHerkunft = "richtlinie";
+                    s.Sicherheit.SmartScreen = "Warn";
+                    h.Ist("Gegenprobe: Warn + Herkunft richtlinie -> kein Befund (die Richtlinie schaltet nur bei 0 ab)", Harness.Einer(h.Pruefen(s), "sicherheit.smartscreen") == null);
+                    s.Sicherheit.SmartScreenHerkunft = null;
                     s.Sicherheit.SmartScreen = "Block";
                     h.Ist("Gegenprobe: Block -> kein Befund", Harness.Einer(h.Pruefen(s), "sicherheit.smartscreen") == null);
                     s.Sicherheit.SmartScreen = null;

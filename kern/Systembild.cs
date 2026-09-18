@@ -263,7 +263,7 @@ namespace WartungsToolbox.Kern
         [DataMember(Name = "nvme")] public NvmeLog Nvme;
         [DataMember(Name = "tempWarn")] public int? TempWarn;
         [DataMember(Name = "tempKritisch")] public int? TempKritisch;
-        /// <summary>Registry DisableDeleteNotification: true = TRIM-Benachrichtigung von Windows aktiv (0), false = abgeschaltet (1), null = nicht lesbar. Gilt systemweit.</summary>
+        /// <summary>Registry DisableDeleteNotification, nur das NTFS-Bit (Bit 0): true = TRIM-Benachrichtigung von Windows aktiv (Bit 0 = 0), false = abgeschaltet (Bit 0 = 1), null = nicht lesbar. Gilt systemweit; Deutung in Massnahmen.TrimAn.</summary>
         [DataMember(Name = "trim")] public bool? Trim;
         /// <summary>StorageDeviceTrimProperty.TrimEnabled des Geraets; false bei SSDs hinter USB-Bruecken oder RAID-Controllern (kein Registry-Rat!), null = nicht abgefragt.</summary>
         [DataMember(Name = "trimGeraet")] public bool? TrimGeraet;
@@ -457,14 +457,20 @@ namespace WartungsToolbox.Kern
     {
         [DataMember(Name = "pfad")] public string Pfad;
         [DataMember(Name = "autor")] public string Autor;
-        /// <summary>TASK_STATE: 1 deaktiviert, 3 bereit, 4 laeuft.</summary>
+        /// <summary>TASK_STATE: 0 unbekannt, 1 deaktiviert, 2 wartet, 3 bereit, 4 laeuft.</summary>
         [DataMember(Name = "zustand")] public int Zustand;
+        /// <summary>IRegisteredTask.Enabled: false = Schalter umgelegt (deaktiviert), true = aktiv; null = nicht gelesen (aeltere Aufzeichnung). Der Zustand allein belegt das nicht: eine deaktivierte Aufgabe mit laufender Instanz meldet weiter 4 (Nachweis leistung.aufgabe.deaktivieren im Katalog).</summary>
+        [DataMember(Name = "aktiv")] public bool? Aktiv;
         [DataMember(Name = "logon")] public bool Logon;
         [DataMember(Name = "boot")] public bool Boot;
         [DataMember(Name = "letzterLauf")] public string LetzterLaufUtc;
         [DataMember(Name = "letztesErgebnis")] public long? LetztesErgebnis;
         /// <summary>true = Aufgabe dieses Programms selbst (WindowsWartung-Autostart, -AutoWartung); zaehlt nie als Fremd-Autostart.</summary>
         [DataMember(Name = "eigen")] public bool Eigen;
+        /// <summary>Pfad der ersten Exec-Aktion (IExecAction.Path, Umgebungsvariablen aufgeloest); null = keine Exec-Aktion (COM-Handler) oder nicht gelesen (aeltere Aufzeichnung).</summary>
+        [DataMember(Name = "aktionPfad")] public string AktionPfad;
+        /// <summary>Signatur-Urteil des Sammlers ueber AktionPfad wie bei AutostartEintrag: true = Microsoft-signiert, false = fremd oder unsigniert, null = nicht pruefbar (kein Pfad, Datei fehlt, aeltere Aufzeichnung). Die Regel Leistung.AufgabeMicrosoft nimmt true vor jeder Heuristik.</summary>
+        [DataMember(Name = "microsoft")] public bool? Microsoft;
     }
 
     [DataContract]
@@ -730,11 +736,17 @@ namespace WartungsToolbox.Kern
         /// <summary>BitLocker je Volume (Win32_EncryptableVolume, nur erhoeht); leer nicht erhoeht (fehlerliste: zugriff).</summary>
         [DataMember(Name = "bitlocker")] public List<BitlockerVolume> Bitlocker = new List<BitlockerVolume>();
         [DataMember(Name = "firewall")] public List<FirewallProfil> Firewall = new List<FirewallProfil>();
+        /// <summary>root\SecurityCenter2 FirewallProduct: displayName der registrierten Fremd-Firewalls (Suiten wie Norton, ESET, Bitdefender, Kaspersky; die Windows-Firewall traegt sich dort nicht ein). Leer = keine registriert oder nicht gelesen (aeltere Aufzeichnung).</summary>
+        [DataMember(Name = "drittFirewall")] public List<string> DrittFirewall = new List<string>();
+        /// <summary>WscGetSecurityProviderHealth(WSC_SECURITY_PROVIDER_FIREWALL = 1): 0 GOOD, 1 NOTMONITORED, 2 POOR, 3 SNOOZE; null = nicht abgefragt oder Fehler (Quelle api.wsc.firewall in der Fehlerliste).</summary>
+        [DataMember(Name = "firewallGesundheit")] public int? FirewallGesundheit;
         [DataMember(Name = "enableLua")] public int? EnableLua;
         [DataMember(Name = "consentAdmin")] public int? ConsentAdmin;
         [DataMember(Name = "secureDesktop")] public int? SecureDesktop;
         /// <summary>"Warn", "Block", "Off" oder null.</summary>
         [DataMember(Name = "smartScreen")] public string SmartScreen;
+        /// <summary>Woher SmartScreen stammt: "richtlinie" (SOFTWARE\Policies\Microsoft\Windows\System, EnableSmartScreen) oder "lokal" (Explorer\SmartScreenEnabled); null = nicht gelesen (aeltere Aufzeichnung). Bei "richtlinie" wirkt der lokale Wert nicht, die Regel haengt dann keine Massnahme an.</summary>
+        [DataMember(Name = "smartScreenHerkunft")] public string SmartScreenHerkunft;
         [DataMember(Name = "secureBoot")] public bool? SecureBoot;
         [DataMember(Name = "tpmVorhanden")] public bool? TpmVorhanden;
         [DataMember(Name = "tpmVersion")] public int? TpmVersion;
@@ -755,6 +767,7 @@ namespace WartungsToolbox.Kern
         void NachDemLesen(StreamingContext ctx)
         {
             if (DrittAv == null) DrittAv = new List<string>();
+            if (DrittFirewall == null) DrittFirewall = new List<string>();
             if (Firewall == null) Firewall = new List<FirewallProfil>();
             if (Konten == null) Konten = new List<Konto>();
             if (Bitlocker == null) Bitlocker = new List<BitlockerVolume>();

@@ -194,6 +194,9 @@ namespace WartungsToolbox.Proben
             h.Ist("genau ein Befund volume.C.scan", Harness.AlleMit(erg, "volume.C.").Count() == 1 && b != null);
             h.Ist("Zustand warn", b != null && b.Zustand == Zustand.Warn);
             h.Ist("Massnahme volume.scan", b != null && b.Massnahmen.Contains("volume.scan"));
+            // M3: volume.scan braucht den Buchstaben als Parameter (MSFT_Volume.DriveLetter).
+            h.Ist("Befund traegt Parameter buchstabe = C", b != null && b.Parameter.ContainsKey(Regel.ParamBuchstabe) && b.Parameter[Regel.ParamBuchstabe] == "C", b == null ? null : string.Join(",", b.Parameter.Select(kv => kv.Key + "=" + kv.Value)));
+            h.Ist("Gegenprobe: der ok-Befund volume.dateisystem traegt keinen Parameter buchstabe", Harness.Einer(erg, "volume.dateisystem") != null && !Harness.Einer(erg, "volume.dateisystem").Parameter.ContainsKey(Regel.ParamBuchstabe));
             h.Ist("kein Befund fuer D:", !Harness.AlleMit(erg, "volume.D.").Any());
             h.Ist("ok-Befund Dateisystem nennt D:, nicht C:", Harness.Einer(erg, "volume.dateisystem") != null && Harness.Einer(erg, "volume.dateisystem").Satz.Contains("D:") && !Harness.Einer(erg, "volume.dateisystem").Satz.Contains("C:"));
             h.Ist("keine Fehlend-Zeile zum Dirty-Bit (es war lesbar)", !Harness.Bereich(erg, Bereich.Datentraeger).Fehlend.Any(f => f.Contains("Kennzeichen")));
@@ -325,6 +328,8 @@ namespace WartungsToolbox.Proben
             h.Ist("D: warn mit Massnahme", d != null && d.Zustand == Zustand.Warn && d.Massnahmen.Contains("speicher.aufraeumen"));
             h.Ist("D: Satz nennt 15 %", d != null && d.Satz.Contains("15 %"), d == null ? null : d.Satz);
             h.Ist("E: ok ohne Massnahme, Satz sagt \"das reicht\"", e != null && e.Zustand == Zustand.Ok && e.Massnahmen.Count == 0 && e.Satz.Contains("das reicht"));
+            // M3: die Ansicht "Wo steckt der Platz?" bekommt den Buchstaben mit; ohne Massnahme kein Parameter.
+            h.Ist("C: und D: tragen Parameter buchstabe, E: nicht", c != null && d != null && e != null && c.Parameter[Speicherplatz.ParamBuchstabe] == "C" && d.Parameter[Speicherplatz.ParamBuchstabe] == "D" && !e.Parameter.ContainsKey(Speicherplatz.ParamBuchstabe));
             h.Ist("Bereich bad, DatenVorhanden", Harness.Bereich(erg, Bereich.Speicherplatz).Zustand == Zustand.Bad && Harness.Bereich(erg, Bereich.Speicherplatz).DatenVorhanden);
 
             // Gegenproben: 12 GB von 500 GB (2,4 %) bleibt bad ueber die Prozentregel; 30 GB von 100 GB (30 %) ok;
@@ -593,10 +598,13 @@ namespace WartungsToolbox.Proben
             h.Ist("Grundmenge: C 0xD00F, D 0xD00E, E 0xD00D", s.Volumes.Any(v => v.Buchstabe == "C" && v.OpStatus.Contains(0xD00F)) && s.Volumes.Any(v => v.Buchstabe == "D" && v.OpStatus.Contains(0xD00E)) && s.Volumes.Any(v => v.Buchstabe == "E" && v.OpStatus.Contains(0xD00D)));
             var erg = Pruefen(h, s);
             var c = Harness.Einer(erg, "volume.C.reparatur"); var d = Harness.Einer(erg, "volume.D.spotfix"); var e = Harness.Einer(erg, "volume.E.scan");
-            h.Ist("C: bad reparatur, Massnahme volume.reparatur", c != null && c.Zustand == Zustand.Bad && c.Massnahmen.Contains("volume.reparatur"));
+            // M3-Entwurf 8.5: die Kennungen sind Konstanten der Regel; ihre Werte sind die Katalog-Kennungen.
+            h.Ist("Konstanten der Regel tragen die Katalog-Kennungen (6)", Regel.MReparatur == "volume.reparatur" && Regel.MSpotfix == "volume.spotfix" && Regel.MScan == "volume.scan" && Regel.MOptimieren == "volume.optimieren" && Regel.MTrimEinschalten == "datentraeger.trim.einschalten" && Regel.MPunktAnlegen == "systemschutz.punkt.anlegen");
+            h.Ist("C: bad reparatur, Massnahme volume.reparatur", c != null && c.Zustand == Zustand.Bad && c.Massnahmen.Contains(Regel.MReparatur));
             h.Ist("C: Rat nennt Datensicherung und Neustart", c != null && c.Rat.Contains("Sichern") && c.Rat.Contains("Neustart"));
             h.Ist("D: warn spotfix, Massnahme volume.spotfix", d != null && d.Zustand == Zustand.Warn && d.Massnahmen.Contains("volume.spotfix"));
             h.Ist("E: warn scan, Massnahme volume.scan", e != null && e.Zustand == Zustand.Warn && e.Massnahmen.Contains("volume.scan"));
+            h.Ist("M3: jeder der drei Volume-Befunde traegt seinen Buchstaben als Parameter", c != null && d != null && e != null && c.Parameter[Regel.ParamBuchstabe] == "C" && d.Parameter[Regel.ParamBuchstabe] == "D" && e.Parameter[Regel.ParamBuchstabe] == "E");
             h.Ist("je Volume genau ein Befund", Harness.AlleMit(erg, "volume.C.").Count() == 1 && Harness.AlleMit(erg, "volume.D.").Count() == 1 && Harness.AlleMit(erg, "volume.E.").Count() == 1);
             h.Ist("kein ok-Befund Dateisystem (kein gesundes Volume)", Harness.Einer(erg, "volume.dateisystem") == null);
             h.Ist("Bereich bad", Harness.Bereich(erg, Bereich.Datentraeger).Zustand == Zustand.Bad);
@@ -621,7 +629,7 @@ namespace WartungsToolbox.Proben
             d0.Trim = false;
             var b = Genau(Pruefen(h, s), "datentraeger.0.trim");
             h.Ist("Registry-TRIM false auf SSD -> warn mit Massnahme datentraeger.trim.einschalten", b != null && b.Zustand == Zustand.Warn && b.Massnahmen.Contains("datentraeger.trim.einschalten"));
-            h.Ist("Registry-Befund: Satz nennt DisableDeleteNotification = 1, Quelle die Registry", b != null && b.Satz.Contains("DisableDeleteNotification = 1") && b.Quelle.Contains("DisableDeleteNotification"), b == null ? null : b.Satz);
+            h.Ist("Registry-Befund: Satz nennt das NTFS-Bit von DisableDeleteNotification = 1, Quelle die Registry", b != null && b.Satz.Contains("NTFS-Bit von DisableDeleteNotification = 1") && b.Quelle.Contains("DisableDeleteNotification"), b == null ? null : b.Satz);
             d0.Trim = null;
             var ergNull = Pruefen(h, s);
             h.Ist("Gegenprobe: TRIM null (Registry nicht lesbar) -> kein Befund, aber Fehlend-Zeile", Harness.Einer(ergNull, "datentraeger.0.trim") == null && Harness.Bereich(ergNull, Bereich.Datentraeger).Fehlend.Any(f => f.StartsWith("TRIM-Einstellung")), string.Join("; ", Harness.Bereich(ergNull, Bereich.Datentraeger).Fehlend));

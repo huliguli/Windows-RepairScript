@@ -26,8 +26,18 @@ namespace WartungsToolbox.Kern.Regeln
     public static class Updates
     {
         const string QuelleCom = "com.windowsupdate";
-        const string Verbergen = "update.verbergen";
-        const string EinstellungenOeffnen = "update.einstellungen.oeffnen";
+        public const string Verbergen = "update.verbergen";
+        public const string EinstellungenOeffnen = "update.einstellungen.oeffnen";
+        public const string DienstAktivieren = "update.dienst.aktivieren";
+
+        /// <summary>
+        /// Planparameter (docs/M3-ENTWURF.md, Abschnitt 1). update.verbergen braucht die UpdateID
+        /// (GUID, klein, ohne Klammern: dieselbe Form wie im Schluessel update.fehlschlag.&lt;id&gt;);
+        /// update.dienst.aktivieren den Dienstnamen (Win32_Service.Name, wie er im Bild unter
+        /// windowsUpdate.dienste steht: wuauserv, bits, cryptsvc, trustedinstaller).
+        /// </summary>
+        public const string ParamUpdateId = "updateId";
+        public const string ParamName = "name";
         /// <summary>ServiceID / serviceGuid des Microsoft Store (Doku "Windows Update service IDs"; gemessen am 13.09.2026 in Verlauf und Ereignis 19/20).</summary>
         const string StoreDienst = "855e8a7c-ecb4-4ca3-b045-1dfa50104289";
         /// <summary>IUpdateHistoryEntry.Operation (UpdateOperation): 1 Installation, 2 Deinstallation; 0 = Feld nicht ueberliefert (aeltere Bilder), zaehlt wie Installation.</summary>
@@ -193,7 +203,7 @@ namespace WartungsToolbox.Kern.Regeln
             }
             if (f.Codes.Count == 0) b.Detail.Add("Kein Fehlercode überliefert");
             b.Detail.Add("Zählung: Verlauf " + f.Verlauf + ", System-Protokoll " + f.Log + " (es zählt das Maximum, weil beide Quellen denselben Fehlschlag sehen können)");
-            b.Massnahmen.Add(Verbergen);
+            VerbergenAnhaengen(b, f);
             return b;
         }
 
@@ -238,7 +248,7 @@ namespace WartungsToolbox.Kern.Regeln
             foreach (string z in l.Zeiten.OrderByDescending(x => x).Take(6)) b.Detail.Add("Installiert " + z);
             b.Detail.Add("Zählung: Verlauf " + l.Verlauf + ", System-Protokoll " + l.Log + " (es zählt das Maximum)");
             b.Detail.Add("Ein Windows-Update-Reset löscht die Markierung „verborgen“; das System sichert verborgene Updates vorher und verbirgt sie danach erneut.");
-            b.Massnahmen.Add(Verbergen);
+            VerbergenAnhaengen(b, l);
             return b;
         }
 
@@ -376,10 +386,13 @@ namespace WartungsToolbox.Kern.Regeln
                     Quelle = "Win32_Service.StartMode (wuauserv)",
                     Titel = "Der Windows-Update-Dienst ist abgeschaltet",
                     Satz = "Der Dienst „Windows Update“ ist deaktiviert; so kann Windows keine Updates mehr installieren.",
-                    Rat = "Stellen Sie den Dienst wieder auf „Manuell“ (Standard); meist hat ein „Update-Blocker“-Programm ihn abgeschaltet.",
+                    // Der Rat sagt dasselbe wie die Massnahme update.dienst.aktivieren (Automatisch und
+                    // gestartet, M3-Entwurf 8.5), nicht "Manuell": eine Karte widerspricht ihrem Knopf nicht.
+                    Rat = "Stellen Sie den Dienst wieder auf „Automatisch“; meist hat ein „Update-Blocker“-Programm ihn abgeschaltet.",
                 };
                 DiensteDetail(u, b);
-                b.Massnahmen.Add("update.dienst.aktivieren");
+                b.Massnahmen.Add(DienstAktivieren);
+                b.Parameter[ParamName] = "wuauserv";
                 e.Befunde.Add(b);
             }
             // Die Helfer von Windows Update: ohne sie scheitern Download (BITS), Signaturpruefung
@@ -404,10 +417,11 @@ namespace WartungsToolbox.Kern.Regeln
                     Quelle = "Win32_Service.StartMode (" + h[0] + ")",
                     Titel = "Ein Hilfsdienst von Windows Update ist abgeschaltet",
                     Satz = "Der Dienst „" + h[1] + "“ ist deaktiviert; " + h[2],
-                    Rat = "Stellen Sie den Dienst wieder auf seine Standard-Startart; ein deaktivierter Hilfsdienst ist fast nie Absicht.",
+                    Rat = "Stellen Sie den Dienst wieder auf „Automatisch“; ein deaktivierter Hilfsdienst ist fast nie Absicht.",
                 };
                 DiensteDetail(u, b);
-                b.Massnahmen.Add("update.dienst.aktivieren");
+                b.Massnahmen.Add(DienstAktivieren);
+                b.Parameter[ParamName] = h[0];
                 e.Befunde.Add(b);
             }
         }
@@ -436,6 +450,23 @@ namespace WartungsToolbox.Kern.Regeln
         }
 
         // ---------------------------------------------------------------- Helfer
+
+        /// <summary>
+        /// update.verbergen nur mit einer Kennung, die der Helfer in die WUA-Suche
+        /// (UpdateID='...') stecken kann: eine GUID. Fehlt sie (Id "?": Verlaufseintrag ohne
+        /// UpdateID, Ereignis ohne updateGuid), bleibt der Befund ohne Massnahme und sagt es.
+        /// </summary>
+        static void VerbergenAnhaengen(Befund b, Fall f)
+        {
+            Guid g;
+            if (f.Id != null && Guid.TryParse(f.Id, out g))
+            {
+                b.Massnahmen.Add(Verbergen);
+                b.Parameter[ParamUpdateId] = f.Id;
+                return;
+            }
+            b.Detail.Add("Ohne UpdateID lässt sich das Update nicht gezielt verbergen; das geht dann nur über die Update-Einstellungen von Windows.");
+        }
 
         static Fall Holen(Dictionary<string, Fall> faelle, string updateId)
         {

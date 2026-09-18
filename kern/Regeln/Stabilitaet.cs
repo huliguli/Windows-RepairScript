@@ -453,8 +453,11 @@ namespace WartungsToolbox.Kern.Regeln
 
         /// <summary>
         /// Konzept 4.3: 1000 mit MsMpEng.exe >= DefenderEngineAbsturzWarn in ProgrammabsturzTage -> warn,
-        /// Massnahme Signaturen aktualisieren. Die Pruef-Engine (mpengine.dll) kommt mit den Signaturen;
-        /// "neu installieren" gibt es fuer diesen Dienst nicht.
+        /// Rat Signaturen aktualisieren. Die Pruef-Engine (mpengine.dll) kommt mit den Signaturen;
+        /// "neu installieren" gibt es fuer diesen Dienst nicht. Der Rat bleibt Text ohne Kennung
+        /// (M3-Entwurf 8.5): der Nachweis "Signaturen unter 1 Tag alt" ist bei Abstuerzen im
+        /// 30-Tage-Fenster meist schon vor der Massnahme erfuellt, und die geplante Wartung liefe
+        /// das Update 30 Tage lang taeglich als "bestanden, obwohl nichts geaendert".
         /// </summary>
         static void DefenderEngine(BereichErgebnis e, List<Ereignis> defender)
         {
@@ -472,7 +475,6 @@ namespace WartungsToolbox.Kern.Regeln
                 Rat = "Die Prüf-Engine ist Teil von Windows und wird mit den Signatur- und Plattform-Updates ersetzt: Signaturen aktualisieren, danach Windows Update ausführen. Neu installieren lässt sich der Dienst nicht.",
                 Detail = defender.OrderByDescending(x => x.ZeitUtc).Take(10)
                     .Select(x => Datum(x.ZeitUtc) + ": Modul " + (x.Feld("ModuleName") ?? x.Feld("3") ?? "?") + " (" + (x.Feld("ModulePath") ?? x.Feld("11") ?? "Pfad unbekannt") + "), Ausnahmecode " + (x.Feld("ExceptionCode") ?? x.Feld("6") ?? "?")).ToList(),
-                Massnahmen = new List<string> { Sicherheit.MassnahmeSignaturen },
             });
         }
 

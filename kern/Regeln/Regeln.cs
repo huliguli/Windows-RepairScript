@@ -37,6 +37,7 @@ namespace WartungsToolbox.Kern.Regeln
                     if (f.Zustand == null) f.Zustand = Kern.Zustand.Unknown;
                     if (f.Detail == null) f.Detail = new List<string>();
                     if (f.Massnahmen == null) f.Massnahmen = new List<string>();
+                    if (f.Parameter == null) f.Parameter = new Dictionary<string, string>();
                 }
             return liste;
         }

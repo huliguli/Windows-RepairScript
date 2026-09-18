@@ -1,5 +1,121 @@
 # Changelog
 
+## [8.2.0] - 2026-09-18
+
+Was die Prüfung findet, lässt sich jetzt an Ort und Stelle beheben: mit einer Vorschau vor dem
+Klick, einem Nachweis nach dem Lauf und „Rückgängig“ über die angelegte Sicherung. Nichts läuft
+ohne Ihren Klick, außer Sie geben es für die geplante Wartung ausdrücklich frei.
+
+### Neu
+
+- **„Beheben“ direkt an der Karte.** Jede Karte, deren Befund eine Maßnahme kennt, trägt die
+  Schaltfläche „Beheben: <Name der Maßnahme>“ (bei zwei Maßnahmen zwei Schaltflächen). 17
+  Maßnahmen hängen in dieser Fassung an Karten: DNS-Cache leeren, Adresse neu vom Router
+  anfordern, Namensserver auf automatisch zurücksetzen, Virensignaturen aktualisieren,
+  Schnellscan ausführen, Firewall einschalten, SmartScreen auf „Warnen“ stellen,
+  Benutzerkontensteuerung wieder einschalten, TRIM einschalten, Laufwerk prüfen (nur Scan),
+  Wiederherstellungspunkt anlegen, Startprogramm deaktivieren, Geplante Aufgabe deaktivieren,
+  Startart eines Dienstes ändern, Update-Dienst wieder einschalten, Update verbergen, Gerät
+  wieder einschalten. Ein Gerät wird nur eingeschaltet, wenn Sie die Frage dazu vorher mit
+  „wieder einschalten“ beantwortet haben. Was das Programm nicht selbst ausführt (Hosts-Datei,
+  Treiber, Reparatur des Dateisystems, Speichertest), bleibt ein Hinweis ohne Schaltfläche;
+  „Speicherplatz aufräumen“ und „Windows Update öffnen“ öffnen nur die passende Ansicht.
+- **Vorschau vor jedem Eingriff.** Der Klick auf „Beheben“ öffnet zuerst eine Vorschau mit
+  drei Absätzen (Was passiert, Was bleibt, Risiko), der Zeile „Sicherung, Rückweg, Dauer“, dem
+  Hinweis auf einen nötigen Neustart und der Nachfrage von Windows. Erst „Jetzt ausführen“
+  startet die Maßnahme; „Abbrechen“ lässt alles, wie es ist. Läuft gerade etwas anderes oder
+  fehlt dem Befund ein Wert, steht der Grund in der Vorschau, und es gibt nur „Schließen“.
+- **Nachweis nach dem Lauf.** Nach der Maßnahme liest das Programm den PC erneut und prüft am
+  neuen Bild, ob sie gewirkt hat. Die Nachweiskarte ganz oben im Ergebnis kennt drei
+  Ergebnisarten: **bestanden** (der neue Zustand ist belegt, der Satz nennt den Messwert),
+  **nicht bestanden** (der alte Zustand gilt nachweislich noch) und **nicht messbar** (der
+  Wert ließ sich nicht lesen, oder das Objekt ist im neuen Bild nicht mehr da; das zählt nie
+  als bestanden). Beim DNS-Cache belegt der Nachweis nur die Ausführung ohne Fehler, weil
+  Windows den Inhalt des Zwischenspeichers nicht im Bild führt; die Karte sagt das so. Braucht
+  die Änderung einen Neustart, steht das auf der Karte. Jeder Nachweis landet auch im Verlauf.
+- **„Rückgängig“ über die Sicherung.** Maßnahmen, die einen Wert ändern (Namensserver,
+  Firewall, SmartScreen, Benutzerkontensteuerung, TRIM, Startprogramm, Aufgabe, Dienst-Startart,
+  verborgenes Update, Gerät), schreiben die alten Werte vor dem Eingriff in eine
+  Sicherungsdatei; scheitert die Sicherung, wird nichts geändert. Die Nachweiskarte und der
+  Verlauf zeigen dann „Rückgängig“: ein Klick, eine Nachfrage, und der Helfer schreibt die
+  gesicherten Werte zurück, misst erneut und weist auch das nach. Die Datei bleibt liegen, ein
+  zweites „Rückgängig“ ist möglich.
+- **Freigaben für die geplante Wartung.** Die Einstellungen zur automatischen Wartung haben
+  den Abschnitt „Was das Programm von selbst beheben darf“ mit sechs Schaltern: DNS-Cache
+  leeren, Virensignaturen aktualisieren, Schnellscan ausführen, Firewall einschalten, Laufwerk
+  prüfen (nur Scan), Wiederherstellungspunkt anlegen. Voreinstellung: alle aus. Mit Haken führt
+  die geplante Wartung die Maßnahme nur aus, wenn die Prüfung sie in diesem Lauf vorschlägt;
+  danach misst sie erneut und schreibt den Nachweis ins Protokoll. Der Verlaufseintrag nennt
+  die Zahlen („2 Maßnahmen, 2 von 2 Nachweisen bestanden, 1 Sicherung angelegt“). Die
+  Werkzeugsätze der Wartung laufen wie bisher bei jeder Wartung.
+- **Werkzeugkasten: drei Einträge sind Maßnahmen geworden.** „Gemerkte Internet-Adressen
+  verwerfen“, „Neue Netzwerk-Adresse vom Router holen“ und „Kurzen Virenscan starten“ stehen
+  nicht mehr im Werkzeugkasten (27 Einträge statt 30); die Prüfung bietet sie als Maßnahme an
+  der passenden Karte an, mit Vorschau und Nachweis, und nur, wenn sie den passenden Befund
+  liefert: DNS-Cache leeren bei gestörter Namensauflösung, Adresse neu anfordern bei einer
+  Notadresse 169.254.x.x oder einem fehlenden Router-Eintrag an einem DHCP-Anschluss,
+  Schnellscan, wenn der letzte mehr als 14 Tage zurückliegt und in dieser Zeit kein Vollscan
+  lief. Im Werkzeugkasten gibt es damit keinen Schnellscan ohne Befund mehr; in der geplanten
+  Wartung bleiben die Werkzeugsätze „Kurzen Virenscan starten“ und „Gemerkte Internet-Adressen
+  verwerfen“ wählbar und laufen dann bei jeder Wartung, ohne Befund und ohne Nachweis. Eine
+  Warteschlange aus einer früheren Fassung mit einem der drei Einträge läuft weiter.
+
+### Behoben
+
+- **Ein frisch angelegter Wiederherstellungspunkt galt als „nicht angelegt“.** Windows meldet
+  das Anlegen sofort als erledigt, trägt den Punkt aber erst einige Sekunden später in die
+  Liste ein; das Programm las die Liste zu früh und meldete „Kein Wiederherstellungspunkt
+  vorhanden“, obwohl der Punkt da war (auf dem Entwicklungsrechner nach 2 Sekunden). Jetzt
+  liest es bis zu 30 Sekunden nach, bis die Nummer gestiegen ist, und nennt die Wartezeit.
+- **TRIM wurde als abgeschaltet gemeldet, obwohl es an war,** wenn Windows die Einstellung nur
+  für ein anderes Dateisystem (ReFS) abgeschaltet hatte. Gezählt wird jetzt nur die Einstellung
+  für NTFS, das Dateisystem Ihrer Laufwerke; Prüfung, Vorschau und Nachweis sprechen von
+  derselben Einstellung.
+- **Der Hinweis zum abgeschalteten Update-Dienst riet zu „Manuell (Standard)“;** richtig ist
+  „Automatisch“, und die Maßnahme „Update-Dienst wieder einschalten“ tut genau das: Startart
+  Automatisch und sofort starten.
+- **Der Zeitplan wird nie mehr halb geschrieben.** `zeitplan.json` entsteht erst als
+  Zwischendatei und wird dann in einem Zug ersetzt. Ist die Datei vorhanden, aber unlesbar,
+  werden Freigaben nicht gespeichert, und das Programm sagt es im Protokoll, statt den
+  Zeitplan still zu überschreiben.
+- **Bei einer Störung des Namensdienstes bietet die Karte „Namensdienst (DNS) antwortet nicht
+  richtig“ das Zurücksetzen der Namensserver nur noch an einem Anschluss an, der seine Adresse
+  per DHCP bezieht** (IPv4, verbunden); bei jedem anderen Anschluss bleibt dort der Hinweis, die
+  Einstellung von Hand zu prüfen. Die Hinweiskarte „Namensserver fest eingetragen“ hat keine
+  Schaltfläche.
+
+### Gut zu wissen
+
+- **Der Update-Dienst kennt kein „Rückgängig“.** „Update-Dienst wieder einschalten“ legt eine
+  Sicherung als Beleg an, aber das Programm schaltet Windows-Update-Dienste nie wieder ab; wer
+  das will, tut es in der Dienstverwaltung von Hand. Die Nachweiskarte sagt das an Stelle der
+  Schaltfläche.
+- **Sicherungsdateien gehören dem Programm.** Sie liegen unter
+  `C:\ProgramData\WindowsWartung\sicherungen\massnahmen`; Benutzer können sie lesen, aber nicht
+  ändern. Der Helfer spielt nur eine Datei zurück, die er selbst geschrieben hat (Besitzer,
+  Rechte und genau ein Dateiname werden geprüft); eine untergeschobene oder veränderte Datei
+  lehnt er ab.
+- **Zeitbudget der geplanten Wartung: 4 Stunden statt 2,** weil vor DISM und SFC jetzt eine
+  Messung, die freigegebenen Maßnahmen (ein Schnellscan bis 20 Minuten, ein Laufwerks-Scan bis
+  30 Minuten je Laufwerk) und die Nachmessung laufen. Das gilt für neu eingerichtete
+  Zeitpläne; ein bestehender Zeitplan behält 2 Stunden, bis Sie ihn in den Einstellungen neu
+  einrichten.
+- **Aufgaben mit Sonderzeichen im Namen bekommen keinen Schalter.** Enthält der Pfad einer
+  geplanten Aufgabe andere Zeichen als Buchstaben von A bis Z (ohne Umlaute), Ziffern,
+  Leerzeichen und `_ . - \ ( ) { }`, gibt das Programm ihn nicht an die Aufgabenplanung
+  weiter; eine Aufgabe „Sicherung Büro“ bekommt also keinen Schalter, und die Karte sagt dann,
+  dass die Aufgabe nur dort von Hand zu deaktivieren ist. Aufgaben von Windows Update, Windows Defender
+  und die eigene Wartungsaufgabe lassen sich hier nie deaktivieren.
+- **Die Maßnahme zur Benutzerkontensteuerung setzt zwei Werte:** den Schalter (EnableLUA auf
+  1, wirkt nach 1 Neustart) und die Nachfragestufe (ConsentPromptBehaviorAdmin auf 5, wirkt
+  sofort), jeweils nur, wenn der Wert 0 ist. „Rückgängig“ stellt beide alten Werte wieder her.
+- **Ein Nachweis, der nicht messbar ist, ist kein Erfolg.** Kann das Programm den Wert nach
+  der Maßnahme nicht lesen, zeigt die Karte „Nachweis nicht messbar“ mit dem Grund; in der
+  geplanten Wartung zählt das als nicht bestanden.
+- **„Wiederherstellungspunkt anlegen“ hebt die 24-Stunden-Sperre von Windows dauerhaft auf**
+  (SystemRestorePointCreationFrequency 0), sonst entstünde nach einem Punkt vom selben Tag
+  kein zweiter.
+
 ## [8.1.0] - 2026-09-13
 
 Das Programm startet ohne die Nachfrage von Windows. Administratorrechte holt es sich erst,

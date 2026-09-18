@@ -62,6 +62,14 @@ namespace WartungsToolbox
         /// </summary>
         public string Title { get { return _title; } }
 
+        /// <summary>
+        /// Ergebnis des zuletzt beendeten Plans (null, solange keiner lief, ein neuer laeuft,
+        /// oder der Helfer nicht zustande kam). Done (ShellForm) liest daraus den Satz zur
+        /// geplanten Wartung (AutoRunner.MassnahmenSatz), der sonst nur in den Konsolenzeilen
+        /// stuende; gesetzt im Hintergrund-Thread, bevor das Ende an die Oberflaeche geht.
+        /// </summary>
+        public PlanErgebnis LetztesErgebnis { get; private set; }
+
         public CommandRunner(Control ui, Action<string, LogKind> log, Action<bool> onState,
                              Action<string, LogKind, string, double> onComplete, Action<int> onProgress)
         {
@@ -123,6 +131,7 @@ namespace WartungsToolbox
             _cancel = false;
             _ausfuehrer = null;
             _abbruchNachgereicht = 0;
+            LetztesErgebnis = null;
             _ende.Reset();
             // Mit der Plan-Id laesst sich das lauf-<planId>.jsonl des Helfers im app.log
             // zuordnen; das Ende schreibt Lauf ("Lauf beendet") im Hintergrund-Thread.
@@ -189,6 +198,7 @@ namespace WartungsToolbox
                     {
                         _ausfuehrer = a;
                         PlanErgebnis erg = Ausfuehren(a, plan);
+                        LetztesErgebnis = erg;
                         sw.Stop();
                         Abschluss(erg, sw.Elapsed.TotalSeconds, out fk, out fmsg);
                     }

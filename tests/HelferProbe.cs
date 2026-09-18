@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Pipes;
+using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
@@ -26,6 +27,25 @@ namespace WartungsToolbox
     ///       Stand beim naechsten Start zurueck).
     ///   (e) Protokoll.LaufIdGueltig und der Konstruktor: eine Lauf-Id wird Dateiname; eine Id
     ///       mit Pfadzeichen darf den erhoehten Helfer nie an eine fremde Stelle schreiben lassen.
+    ///   (f) Sicherungsdatei, Herkunft (docs/M3-ENTWURF.md 8.2, 8.10, 10.1 Punkt 3): der Rueckweg
+    ///       schreibt die Werte aus der Datei erhoeht zurueck (Firewall aus, EnableLUA 0), also darf
+    ///       nur eine Datei gelten, die der erhoehte Helfer selbst geschrieben hat. Erhoeht (CI):
+    ///       Schreiben legt die Datei mit Besitzer Administratoren, Vererbung aus und genau drei
+    ///       Eintraegen an, Lesen nimmt sie; ein anderer Besitzer, ein vierter Eintrag oder ein
+    ///       zweiter Name (Hardlink) wird abgelehnt. Nicht erhoeht: Schreiben wirft, und eine Datei
+    ///       des Nutzers wird abgelehnt. Namen mit Pfadzeichen, Leerzeichen oder falscher Endung
+    ///       enden in ArgumentException; der Trockenlauf schreibt nichts.
+    ///   (g) Rueckweg-Inhalt (10.1 Punkt 4): RueckwegMassnahmen.InhaltPruefen und die beiden
+    ///       Bereichspruefungen lehnen untergeschobene Werte ab (Dienst aus NieDeaktivieren auf
+    ///       Disabled, FirewallEnabled 2, SmartScreen "Off;calc", EnableLUA 7, DNS "8.8.8.8;evil",
+    ///       Instanz-Id mit Apostroph, update.dienst.aktivieren bei jedem Vorwert) und nehmen die
+    ///       gueltigen Gegenstuecke an.
+    ///   (h) Kennungen zur Laufzeit (10.1 Punkt 1): MassnahmenM3.Alle() wird aufgerufen, und jede
+    ///       Kennung geht als Zeile "kennung: ..." nach stdout; die Suite haelt diese Menge gegen ihre
+    ///       feste Liste. Ein Grep ueber Massnahmenbau.Neu("...") sieht eine Massnahme nicht, die
+    ///       wie wartung.massnahmen per Objektinitialisierer angemeldet wird (Gegenlesen 18.09.2026:
+    ///       eine so eingebaute Kennung blieb der Suite verborgen); die Laufzeitmenge ist genau das,
+    ///       was der Helfer kennt.
     ///
     /// Uebersetzt wird mit allem ausser host\ (Pipe.cs zieht Messung und Ausfuehrung nach sich),
     /// siehe tests\run-tests.ps1. Ausgabe [ok]/[FEHL] je Teilpruefung, Exit 1 bei mindestens einem Rot.
@@ -33,16 +53,29 @@ namespace WartungsToolbox
     static class HelferProbe
     {
         static int fehler = 0;
+        static int geprueft = 0;
+
+        // Die Gruppen (a) bis (h) mit ihrem Namen auf der Kommandozeile. Ohne Argument laufen alle
+        // (Probe 7 der Suite); mit Namen nur diese, damit die Suite Sicherungsdatei, Rueckweg-Inhalt
+        // und Kennungen in eigenen Pruefungen zaehlen kann (docs/M3-ENTWURF.md 10.1, Punkte 1, 3 und 4).
+        static readonly string[] Gruppen = { "pipe", "rechte", "uebernahme", "abschluss", "laufid", "sicherung", "rueckweg", "kennungen" };
 
         static void Ist(string was, bool bedingung, string detail)
         {
             Console.WriteLine((bedingung ? "         [ok]   " : "         [FEHL] ") + was +
                               (detail.Length > 0 ? "   " + detail : ""));
+            geprueft++;
             if (!bedingung) fehler++;
         }
 
         static void Main(string[] args)
         {
+            var nur = new HashSet<string>(args ?? new string[0], StringComparer.OrdinalIgnoreCase);
+            foreach (string g in nur)
+                if (Array.IndexOf(Gruppen, g.ToLowerInvariant()) < 0)
+                    Ist("Gruppe \"" + g + "\" gibt es nicht (bekannt: " + string.Join(", ", Gruppen) + ")", false, "");
+            Func<string, bool> laeuft = g => nur.Count == 0 || nur.Contains(g);
+
             string ordner = Path.Combine(Path.GetTempPath(),
                 "WW-HelferProbe-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             Directory.CreateDirectory(ordner);
@@ -53,11 +86,14 @@ namespace WartungsToolbox
 
             try
             {
-                PruefePipeSicherheit();
-                PruefeRechteSichern(ordner);
-                PruefeUebernehmen(ordner);
-                PruefeUebernahmeAbschliessen(ordner);
-                PruefeLaufId(ordner);
+                if (laeuft("pipe")) PruefePipeSicherheit();
+                if (laeuft("rechte")) PruefeRechteSichern(ordner);
+                if (laeuft("uebernahme")) PruefeUebernehmen(ordner);
+                if (laeuft("abschluss")) PruefeUebernahmeAbschliessen(ordner);
+                if (laeuft("laufid")) PruefeLaufId(ordner);
+                if (laeuft("sicherung")) PruefeSicherungsdatei(ordner);
+                if (laeuft("rueckweg")) PruefeRueckwegInhalt();
+                if (laeuft("kennungen")) PruefeKennungen(nur.Contains("kennungen"));
             }
             catch (Exception ex)
             {
@@ -66,10 +102,15 @@ namespace WartungsToolbox
             finally
             {
                 Protokoll.OrdnerFuerProbe = null;
+                Helfer.Sicherungsdatei.OrdnerFuerProbe = null;
                 AppLog.PfadFuerProbe = null;
+                // Der Sicherungsordner der Probe traegt nach (f) erhoeht die geschuetzte DACL (Benutzer nur
+                // Lesen); Administratoren duerfen ihn trotzdem loeschen. Nicht erhoeht blieb er, wie er war.
                 try { Directory.Delete(ordner, true); } catch { }
             }
 
+            // Eine leere Antwort ist kein bestandener Lauf: ohne eine einzige Teilpruefung Exit 1.
+            if (geprueft == 0) Ist("mindestens eine Teilpruefung ist gelaufen", false, "keine");
             Environment.Exit(fehler == 0 ? 0 : 1);
         }
 
@@ -238,6 +279,340 @@ namespace WartungsToolbox
 
             var gut = new Protokoll("probe-1");
             Ist("eine gueltige Id bleibt erhalten", gut.LaufId == "probe-1", gut.LaufId);
+        }
+
+        // ---- (f) Sicherungsdatei: Herkunft statt Ort ---------------------------------------
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool CreateHardLinkW(string lpFileName, string lpExistingFileName, IntPtr lpSecurityAttributes);
+
+        /// <summary>Lesen muss mit ArgumentException enden; liefert die Meldung ("" = nicht geworfen, sonst Typ und Text).</summary>
+        static string LesenAbgelehnt(string name)
+        {
+            try { Helfer.Sicherungsdatei.Lesen(name); return ""; }
+            catch (ArgumentException ex) { return ex.Message; }
+            catch (Exception ex) { return "(" + ex.GetType().Name + ") " + ex.Message; }
+        }
+
+        /// <summary>Lesen muss gelingen; null = gelungen mit der erwarteten Kennung, sonst der Grund.</summary>
+        static string LesenGelingt(string name)
+        {
+            try
+            {
+                Helfer.Sicherung s = Helfer.Sicherungsdatei.Lesen(name);
+                return s != null && s.Kennung == "probe.kennung" && s.Wert("x") == "1" ? null : "Inhalt weicht ab";
+            }
+            catch (Exception ex) { return ex.GetType().Name + ": " + ex.Message; }
+        }
+
+        static void PruefeSicherungsdatei(string wurzel)
+        {
+            // Der Ordner heisst wie im Programm (sicherungen\massnahmen unter einer Wurzel), damit
+            // ErwarteterPfad denselben Elternordner sieht; angelegt wird er hier plain, mit den
+            // geerbten Rechten des Temp-Ordners - genau der Zustand, den Schreiben vorfindet, wenn
+            // ein Benutzer den Ordner vor der ersten Stufe-2-Massnahme angelegt hat.
+            string ordner = Path.Combine(wurzel, "sicherungen", "massnahmen");
+            Directory.CreateDirectory(ordner);
+            Helfer.Sicherungsdatei.OrdnerFuerProbe = ordner;
+            bool erhoeht = Sammler.Quellen.Rechte.Erhoeht();
+            string eigene, tokenBesitzer;
+            using (WindowsIdentity wi = WindowsIdentity.GetCurrent()) { eigene = wi.User.Value; tokenBesitzer = wi.Owner == null ? "?" : wi.Owner.Value; }
+            var admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+            var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+            // Der Standardbesitzer des Tokens (TokenOwner) wird Besitzer jeder neuen Datei, die ohne
+            // ausdruecklichen Besitzer angelegt wird; ein UAC-erhoehter Token traegt Administratoren.
+            // Gemessen 18.09.2026: eine erhoehte Shell aus Git-Bash trug das Konto selbst, und
+            // Schreiben verwarf dort jede Datei ("Besitzer ... statt Administratoren"). Die Zeile
+            // nennt ihn, damit ein Rot in dieser Gruppe sofort einzuordnen ist.
+            Console.WriteLine("         Sicherungsdatei-Probe laeuft " + (erhoeht ? "erhoeht" : "nicht erhoeht") + " (Standardbesitzer des Tokens " + tokenBesitzer + "): " + ordner);
+
+            // Eine Datei, die nicht der Helfer geschrieben hat: gueltiger Name, gueltiger Inhalt,
+            // aber Besitzer und Rechte des Aufrufers (nicht erhoeht: Besitzer das Konto; erhoeht:
+            // Besitzer Administratoren, aber geerbte statt der geschuetzten Rechte). Beides ist fremd.
+            string fremdName = "20260918-000000-probe.kennung-frmd.json";
+            var fremd = new Helfer.Sicherung { Kennung = "probe.kennung", Zeit = "2026-09-18T00:00:00Z" };
+            fremd.Vorher["x"] = "1";
+            File.WriteAllText(Path.Combine(ordner, fremdName), Json.Schreiben(fremd, true), new UTF8Encoding(false));
+            string grund = LesenAbgelehnt(fremdName);
+            Ist("Lesen lehnt eine Datei ab, die nicht der Helfer geschrieben hat (Besitzer/Rechte)", grund.Length > 0 && grund.Contains("stammt nicht vom Helfer"), grund);
+
+            // Ein zweiter Name auf diese fremde Datei: beide Namen bleiben abgelehnt (nicht erhoeht
+            // schon am Besitzer, erhoeht an den Rechten oder an der Zahl der Namen).
+            string fremdLink = "20260918-000000-probe.kennung-frml.json";
+            bool linkOk = CreateHardLinkW(Path.Combine(ordner, fremdLink), Path.Combine(ordner, fremdName), IntPtr.Zero);
+            Ist("Hardlink auf die fremde Datei liess sich anlegen (sonst misst die naechste Zeile nichts)", linkOk, "Win32-Fehler " + Marshal.GetLastWin32Error());
+            if (linkOk)
+            {
+                Ist("beide Namen der fremden Datei werden abgelehnt",
+                    LesenAbgelehnt(fremdName).Length > 0 && LesenAbgelehnt(fremdLink).Length > 0, "");
+                File.Delete(Path.Combine(ordner, fremdLink));
+            }
+
+            // Namen, die keine Sicherungsdatei sind: Pfadzeichen, Elternverweis, Leerzeichen, falsche
+            // Endung, leer. Jeder endet in ArgumentException, bevor irgendetwas geoeffnet wird.
+            foreach (string name in new[] { "a\\b.json", "..\\x.json", "a b.json", "x.txt", "", "C:\\Windows\\win.ini" })
+            {
+                string g = LesenAbgelehnt(name);
+                Ist("Lesen lehnt den Namen \"" + name + "\" mit ArgumentException ab", g.Length > 0 && !g.StartsWith("("), g);
+            }
+            bool fehlt = false;
+            try { Helfer.Sicherungsdatei.Lesen("gibt-es-nicht-0123.json"); } catch (FileNotFoundException) { fehlt = true; } catch (Exception) { }
+            Ist("Lesen einer fehlenden Datei wirft FileNotFoundException", fehlt, "");
+
+            // Der Trockenlauf schreibt keine Datei und liefert null (Plan A der Suite zaehlt zusaetzlich
+            // den echten Ordner vorher und nachher).
+            int vorher = Directory.GetFiles(ordner).Length;
+            var trocken = new Helfer.Ausfuehrungskontext { Trocken = true };
+            string trockenPfad = Helfer.Sicherungsdatei.Schreiben(trocken, "probe.kennung", null, fremd.Vorher);
+            Ist("Schreiben im Trockenlauf liefert null und legt keine Datei an",
+                trockenPfad == null && Directory.GetFiles(ordner).Length == vorher, Directory.GetFiles(ordner).Length + " Dateien");
+
+            // Eine Kennung, die kein Dateiname sein darf, wird VOR dem Trocken-Zweig abgelehnt.
+            bool kennungGeworfen = false;
+            try { Helfer.Sicherungsdatei.Schreiben(trocken, "Probe Kennung", null, null); } catch (ArgumentException) { kennungGeworfen = true; }
+            Ist("Schreiben mit einer Kennung ausserhalb von [a-z0-9.] wirft ArgumentException", kennungGeworfen, "");
+
+            // Jetzt der echte Schreibweg. Erhoeht: die Datei entsteht mit Besitzer Administratoren und
+            // der geschuetzten DACL. Nicht erhoeht: der Ordner gehoert dem Konto, SeTakeOwnershipPrivilege
+            // fehlt, Schreiben wirft InvalidOperationException; kaeme dennoch eine Datei zustande,
+            // gehoerte sie dem Nutzer, und Lesen muesste sie ablehnen (beides gilt, Vertrag 10.1 Punkt 3).
+            string pfad = null;
+            string schreibFehler = null;
+            try { pfad = Helfer.Sicherungsdatei.Schreiben(null, "probe.kennung", null, fremd.Vorher); }
+            catch (InvalidOperationException ex) { schreibFehler = ex.Message; }
+            catch (Exception ex) { schreibFehler = "(" + ex.GetType().Name + ") " + ex.Message; }
+
+            if (!erhoeht)
+            {
+                if (pfad == null)
+                    Ist("nicht erhoeht: Schreiben wirft InvalidOperationException (nichts gesichert)",
+                        schreibFehler != null && !schreibFehler.StartsWith("("), schreibFehler ?? "");
+                else
+                    Ist("nicht erhoeht: die geschriebene Datei gehoert dem Nutzer, Lesen lehnt sie ab",
+                        LesenAbgelehnt(Path.GetFileName(pfad)).Length > 0, pfad);
+                return;
+            }
+
+            // ---- ab hier nur erhoeht (CI-Runner, erhoehte Werkzeug-Shell) ----
+            string hinweis = schreibFehler ?? pfad ?? "";
+            if (pfad == null && tokenBesitzer != admins.Value && tokenBesitzer != system.Value)
+                hinweis += " [der Token traegt " + tokenBesitzer + " als Standardbesitzer; Sicherungsdatei.DateiSchreiben setzt den Besitzer nicht selbst]";
+            Ist("erhoeht: Schreiben liefert einen Pfad im Probenordner", pfad != null && File.Exists(pfad) && string.Equals(Path.GetDirectoryName(pfad), ordner, StringComparison.OrdinalIgnoreCase), hinweis);
+            if (pfad == null) return;
+            string name1 = Path.GetFileName(pfad);
+
+            FileSecurity sec = File.GetAccessControl(pfad, AccessControlSections.Owner | AccessControlSections.Access);
+            var besitzer = sec.GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
+            int eintraege = 0;
+            string gesehen = "";
+            foreach (FileSystemAccessRule r in sec.GetAccessRules(true, true, typeof(SecurityIdentifier)))
+            {
+                eintraege++;
+                gesehen += r.IdentityReference.Value + ":" + r.FileSystemRights + (r.IsInherited ? " geerbt" : "") + "; ";
+            }
+            Ist("die Datei gehoert Administratoren oder SYSTEM", besitzer != null && (besitzer == admins || besitzer == system), besitzer == null ? "kein Besitzer" : besitzer.Value);
+            Ist("Vererbung aus, genau drei Eintraege (SYSTEM, Administratoren, Benutzer)", sec.AreAccessRulesProtected && eintraege == 3, gesehen);
+            Ist("Lesen nimmt die Datei des Helfers an", LesenGelingt(name1) == null, LesenGelingt(name1) ?? "");
+
+            // Besitzer auf das eigene Konto: dieselbe Datei, dieselben Rechte, anderer Besitzer - fremd.
+            FileSecurity wechsel = File.GetAccessControl(pfad, AccessControlSections.Owner);
+            wechsel.SetOwner(new SecurityIdentifier(eigene));
+            File.SetAccessControl(pfad, wechsel);
+            grund = LesenAbgelehnt(name1);
+            Ist("Besitzer auf das eigene Konto gesetzt: Lesen lehnt ab (stammt nicht vom Helfer)", grund.Contains("stammt nicht vom Helfer"), grund);
+            wechsel = File.GetAccessControl(pfad, AccessControlSections.Owner);
+            wechsel.SetOwner(admins);
+            File.SetAccessControl(pfad, wechsel);
+            Ist("Besitzer wieder Administratoren: Lesen nimmt die Datei wieder an", LesenGelingt(name1) == null, LesenGelingt(name1) ?? "");
+
+            // Ein vierter Eintrag (Lesen fuer das eigene Konto): nicht mehr genau die geschuetzte DACL.
+            var zusatz = new FileSystemAccessRule(new SecurityIdentifier(eigene), FileSystemRights.Read, AccessControlType.Allow);
+            FileSecurity dacl = File.GetAccessControl(pfad, AccessControlSections.Access);
+            dacl.AddAccessRule(zusatz);
+            File.SetAccessControl(pfad, dacl);
+            grund = LesenAbgelehnt(name1);
+            Ist("ein zusaetzlicher Eintrag fuer das eigene Konto: Lesen lehnt ab", grund.Contains("stammt nicht vom Helfer"), grund);
+            dacl = File.GetAccessControl(pfad, AccessControlSections.Access);
+            dacl.RemoveAccessRule(zusatz);
+            File.SetAccessControl(pfad, dacl);
+            Ist("Eintrag wieder entfernt: Lesen nimmt die Datei wieder an", LesenGelingt(name1) == null, LesenGelingt(name1) ?? "");
+
+            // Ein zweiter Name auf die Datei des Helfers: Besitzer und Rechte stimmen an beiden Namen,
+            // nur die Zahl der Namen am Handle verraet es. Beide Namen werden abgelehnt.
+            string linkName = "20260918-000000-probe.kennung-link.json";
+            string linkPfad = Path.Combine(ordner, linkName);
+            bool link2 = CreateHardLinkW(linkPfad, pfad, IntPtr.Zero);
+            Ist("Hardlink auf die Datei des Helfers liess sich anlegen", link2, "Win32-Fehler " + Marshal.GetLastWin32Error());
+            if (link2)
+            {
+                string g1 = LesenAbgelehnt(name1), g2 = LesenAbgelehnt(linkName);
+                Ist("Hardlink: der Originalname wird abgelehnt (mehr als ein Name)", g1.Contains("mehr als einen Namen"), g1);
+                Ist("Hardlink: der zweite Name wird abgelehnt", g2.Contains("mehr als einen Namen"), g2);
+                File.Delete(linkPfad);
+                Ist("Hardlink entfernt: Lesen nimmt die Datei wieder an", LesenGelingt(name1) == null, LesenGelingt(name1) ?? "");
+            }
+
+            // Ein zweites Schreiben ueberschreibt nie: neuer Name, beide Dateien bleiben.
+            string pfad2 = Helfer.Sicherungsdatei.Schreiben(null, "probe.kennung", null, fremd.Vorher);
+            Ist("ein zweites Schreiben bekommt einen eigenen Namen, die erste Datei bleibt",
+                pfad2 != null && !string.Equals(pfad2, pfad, StringComparison.OrdinalIgnoreCase) && File.Exists(pfad) && File.Exists(pfad2), (pfad2 ?? "") + " neben " + pfad);
+
+            // Der Ordner selbst: Besitzer Administratoren, Vererbung aus, Benutzer nur Lesen.
+            DirectorySecurity ds = new DirectoryInfo(ordner).GetAccessControl(AccessControlSections.Owner | AccessControlSections.Access);
+            var ordnerBesitzer = ds.GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
+            bool benutzerSchreiben = false;
+            var benutzer = new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null);
+            foreach (FileSystemAccessRule r in ds.GetAccessRules(true, true, typeof(SecurityIdentifier)))
+                if (r.IdentityReference == benutzer && r.AccessControlType == AccessControlType.Allow && (r.FileSystemRights & FileSystemRights.WriteData) != 0) benutzerSchreiben = true;
+            Ist("der Sicherungsordner gehoert Administratoren oder SYSTEM, Vererbung aus, Benutzer ohne Schreibrecht",
+                ordnerBesitzer != null && (ordnerBesitzer == admins || ordnerBesitzer == system) && ds.AreAccessRulesProtected && !benutzerSchreiben,
+                (ordnerBesitzer == null ? "kein Besitzer" : ordnerBesitzer.Value) + ", geschuetzt=" + ds.AreAccessRulesProtected + ", BenutzerSchreiben=" + benutzerSchreiben);
+        }
+
+        // ---- (g) Rueckweg-Inhalt: untergeschobene Werte -------------------------------------
+
+        static Helfer.Sicherung SicherungAus(string kennung, string[] parameter, string[] vorher)
+        {
+            var s = new Helfer.Sicherung { Kennung = kennung, Zeit = "2026-09-18T00:00:00Z" };
+            for (int i = 0; parameter != null && i + 1 < parameter.Length; i += 2) s.Parameter[parameter[i]] = parameter[i + 1];
+            for (int i = 0; vorher != null && i + 1 < vorher.Length; i += 2) s.Vorher[vorher[i]] = vorher[i + 1];
+            return s;
+        }
+
+        static void Abgelehnt(string was, Helfer.Sicherung s)
+        {
+            string g = Helfer.RueckwegMassnahmen.InhaltPruefen(s);
+            Ist("InhaltPruefen lehnt ab: " + was, !string.IsNullOrEmpty(g), g ?? "(angenommen)");
+        }
+
+        static void Angenommen(string was, Helfer.Sicherung s)
+        {
+            string g = Helfer.RueckwegMassnahmen.InhaltPruefen(s);
+            Ist("InhaltPruefen nimmt an: " + was, g == null, g ?? "");
+        }
+
+        static void PruefeRueckwegInhalt()
+        {
+            // Dienste: ein Vorwert Disabled fuer einen Dienst aus NieDeaktivieren spielt der Rueckweg
+            // nie zurueck (die Firewall waere sonst ueber eine untergeschobene Datei abschaltbar);
+            // update.dienst.aktivieren hat gar keinen Rueckweg (Vertrag 8.10), bei jedem Vorwert.
+            Abgelehnt("update.dienst.aktivieren mit vorher.startart=Disabled",
+                SicherungAus("update.dienst.aktivieren", new[] { "name", "wuauserv" }, new[] { "startart", "Disabled", "zustand", "Stopped" }));
+            Abgelehnt("update.dienst.aktivieren mit vorher.startart=Manual (kein Rueckweg, gleich welcher Vorwert)",
+                SicherungAus("update.dienst.aktivieren", new[] { "name", "wuauserv" }, new[] { "startart", "Manual", "zustand", "Stopped" }));
+            Abgelehnt("leistung.dienst.startart mpssvc mit vorher.startart=Disabled",
+                SicherungAus("leistung.dienst.startart", new[] { "name", "mpssvc", "startart", "Manual" }, new[] { "startart", "Disabled", "zustand", "Running" }));
+            Angenommen("leistung.dienst.startart Spooler mit vorher.startart=Automatic",
+                SicherungAus("leistung.dienst.startart", new[] { "name", "Spooler", "startart", "Manual" }, new[] { "startart", "Automatic", "zustand", "Stopped" }));
+            Abgelehnt("leistung.dienst.startart mit Dienstnamen a'b",
+                SicherungAus("leistung.dienst.startart", new[] { "name", "a'b", "startart", "Manual" }, new[] { "startart", "Automatic" }));
+
+            // Firewall: FirewallEnabled nur 0 oder 1, Profil nur 1, 2, 4.
+            Abgelehnt("sicherheit.firewall.einschalten mit FirewallEnabled=2",
+                SicherungAus("sicherheit.firewall.einschalten", new[] { "profil", "2" }, new[] { "FirewallEnabled", "2", "Profil", "2" }));
+            Angenommen("sicherheit.firewall.einschalten mit FirewallEnabled=0, Profil=2",
+                SicherungAus("sicherheit.firewall.einschalten", new[] { "profil", "2" }, new[] { "FirewallEnabled", "0", "Profil", "2" }));
+            Abgelehnt("sicherheit.firewall.einschalten mit Profil=3",
+                SicherungAus("sicherheit.firewall.einschalten", new[] { "profil", "3" }, new[] { "FirewallEnabled", "0", "Profil", "3" }));
+
+            // SmartScreen: nur Buchstaben, hoechstens 20, leer erlaubt (= Wert loeschen).
+            Abgelehnt("sicherheit.smartscreen.warn mit SmartScreenEnabled=Off;calc",
+                SicherungAus("sicherheit.smartscreen.warn", null, new[] { "SmartScreenEnabled", "Off;calc" }));
+            Angenommen("sicherheit.smartscreen.warn mit SmartScreenEnabled=Off",
+                SicherungAus("sicherheit.smartscreen.warn", null, new[] { "SmartScreenEnabled", "Off" }));
+            Angenommen("sicherheit.smartscreen.warn mit SmartScreenEnabled= (leer)",
+                SicherungAus("sicherheit.smartscreen.warn", null, new[] { "SmartScreenEnabled", "" }));
+
+            // UAC: 0 bis 5 oder leer.
+            Abgelehnt("sicherheit.uac.standard mit EnableLUA=7",
+                SicherungAus("sicherheit.uac.standard", null, new[] { "EnableLUA", "7", "ConsentPromptBehaviorAdmin", "5" }));
+            Angenommen("sicherheit.uac.standard mit EnableLUA=0, ConsentPromptBehaviorAdmin=0",
+                SicherungAus("sicherheit.uac.standard", null, new[] { "EnableLUA", "0", "ConsentPromptBehaviorAdmin", "0" }));
+            Abgelehnt("sicherheit.uac.standard ohne beide Werte",
+                SicherungAus("sicherheit.uac.standard", null, null));
+
+            // DNS: nur IPv4-Adressen in der Liste, leer = DHCP; SettingID als {GUID}.
+            Abgelehnt("netz.dns.zuruecksetzen mit NameServer=8.8.8.8;evil",
+                SicherungAus("netz.dns.zuruecksetzen", new[] { "adapter", "9" }, new[] { "NameServer", "8.8.8.8;evil", "InterfaceIndex", "9", "SettingID", "{3C49F2BC-A43A-4295-9CE6-E8BA3F74FCAD}" }));
+            Angenommen("netz.dns.zuruecksetzen mit NameServer= (leer)",
+                SicherungAus("netz.dns.zuruecksetzen", new[] { "adapter", "9" }, new[] { "NameServer", "", "InterfaceIndex", "9", "SettingID", "{3C49F2BC-A43A-4295-9CE6-E8BA3F74FCAD}" }));
+            Abgelehnt("netz.dns.zuruecksetzen ohne SettingID",
+                SicherungAus("netz.dns.zuruecksetzen", new[] { "adapter", "9" }, new[] { "NameServer", "", "InterfaceIndex", "9" }));
+            Abgelehnt("netz.dns.zuruecksetzen mit adapter=x",
+                SicherungAus("netz.dns.zuruecksetzen", new[] { "adapter", "x" }, new[] { "NameServer", "", "SettingID", "{3C49F2BC-A43A-4295-9CE6-E8BA3F74FCAD}" }));
+
+            // Geraet: die Instanz-Id nur aus der Zeichenmenge des Kerns (kein Apostroph, keine WQL-Einschleusung).
+            Abgelehnt("geraet.aktivieren mit instanzId=a'b",
+                SicherungAus("geraet.aktivieren", new[] { "instanzId", "a'b" }, new[] { "code", "22" }));
+            Angenommen("geraet.aktivieren mit einer PCI-Instanz-Id",
+                SicherungAus("geraet.aktivieren", new[] { "instanzId", "PCI\\VEN_1002&DEV_13C0&SUBSYS_88771043&REV_C1\\4&1EBE6A9C&0&0041" }, new[] { "code", "22" }));
+
+            // Uebrige K4-Kennungen: TRIM-Rohwert, Startprogramm-Bytes, Aufgabenpfad, Update-Id.
+            Angenommen("datentraeger.trim.einschalten mit DisableDeleteNotification=1",
+                SicherungAus("datentraeger.trim.einschalten", null, new[] { "DisableDeleteNotification", "1" }));
+            Abgelehnt("datentraeger.trim.einschalten mit DisableDeleteNotification=abc",
+                SicherungAus("datentraeger.trim.einschalten", null, new[] { "DisableDeleteNotification", "abc" }));
+            Abgelehnt("leistung.autostart.deaktivieren mit bytes=zz",
+                SicherungAus("leistung.autostart.deaktivieren", new[] { "hive", "HKLM", "ort", "Run", "name", "a" }, new[] { "bytes", "zz" }));
+            Angenommen("leistung.autostart.deaktivieren mit bytes=020000000000000000000000",
+                SicherungAus("leistung.autostart.deaktivieren", new[] { "hive", "HKLM", "ort", "Run", "name", "a" }, new[] { "bytes", "020000000000000000000000" }));
+            Abgelehnt("leistung.aufgabe.deaktivieren mit pfad=\\Fremd\\..\\Update",
+                SicherungAus("leistung.aufgabe.deaktivieren", new[] { "pfad", "\\Fremd\\..\\Update" }, new[] { "aktiv", "1" }));
+            Abgelehnt("update.verbergen mit updateId=abc",
+                SicherungAus("update.verbergen", new[] { "updateId", "abc" }, new[] { "isHidden", "0" }));
+
+            // Form und Fremdes: Schluessel mit Leerzeichen, Steuerzeichen im Wert, unbekannte Kennung, leer.
+            Abgelehnt("Schluessel mit Leerzeichen unter vorher",
+                SicherungAus("sicherheit.smartscreen.warn", null, new[] { "Smart Screen", "Off" }));
+            Abgelehnt("Steuerzeichen im Wert",
+                SicherungAus("sicherheit.smartscreen.warn", null, new[] { "SmartScreenEnabled", "Off\n" }));
+            Abgelehnt("unbekannte Kennung format.c", SicherungAus("format.c", null, new[] { "x", "1" }));
+            Abgelehnt("Sicherung null", (Helfer.Sicherung)null);
+            Abgelehnt("Sicherung ohne Kennung", SicherungAus("", null, null));
+
+            // Dieselben Pruefungen ueber die Bereichs-Einstiege, die Rueckweg.cs benutzt (Vertrag 8.3).
+            Ist("ZurueckSicherheitPruefen lehnt EnableLUA=7 ab",
+                Helfer.MassnahmenM3.ZurueckSicherheitPruefen(SicherungAus("sicherheit.uac.standard", null, new[] { "EnableLUA", "7" })) != null, "");
+            Ist("ZurueckSicherheitPruefen nimmt FirewallEnabled=0, Profil=2 an",
+                Helfer.MassnahmenM3.ZurueckSicherheitPruefen(SicherungAus("sicherheit.firewall.einschalten", new[] { "profil", "2" }, new[] { "FirewallEnabled", "0", "Profil", "2" })) == null, "");
+            Ist("ZurueckSicherheitPruefen lehnt eine Netz-Kennung ab",
+                Helfer.MassnahmenM3.ZurueckSicherheitPruefen(SicherungAus("netz.dns.zuruecksetzen", null, null)) != null, "");
+            Ist("ZurueckNetzPruefen lehnt NameServer=8.8.8.8;evil ab",
+                Helfer.MassnahmenM3.ZurueckNetzPruefen(SicherungAus("netz.dns.zuruecksetzen", new[] { "adapter", "9" }, new[] { "NameServer", "8.8.8.8;evil", "SettingID", "{3C49F2BC-A43A-4295-9CE6-E8BA3F74FCAD}" })) != null, "");
+            Ist("ZurueckNetzPruefen nimmt eine leere Liste mit SettingID an",
+                Helfer.MassnahmenM3.ZurueckNetzPruefen(SicherungAus("netz.dns.zuruecksetzen", new[] { "adapter", "9" }, new[] { "NameServer", "", "SettingID", "{3C49F2BC-A43A-4295-9CE6-E8BA3F74FCAD}" })) == null, "");
+            Ist("ZurueckNetzBekannt/ZurueckSicherheitBekannt kennen genau ihre Kennungen",
+                Helfer.MassnahmenM3.ZurueckNetzBekannt("netz.dns.zuruecksetzen") && !Helfer.MassnahmenM3.ZurueckNetzBekannt("netz.dnscache.leeren")
+                && Helfer.MassnahmenM3.ZurueckSicherheitBekannt("sicherheit.uac.standard") && !Helfer.MassnahmenM3.ZurueckSicherheitBekannt("sicherheit.schnellscan"), "");
+        }
+
+        // ---- (h) Kennungen der M3-Massnahmen zur Laufzeit ------------------------------------
+
+        /// <summary>
+        /// Je Eintrag aus MassnahmenM3.Alle() eine Teilpruefung: Form [a-z0-9.], Pruefen und
+        /// Ausfuehren gesetzt, kein zweites Vorkommen. Mit listen (Gruppe ausdruecklich verlangt)
+        /// geht jede Kennung zusaetzlich als Zeile "kennung: ..." hinaus, die die Suite mit
+        /// ^\s*kennung:\s*([a-z0-9.]+)$ einliest; ohne Argument (Probe 7) bleiben die Zeilen weg.
+        /// Alle() meldet nur an (keine Messung, kein Eingriff); Massnahmenbau.Neu liest dabei den
+        /// Kern-Katalog und schreibt bei einer Luecke eine Warnung in das App-Protokoll der Probe.
+        /// </summary>
+        static void PruefeKennungen(bool listen)
+        {
+            var alle = new List<Helfer.Massnahme>(Helfer.MassnahmenM3.Alle());
+            var gesehen = new HashSet<string>(StringComparer.Ordinal);
+            Ist("MassnahmenM3.Alle() liefert mindestens eine Massnahme", alle.Count > 0, alle.Count + " Eintraege");
+            foreach (Helfer.Massnahme m in alle)
+            {
+                string k = m.Kennung ?? "";
+                bool form = k.Length > 0;
+                foreach (char c in k) if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.')) form = false;
+                bool einmalig = gesehen.Add(k);
+                Ist("Kennung \"" + k + "\": Form [a-z0-9.], Pruefen und Ausfuehren gesetzt, einmalig",
+                    form && m.Pruefen != null && m.Ausfuehren != null && einmalig,
+                    (form ? "" : "Form; ") + (m.Pruefen == null ? "Pruefen fehlt; " : "") + (m.Ausfuehren == null ? "Ausfuehren fehlt; " : "") + (einmalig ? "" : "doppelt"));
+                if (form && listen) Console.WriteLine("         kennung: " + k);
+            }
         }
 
         static string Kurz(string sid)

@@ -7,9 +7,12 @@
 # Aufruf:  .\tests\run-tests.ps1
 # Ergebnis: ExitCode 0 = alles gruen, 1 = mindestens ein Test rot.
 #
-# Stand 13.09.2026: 52 Pruefungen (39 bis 8.0, 13 mit 8.1 in der Gruppe "v8.1: Helfer und
+# Stand 18.09.2026: 61 Pruefungen (39 bis 8.0, 13 mit 8.1 in der Gruppe "v8.1: Helfer und
 # Rechte"; nach dem adversarischen Gegenlesen kamen die bin-Frischepruefung und der
-# Pipe-Zugriffsschutz dazu). Die Zahl steht in $erwartet und wird am Ende gegen die gelaufenen
+# Pipe-Zugriffsschutz dazu; 9 mit 8.2 in der Gruppe "v8.2: Massnahmen": Trockenlauf der
+# M3-Kennungen, Ablehnungen, Sicherungsdatei-Herkunft, Rueckweg-Inhalt, kein PowerShell in
+# helfer\Massnahmen, ersetzte Werkzeuge, Nachrichten der Massnahmen, sechs Freischaltbare,
+# netz.dnscache.leeren live). Die Zahl steht in $erwartet und wird am Ende gegen die gelaufenen
 # Pruefungen gehalten: eine still uebersprungene Pruefung faellt so auf.
 #
 # Laeuft unter Windows PowerShell 5.1 (CI: shell: powershell) UND unter pwsh 7: keine ??- und
@@ -21,7 +24,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $failed = 0
 $passed = 0
-$erwartet = 52
+$erwartet = 61
 
 function Test-Result([string]$name, [bool]$ok, [string[]]$details) {
     if ($ok) {
@@ -751,7 +754,7 @@ if ($probenCode -ne 0) { $hits += "Kernproben rot (ExitCode $probenCode)"; $hits
 $zahl = 0
 if ($probenText -match 'Ergebnis: (\d+) bestanden') { $zahl = [int]$Matches[1] }
 if ($zahl -lt 1500) { $hits += "Nur $zahl Zusicherungen gelaufen - erwartet werden mindestens 1500 (Grundmenge, Stand 12.09.2026: 2172)" }
-if ($probenText -notmatch ', 8 Probenklassen') { $hits += "Nicht 8 Probenklassen gelaufen (eine Datei fehlt oder 'Laufen' ist nicht mehr public static)" }
+if ($probenText -notmatch ', 9 Probenklassen') { $hits += "Nicht 9 Probenklassen gelaufen (eine Datei fehlt oder 'Laufen' ist nicht mehr public static)" }
 $bilder = @(Get-ChildItem (Join-Path $root 'tests\aufzeichnungen') -Filter 'gepflanzt-*.json' -ErrorAction SilentlyContinue)
 if ($bilder.Count -lt 70) { $hits += "Nur $($bilder.Count) gepflanzte Testbilder - erwartet werden mindestens 70 (Stand 12.09.2026: 80)" }
 Test-Result "Kernproben gruen ($zahl Zusicherungen, $($bilder.Count) gepflanzte Bilder)" ($hits.Count -eq 0) $hits
@@ -1380,12 +1383,15 @@ Test-Result "Pipe-Zugriffsschutz: S-1-1-0 wird beim Start abgelehnt (Exit 7), fr
 # 7. Helferprobe (Roslyn): Sicherheitsbeschreibung der Pipe, Rechte auf dem Laufzeitordner,
 # einmalige Uebernahme alter Dateien, Lauf-Id als Dateiname - alles in einem Wegwerf-Ordner.
 # Pipe.cs zieht Messung und Ausfuehrung nach sich, deshalb wird alles ausser host\ uebersetzt
-# (src\CommandRunner.cs und src\AutoRunner.cs haengen am Host).
+# (src\CommandRunner.cs und src\AutoRunner.cs haengen am Host). Ohne Argument laufen alle
+# Gruppen der Probe, seit 8.2 also auch Sicherungsdatei und Rueckweg-Inhalt; die Gruppe
+# "v8.2: Massnahmen" faehrt diese beiden noch einmal getrennt als eigene Pruefungen.
 $hits = @()
 $exe = Join-Path $env:TEMP ('WW_HelferProbe_' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.exe')
 try {
     $quellen = @()
     $quellen += Get-ChildItem (Join-Path $root 'helfer\*.cs') | ForEach-Object { $_.FullName }
+    $quellen += Get-ChildItem (Join-Path $root 'helfer\Massnahmen\*.cs') -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
     $quellen += Get-ChildItem (Join-Path $root 'kern\*.cs') | ForEach-Object { $_.FullName }
     $quellen += Get-ChildItem (Join-Path $root 'kern\Regeln\*.cs') | ForEach-Object { $_.FullName }
     $quellen += Get-ChildItem (Join-Path $root 'sammler\*.cs') | Where-Object { $_.Name -ne 'AufzeichnenCli.cs' } | ForEach-Object { $_.FullName }
@@ -1536,6 +1542,626 @@ foreach ($f in (Get-ChildItem (Join-Path $root 'src'),(Join-Path $root 'host'),(
     }
 }
 Test-Result "Kein RunJobs und keine Job-Klasse mehr (jeder Lauf ist ein Plan)" ($hits.Count -eq 0) $hits
+
+Write-Host "`nv8.2: Massnahmen" -ForegroundColor Cyan
+
+# Meilenstein 3 (docs\M3-ENTWURF.md, Abschnitte 1, 3, 8 und 10.1): der Helfer kennt 20 weitere
+# Kennungen, die am System eingreifen (Firewall, UAC, SmartScreen, DNS, Dienste, Aufgaben,
+# Startprogramme, Updates, Geraete, Laufwerke), jede mit Sicherung vor dem Eingriff und einem
+# Rueckweg aus dieser Sicherung. Die Pruefungen hier fahren die gebaute bin\WindowsWartung.exe
+# nur mit --trocken (Ausnahme: Pruefung 9, netz.dnscache.leeren, nur erhoeht); die Sicherungsdatei
+# und der Rueckweg-Inhalt laufen in-process in der Helferprobe gegen Wegwerf-Ordner. Der echte
+# Ordner C:\ProgramData\WindowsWartung\sicherungen\massnahmen wird nur gezaehlt, nie beschrieben.
+
+$m3Ordner = Join-Path $root 'helfer\Massnahmen'
+$sicherungenOrdner = Join-Path $env:ProgramData 'WindowsWartung\sicherungen\massnahmen'
+function Zaehle-Sicherungen { return @(Get-ChildItem $sicherungenOrdner -File -ErrorAction SilentlyContinue).Count }
+# Die Werte, die die Stufe-2-Massnahmen schreiben wuerden: vorher == nachher beweist, dass der
+# Trockenlauf sie nicht angefasst hat (nur lesen; ein fehlender Wert liest sich als "(fehlt)").
+# Fuenfter Wert (Gegenlesen 18.09.2026): systemschutz.punkt.anlegen setzt im echten Lauf die
+# 24-Stunden-Drossel SystemRestorePointCreationFrequency = 0 (helfer\Katalog.cs DrosselAufheben);
+# die Trocken-Weiche davor ist die einzige Sperre, und weder Folgenummer noch Kindprozess noch
+# Dateizahl saehen einen Registry-Schreibzugriff.
+function Lies-Schutzwerte {
+    $paare = @(
+        @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer', 'SmartScreenEnabled'),
+        @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System', 'EnableLUA'),
+        @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System', 'ConsentPromptBehaviorAdmin'),
+        @('HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem', 'DisableDeleteNotification'),
+        @('HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore', 'SystemRestorePointCreationFrequency')
+    )
+    $teile = @()
+    foreach ($p in $paare) {
+        $wert = '(fehlt)'
+        try {
+            $eintrag = Get-ItemProperty -Path $p[0] -Name $p[1] -ErrorAction Stop
+            if ($null -ne $eintrag) { $wert = "$($eintrag.$($p[1]))" }
+        } catch { }
+        $teile += ($p[1] + '=' + $wert)
+    }
+    return ($teile -join ', ')
+}
+# Lesewerte der Objekte, an denen Plan A und Plan B ansetzen (Gegenlesen 18.09.2026): drei Plan-A-
+# Schritte schreiben keine Sicherungsdatei und starten keinen Kindprozess (netz.dhcp.erneuern ueber
+# WMI RenewDHCPLease, volume.scan und volume.optimieren ueber MSFT_Volume), ihre Trocken-Weiche ist
+# die einzige Sperre; fiele sie weg, saehe keine der uebrigen Nachher-Messungen es. Deshalb je Objekt
+# ein Wert, den der echte Eingriff aendern wuerde: DHCPLeaseObtained und DNSServerSearchOrder des
+# gewaehlten Adapters, ConfigManagerErrorCode des Plan-B-Geraets, StartMode von Spooler und wuauserv,
+# Enabled des Firewall-Profils Privat (profil=2), Settings.Enabled der Aufgabe ScheduledDefrag, die
+# StartupApproved-Bytes des Run-Werts. Nur lesen; fehlt ein Wert, steht "(fehlt)", und vorher ==
+# nachher gilt dann trotzdem. Rueckgabe: geordnetes Woerterbuch Name -> Wert.
+function Lies-Objektwerte([object]$adapterIndex, [string]$geraetId, [string]$runWert) {
+    $werte = [ordered]@{}
+    if ($null -ne $adapterIndex) {
+        $lease = '(fehlt)'; $dns = '(fehlt)'
+        try {
+            $nac = Get-CimInstance Win32_NetworkAdapterConfiguration -Filter "InterfaceIndex = $adapterIndex" -ErrorAction Stop | Select-Object -First 1
+            if ($null -ne $nac) {
+                $lease = '(leer)'
+                if ($null -ne $nac.DHCPLeaseObtained) { $lease = ([DateTime]$nac.DHCPLeaseObtained).ToString('s') }
+                $dns = (@($nac.DNSServerSearchOrder) -join '|')
+            }
+        } catch { }
+        $werte["Adapter$adapterIndex.DHCPLeaseObtained"] = $lease
+        $werte["Adapter$adapterIndex.DNSServerSearchOrder"] = $dns
+    }
+    if ($geraetId.Length -gt 0 -and $geraetId -ne 'PCI\VEN_0000&DEV_0000\0') {
+        $code = '(fehlt)'
+        try {
+            # WQL-Literal: Rueckstrich und Apostroph verdoppelt bzw. maskiert (die Id kommt aus WMI selbst).
+            $wql = $geraetId -replace '\\', '\\' -replace "'", "\'"
+            $pnp = Get-CimInstance Win32_PnPEntity -Filter "PNPDeviceID = '$wql'" -ErrorAction Stop | Select-Object -First 1
+            if ($null -ne $pnp) { $code = "$($pnp.ConfigManagerErrorCode)" }
+        } catch { }
+        $werte['Geraet.ConfigManagerErrorCode'] = $code
+    }
+    foreach ($n in @('Spooler', 'wuauserv')) {
+        $art = '(fehlt)'
+        try {
+            $d = Get-CimInstance Win32_Service -Filter "Name = '$n'" -ErrorAction Stop | Select-Object -First 1
+            if ($null -ne $d) { $art = "$($d.StartMode)" }
+        } catch { }
+        $werte["$n.StartMode"] = $art
+    }
+    $fwAn = '(fehlt)'
+    try { $fwAn = "$((Get-NetFirewallProfile -Name Private -ErrorAction Stop).Enabled)" } catch { }
+    $werte['FirewallPrivat.Enabled'] = $fwAn
+    $aufgabe = '(fehlt)'
+    try { $aufgabe = "$((Get-ScheduledTask -TaskPath '\Microsoft\Windows\Defrag\' -TaskName 'ScheduledDefrag' -ErrorAction Stop).Settings.Enabled)" } catch { }
+    $werte['ScheduledDefrag.Enabled'] = $aufgabe
+    if ($runWert.Length -gt 0) {
+        $bytes = '(fehlt)'
+        try {
+            $roh = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run' -Name $runWert -ErrorAction Stop).$runWert
+            if ($null -ne $roh) { $bytes = (@($roh) | ForEach-Object { ([byte]$_).ToString('x2') }) -join '' }
+        } catch { }
+        $werte['StartupApproved.' + $runWert] = $bytes
+    }
+    return $werte
+}
+
+# Die Helferprobe (tests\HelferProbe.cs, in-process, Wegwerf-Ordner) wird fuer diese Gruppe einmal
+# uebersetzt: Pruefung 1 liest ueber ihre Gruppe kennungen die Laufzeitmenge der M3-Kennungen,
+# die Pruefungen 3 und 4 fahren die Gruppen sicherung und rueckweg; entfernt wird sie im finally
+# der Pruefungen 3 und 4. Uebersetzt wird wie in Probe 7 alles ausser host\.
+$exeM3 = $null
+$exeM3Fehler = ''
+try {
+    $exeM3Pfad = Join-Path $env:TEMP ('WW_HelferProbeM3_' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.exe')
+    $quellen = @()
+    $quellen += Get-ChildItem (Join-Path $root 'helfer\*.cs') | ForEach-Object { $_.FullName }
+    $quellen += Get-ChildItem (Join-Path $root 'helfer\Massnahmen\*.cs') -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+    $quellen += Get-ChildItem (Join-Path $root 'kern\*.cs') | ForEach-Object { $_.FullName }
+    $quellen += Get-ChildItem (Join-Path $root 'kern\Regeln\*.cs') | ForEach-Object { $_.FullName }
+    $quellen += Get-ChildItem (Join-Path $root 'sammler\*.cs') | Where-Object { $_.Name -ne 'AufzeichnenCli.cs' } | ForEach-Object { $_.FullName }
+    $quellen += Get-ChildItem (Join-Path $root 'sammler\Quellen\*.cs') | ForEach-Object { $_.FullName }
+    $quellen += Get-ChildItem (Join-Path $root 'src\*.cs') | Where-Object { @('CommandRunner.cs', 'AutoRunner.cs', 'AssemblyInfo.cs') -notcontains $_.Name } | ForEach-Object { $_.FullName }
+    $quellen += (Join-Path $root 'tests\HelferProbe.cs')
+    $bauOut = & (Join-Path $root 'tools\csc.ps1') -Out $exeM3Pfad -Target exe -Sources $quellen `
+        -Refs 'System.Drawing.dll', 'System.Windows.Forms.dll', 'System.Web.Extensions.dll', 'System.Management.dll',
+              'System.ServiceProcess.dll', 'System.Runtime.Serialization.dll', 'System.Xml.dll' 2>&1
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $exeM3Pfad)) { $exeM3Fehler = "Helferprobe liess sich nicht uebersetzen: " + (($bauOut | Select-Object -Last 3) -join ' | ') }
+    else { $exeM3 = $exeM3Pfad }
+}
+catch { $exeM3Fehler = "Helferprobe: " + $_.Exception.Message }
+
+# 1. Trockenlauf der M3-Kennungen. Die Grundmenge ist die Laufzeitmenge: die Helferprobe ruft
+# MassnahmenM3.Alle() auf und gibt jede Kennung als Zeile "kennung: ..." aus (Gruppe kennungen).
+# Ein Grep ueber Massnahmenbau.Neu("...") reichte nicht: eine Massnahme, die wie wartung.massnahmen
+# per Objektinitialisierer angemeldet wird, blieb ihm verborgen (Gegenlesen 18.09.2026, Mutation in
+# Hardware.cs blieb gruen). Der Grep bleibt als Gegenprobe: jede Massnahmenbau.Neu("...") in
+# helfer\Massnahmen\*.cs (auch ueber eine Konstante wie KDnsCache, aufgeloest ueber "const string
+# Name = ..." derselben Datei) muss in der Laufzeitmenge liegen, sonst ist der Aufruf tot. Die feste
+# Liste hier muss genau die Laufzeitmenge sein: eine neue Kennung ohne Trockenlauf faellt so auf,
+# eine entfernte ebenso. rueckweg braucht eine echte Sicherungsdatei unter dem geschuetzten Ordner
+# und laeuft deshalb nicht im Trockenlauf; seine Ablehnungen misst Pruefung 2, seinen Inhalt Pruefung 4.
+#
+# Plan A: alle Kennungen, deren Parameter maschinenunabhaengig sind (der DHCP-Adapter kommt aus
+# Get-NetIPInterface; fehlt einer, fallen beide Adapter-Schritte weg, und die Zeile sagt es; die zwei
+# Defender-Massnahmen fallen weg, wenn MSFT_MpComputerStatus fehlt oder AMServiceEnabled falsch ist,
+# denn ohne Defender-Dienst melden sie zu Recht "nicht bestanden", was hier nicht der Trockenlauf
+# ist, der gemessen wird). Erwartet: Exit 0 in unter 60 s (ein echter Scan oder ein echtes Optimieren
+# von C: dauert Minuten), je Kennung eine schritt-Zeile, kein Kindprozess, keine Datei unter
+# sicherungen\massnahmen, Waechterdatei in %TEMP% bleibt, Folgenummer der Wiederherstellungspunkte
+# unveraendert, die vier Registrierungswerte und die Lesewerte aus Lies-Objektwerte vorher == nachher.
+# Plan B: Objekte, die es auf dem Rechner geben muss (ein Run-Wert unter HKLM, ein Update aus dem
+# WUA-Cache, ein Geraet mit Problemcode 22). Fehlt eines, bleibt der Ersatz stehen, und die Massnahme
+# meldet das fehlende Objekt: Exit 0 oder 1, nie 2 (2 hiesse: die Parameterpruefung lehnt einen
+# gueltigen Wert ab), kein Kindprozess, keine Datei; das Geraet traegt nachher denselben Problemcode.
+$hits = @()
+$m3Erwartet = @('netz.dnscache.leeren', 'netz.dhcp.erneuern', 'netz.dns.zuruecksetzen',
+                'sicherheit.signaturen.aktualisieren', 'sicherheit.schnellscan', 'sicherheit.firewall.einschalten',
+                'sicherheit.smartscreen.warn', 'sicherheit.uac.standard',
+                'volume.scan', 'volume.optimieren', 'datentraeger.trim.einschalten', 'systemschutz.punkt.anlegen',
+                'leistung.autostart.deaktivieren', 'leistung.aufgabe.deaktivieren', 'leistung.dienst.startart',
+                'update.dienst.aktivieren', 'update.verbergen', 'geraet.aktivieren', 'rueckweg', 'wartung.massnahmen')
+# Laufzeitmenge: Gruppe kennungen der Helferprobe (MassnahmenM3.Alle()).
+$m3ImCode = @()
+if ($null -eq $exeM3) { $hits += $exeM3Fehler }
+else {
+    $ausgabe = @(& $exeM3 kennungen 2>&1 | ForEach-Object { "$_" })
+    if ($LASTEXITCODE -ne 0) { $hits += "Gruppe kennungen der Helferprobe ist rot:"; $hits += @($ausgabe | Where-Object { $_ -match '\[FEHL\]' } | Select-Object -First 8) }
+    foreach ($z in $ausgabe) { if ($z -match '^\s*kennung:\s*([a-z0-9.]+)\s*$') { $m3ImCode += $matches[1] } }
+    if ($m3ImCode.Count -eq 0) { $hits += "Die Helferprobe hat keine Zeile 'kennung: ...' ausgegeben (MassnahmenM3.Alle() leer oder Gruppe kennungen fehlt)" }
+}
+$m3ImCode = @($m3ImCode | Sort-Object -Unique)
+# Gegenprobe aus dem Code: jede Massnahmenbau.Neu("...") muss in der Laufzeitmenge liegen.
+$m3Statisch = @()
+foreach ($f in (Get-ChildItem $m3Ordner -File -Filter *.cs)) {
+    $text = [IO.File]::ReadAllText($f.FullName, [Text.Encoding]::UTF8)
+    $konstanten = @{}
+    foreach ($m in [regex]::Matches($text, 'const\s+string\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"([a-z.]+)"')) { $konstanten[$m.Groups[1].Value] = $m.Groups[2].Value }
+    foreach ($m in [regex]::Matches($text, 'Massnahmenbau\.Neu\(\s*(?:"([a-z.]+)"|([A-Za-z_][A-Za-z0-9_]*))')) {
+        if ($m.Groups[1].Success) { $m3Statisch += $m.Groups[1].Value }
+        elseif ($konstanten.ContainsKey($m.Groups[2].Value)) { $m3Statisch += $konstanten[$m.Groups[2].Value] }
+        else { $hits += "$($f.Name): Massnahmenbau.Neu($($m.Groups[2].Value)) - die Konstante ist in der Datei nicht aufloesbar" }
+    }
+}
+foreach ($k in @($m3Statisch | Sort-Object -Unique)) { if ($m3ImCode -notcontains $k) { $hits += "Massnahmenbau.Neu('$k') steht in helfer\Massnahmen\, aber MassnahmenM3.Alle() liefert die Kennung nicht (toter Aufruf)" } }
+foreach ($k in $m3ImCode) { if ($m3Erwartet -notcontains $k) { $hits += "Kennung '$k' kommt aus MassnahmenM3.Alle(), steht aber nicht in der festen Liste dieser Probe" } }
+foreach ($k in $m3Erwartet) { if ($m3ImCode -notcontains $k) { $hits += "Kennung '$k' fehlt in MassnahmenM3.Alle() (helfer\Massnahmen\ meldet sie nicht mehr an)" } }
+
+# Adapter: der erste IPv4-Anschluss mit DHCP und Verbindung (InterfaceIndex, wie Systembild.Adapter.Index).
+$adapterIndex = $null
+try {
+    $ni = @(Get-NetIPInterface -AddressFamily IPv4 -ErrorAction Stop | Where-Object { "$($_.Dhcp)" -eq 'Enabled' -and "$($_.ConnectionState)" -eq 'Connected' } | Sort-Object InterfaceIndex)
+    if ($ni.Count -gt 0) { $adapterIndex = [int]$ni[0].InterfaceIndex }
+} catch { }
+# Defender: nur mit laufendem Dienst messen die beiden Sicherheits-Massnahmen den Trockenlauf.
+$defenderAn = $false
+try {
+    $mp = Get-CimInstance -Namespace 'root\Microsoft\Windows\Defender' -ClassName MSFT_MpComputerStatus -ErrorAction Stop | Select-Object -First 1
+    if ($null -ne $mp -and $mp.AMServiceEnabled) { $defenderAn = $true }
+} catch { }
+$weggelassen = @()
+$planA = @(@{ kennung = 'netz.dnscache.leeren'; parameter = @{} })
+if ($null -ne $adapterIndex) {
+    $planA += @{ kennung = 'netz.dns.zuruecksetzen'; parameter = @{ adapter = "$adapterIndex" } }
+    $planA += @{ kennung = 'netz.dhcp.erneuern'; parameter = @{ adapter = "$adapterIndex" } }
+} else { $weggelassen += 'netz.dns.zuruecksetzen und netz.dhcp.erneuern (kein IPv4-Adapter mit DHCP verbunden)' }
+if ($defenderAn) {
+    $planA += @{ kennung = 'sicherheit.signaturen.aktualisieren'; parameter = @{} }
+    $planA += @{ kennung = 'sicherheit.schnellscan'; parameter = @{} }
+} else { $weggelassen += 'sicherheit.signaturen.aktualisieren und sicherheit.schnellscan (Defender-Dienst nicht an)' }
+# SmartScreen: eine Richtlinie EnableSmartScreen = 0 ueberstimmt den lokalen Wert, und die Massnahme
+# meldet dann zu Recht "nicht bestanden" (Exit 1), was hier nicht der Trockenlauf ist, der gemessen wird.
+$smartScreenRichtlinie = $null
+try { $smartScreenRichtlinie = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System' -Name 'EnableSmartScreen' -ErrorAction Stop).EnableSmartScreen } catch { }
+$planA += @(@{ kennung = 'sicherheit.firewall.einschalten'; parameter = @{ profil = '2' } })
+if ("$smartScreenRichtlinie" -ne '0') { $planA += @{ kennung = 'sicherheit.smartscreen.warn'; parameter = @{} } }
+else { $weggelassen += 'sicherheit.smartscreen.warn (Richtlinie EnableSmartScreen = 0)' }
+$planA += @(
+    @{ kennung = 'sicherheit.uac.standard'; parameter = @{} },
+    @{ kennung = 'datentraeger.trim.einschalten'; parameter = @{} },
+    @{ kennung = 'volume.scan'; parameter = @{ buchstabe = 'C' } },
+    @{ kennung = 'volume.optimieren'; parameter = @{ buchstabe = 'C' } },
+    @{ kennung = 'systemschutz.punkt.anlegen'; parameter = @{} },
+    @{ kennung = 'leistung.aufgabe.deaktivieren'; parameter = @{ pfad = '\Microsoft\Windows\Defrag\ScheduledDefrag' } },
+    @{ kennung = 'leistung.dienst.startart'; parameter = @{ name = 'Spooler'; startart = 'Manual' } },
+    @{ kennung = 'update.dienst.aktivieren'; parameter = @{ name = 'wuauserv' } },
+    @{ kennung = 'wartung.massnahmen'; parameter = @{ freigaben = 'netz.dnscache.leeren' } }
+)
+
+# Plan B: Run-Wert (erster Wertname ohne Semikolon), UpdateId aus dem WUA-Cache (Online=false,
+# IsInstalled=0, hoechstens 60 s in einem eigenen Prozess), Geraet mit Problemcode 22.
+$runWert = $null
+try {
+    $runKey = Get-Item 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run' -ErrorAction Stop
+    foreach ($n in $runKey.GetValueNames()) { if ($n.Length -gt 0 -and $n.IndexOf(';') -lt 0) { $runWert = $n; break } }
+} catch { }
+$updateId = '00000000-0000-0000-0000-000000000000'
+$wuaJob = $null
+try {
+    $wuaJob = Start-Job -ScriptBlock {
+        $s = (New-Object -ComObject Microsoft.Update.Session).CreateUpdateSearcher()
+        $s.Online = $false
+        $r = $s.Search('IsInstalled=0')
+        if ($r.Updates.Count -gt 0) { $r.Updates.Item(0).Identity.UpdateID } else { '' }
+    }
+    if (Wait-Job $wuaJob -Timeout 60) {
+        $wuaErg = "$(Receive-Job $wuaJob -ErrorAction SilentlyContinue)".Trim()
+        if ($wuaErg -match '^[0-9a-fA-F-]{36}$') { $updateId = $wuaErg }
+    }
+} catch { }
+finally { if ($wuaJob) { Stop-Job $wuaJob -ErrorAction SilentlyContinue; Remove-Job $wuaJob -Force -ErrorAction SilentlyContinue } }
+$geraetId = 'PCI\VEN_0000&DEV_0000\0'
+try {
+    $g = @(Get-CimInstance Win32_PnPEntity -Filter 'ConfigManagerErrorCode = 22' -ErrorAction Stop | Where-Object { "$($_.PNPDeviceID)".Length -gt 0 })
+    if ($g.Count -gt 0) { $geraetId = "$($g[0].PNPDeviceID)" }
+} catch { }
+$planB = @(
+    @{ kennung = 'update.verbergen'; parameter = @{ updateId = $updateId } },
+    @{ kennung = 'geraet.aktivieren'; parameter = @{ instanzId = $geraetId } }
+)
+if ($null -ne $runWert) { $planB += @{ kennung = 'leistung.autostart.deaktivieren'; parameter = @{ hive = 'HKLM'; ort = 'Run'; name = $runWert } } }
+else { $weggelassen += 'leistung.autostart.deaktivieren (kein Wert unter HKLM\...\CurrentVersion\Run)' }
+
+$marker = Join-Path $env:TEMP 'ww-probe-marker-m3.txt'
+# Gemessen 18.09.2026: root\default verweigert die SystemRestore-Abfrage auch erhoeht unter pwsh 7
+# ("Zugriff verweigert"), unter Windows PowerShell 5.1 (CI) liefert sie die Punkte.
+$sicherungText = 'Folgenummer nicht lesbar (nicht erhoeht, oder root\default verweigert wie unter pwsh 7)'
+$lesewerteText = 'Lesewerte nicht gemessen'
+$planASekunden = '?'
+$planBText = ''
+$planADatei = $null; $planBDatei = $null
+$protokollA = $null; $protokollB = $null
+try {
+    if (-not (Test-Path $exeApp)) { $hits += "bin\WindowsWartung.exe fehlt - vorher build.ps1 laufen lassen" }
+    else {
+        [IO.File]::WriteAllText($marker, "Waechterdatei der M3-Trockenlauf-Probe: muss den Lauf ueberleben.`n", (New-Object Text.UTF8Encoding $false))
+        $dateienVorher = Zaehle-Sicherungen
+        $seqVorher = Lies-Sicherungsnummer
+        $werteVorher = Lies-Schutzwerte
+        $lesewerteVorher = Lies-Objektwerte $adapterIndex $geraetId $runWert
+
+        # ---- Plan A ----
+        $planId = 'probe-m3a-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+        $protokollA = Join-Path $protokollOrdner ('lauf-' + $planId + '.jsonl')
+        $planADatei = Schreibe-Plan $planId $planA
+        $lauf = Starte-Helfer @('--helfer', '--plan', ('"' + $planADatei + '"'), '--trocken') $true
+        $planASekunden = $lauf.Sekunden
+        if ($null -eq $lauf.ExitCode) { $hits += "Plan A: ExitCode des Helfers nicht lesbar (Prozess-Handle nicht gebunden)" }
+        elseif ($lauf.ExitCode -ne 0) { $hits += "Plan A: Trockenlauf endete mit Exit $($lauf.ExitCode) statt 0 (Grund in $protokollA und in logs\app.log)" }
+        if ($lauf.Kinder.Count -gt 0) { $hits += "Plan A: der Trockenlauf hat Kindprozesse gestartet: " + ($lauf.Kinder -join ', ') }
+        # Zeitgrenze: ein Trockenlauf liest nur; ein echter Scan (MSFT_Volume.Repair) oder ein echtes
+        # Optimieren von C: dauert Minuten und hinterlaesst weder Datei noch Kindprozess.
+        if ($lauf.Sekunden -ge 60) { $hits += "Plan A: der Trockenlauf brauchte $($lauf.Sekunden) s (Grenze 60 s): ein Schritt hat vermutlich echt gearbeitet (Scan oder Optimieren)" }
+        if (-not (Test-Path $protokollA)) { $hits += "Plan A: Laufprotokoll fehlt: $protokollA" }
+        else {
+            $zeilen = Lies-Laufprotokoll $protokollA
+            foreach ($s in $planA) {
+                $k = $s.kennung
+                $da = @($zeilen | Where-Object { $_.art -eq 'schritt' -and $_.kennung -eq $k })
+                if ($da.Count -lt 1) { $hits += "Plan A: keine schritt-Zeile fuer '$k' im Laufprotokoll" }
+                elseif ($lauf.ExitCode -ne 0) {
+                    foreach ($z in $da) { if ($z.fachmann.problem) { $hits += "Plan A: '$k' meldete ein Problem: " + $z.laie } }
+                }
+            }
+            # Kein bestandener Nachweis im Trockenlauf (Vertrag 8.7): jede nachweis-Zeile traegt trocken=true.
+            foreach ($z in @($zeilen | Where-Object { $_.art -eq 'nachweis' })) {
+                if ($z.fachmann.bestanden -eq $true) { $hits += "Plan A: '$($z.kennung)' meldet im Trockenlauf einen bestandenen Nachweis: " + $z.laie }
+            }
+            $ende = @($zeilen | Where-Object { $_.art -eq 'ende' -and $_.kennung -eq 'plan' })
+            if ($ende.Count -ne 1) { $hits += "Plan A: keine ende-Zeile des Plans ($($ende.Count))" }
+            elseif (-not $ende[0].fachmann.trocken) { $hits += "Plan A: die ende-Zeile traegt nicht trocken=true" }
+        }
+
+        # ---- Plan B ----
+        $planId = 'probe-m3b-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+        $protokollB = Join-Path $protokollOrdner ('lauf-' + $planId + '.jsonl')
+        $planBDatei = Schreibe-Plan $planId $planB
+        $laufB = Starte-Helfer @('--helfer', '--plan', ('"' + $planBDatei + '"'), '--trocken') $true
+        if ($null -eq $laufB.ExitCode) { $hits += "Plan B: ExitCode des Helfers nicht lesbar" }
+        elseif ($laufB.ExitCode -ne 0 -and $laufB.ExitCode -ne 1) { $hits += "Plan B: Exit $($laufB.ExitCode) statt 0 oder 1 (2 = ein gueltiger Parameter wurde abgelehnt; Grund in $protokollB)" }
+        if ($laufB.Kinder.Count -gt 0) { $hits += "Plan B: Kindprozesse " + ($laufB.Kinder -join ', ') }
+        $planBText = "Plan B Exit $($laufB.ExitCode)"
+        if (-not (Test-Path $protokollB)) { $hits += "Plan B: Laufprotokoll fehlt: $protokollB" }
+        else {
+            $zeilen = Lies-Laufprotokoll $protokollB
+            $fehlend = @()
+            foreach ($s in $planB) {
+                $k = $s.kennung
+                $da = @($zeilen | Where-Object { $_.art -eq 'schritt' -and $_.kennung -eq $k })
+                if ($da.Count -lt 1) { $hits += "Plan B: keine schritt-Zeile fuer '$k'" }
+                elseif ($da[0].fachmann.problem) { $fehlend += $k }
+            }
+            if ($laufB.ExitCode -eq 1 -and $fehlend.Count -eq 0) { $hits += "Plan B: Exit 1, aber keine schritt-Zeile nennt ein Problem" }
+            if ($fehlend.Count -gt 0) { $planBText += ', Objekt fehlt bei ' + ($fehlend -join ', ') }
+            foreach ($z in @($zeilen | Where-Object { $_.art -eq 'nachweis' })) {
+                if ($z.fachmann.bestanden -eq $true) { $hits += "Plan B: '$($z.kennung)' meldet im Trockenlauf einen bestandenen Nachweis: " + $z.laie }
+            }
+        }
+
+        # ---- Nachher ----
+        if (-not (Test-Path $marker)) { $hits += "Die Waechterdatei in %TEMP% ist weg: $marker" }
+        $dateienNachher = Zaehle-Sicherungen
+        if ($dateienNachher -ne $dateienVorher) { $hits += "Unter $sicherungenOrdner liegen nachher $dateienNachher statt $dateienVorher Dateien: der Trockenlauf hat eine Sicherung geschrieben" }
+        $seqNachher = Lies-Sicherungsnummer
+        if ($null -ne $seqVorher) {
+            $sicherungText = "Folgenummer $seqVorher gehalten"
+            if ($seqNachher -ne $seqVorher) { $hits += "Die hoechste Folgenummer der Wiederherstellungspunkte hat sich geaendert: $seqVorher -> $seqNachher" }
+        }
+        $werteNachher = Lies-Schutzwerte
+        if ($werteNachher -ne $werteVorher) { $hits += "Registrierungswerte vorher [$werteVorher] nachher [$werteNachher]: der Trockenlauf hat geschrieben" }
+        # Zweiter Riegel fuer die Drossel: steht SystemRestorePointCreationFrequency auf diesem Rechner
+        # schon auf 0 (Entwicklerrechner nach einem echten Lauf), liest sich 0 -> 0 auch dann, wenn
+        # DrosselAufheben(k) vor die Trocken-Weiche gerutscht ist. Deshalb strukturell: genau ein Aufruf
+        # in helfer\Katalog.cs, und der steht in Wiederherstellungspunkt hinter dem "return false;"
+        # des "if (k.Trocken)"-Blocks.
+        $katalogText = [IO.File]::ReadAllText((Join-Path $root 'helfer\Katalog.cs'))
+        $drosselAufrufe = [regex]::Matches($katalogText, 'DrosselAufheben\(k\);')
+        if ($drosselAufrufe.Count -ne 1) { $hits += "helfer\Katalog.cs ruft DrosselAufheben(k) $($drosselAufrufe.Count) mal statt genau einmal: die Drossel-Weiche ist nicht mehr an einer Stelle pruefbar" }
+        else {
+            $fnStart = $katalogText.IndexOf('static bool Wiederherstellungspunkt(')
+            $trockenStart = if ($fnStart -ge 0) { $katalogText.IndexOf('if (k.Trocken)', $fnStart) } else { -1 }
+            $trockenEnde = if ($trockenStart -ge 0) { $katalogText.IndexOf('return false;', $trockenStart) } else { -1 }
+            $aufruf = $drosselAufrufe[0].Index
+            if ($fnStart -lt 0 -or $trockenStart -lt 0 -or $trockenEnde -lt 0 -or -not ($fnStart -lt $trockenStart -and $trockenEnde -lt $aufruf)) {
+                $hits += "helfer\Katalog.cs: DrosselAufheben(k) steht nicht hinter dem if (k.Trocken)-Block von Wiederherstellungspunkt (Funktion $fnStart, Weiche $trockenStart, return $trockenEnde, Aufruf $aufruf): der Trockenlauf wuerde SystemRestorePointCreationFrequency schreiben"
+            }
+        }
+        # Lesewerte der Objekte (Adapter, Geraet, Dienste, Firewall, Aufgabe, Run-Wert) je einzeln,
+        # damit die Zeile das Wertepaar des Objekts nennt, das sich bewegt hat.
+        $lesewerteNachher = Lies-Objektwerte $adapterIndex $geraetId $runWert
+        foreach ($k in @($lesewerteVorher.Keys)) {
+            $v = "$($lesewerteVorher[$k])"; $n = "$($lesewerteNachher[$k])"
+            if ($n -ne $v) { $hits += "Lesewert $k vorher [$v] nachher [$n]: der Trockenlauf hat an diesem Objekt eingegriffen" }
+        }
+        $lesewerteText = "$($lesewerteVorher.Count) Lesewerte unveraendert"
+    }
+}
+finally {
+    foreach ($d in @($planADatei, $planBDatei, $protokollA, $protokollB, $marker)) { if ($d) { Remove-Item $d -ErrorAction SilentlyContinue } }
+}
+$weggelassenText = ''
+if ($weggelassen.Count -gt 0) { $weggelassenText = '; weggelassen: ' + ($weggelassen -join '; ') }
+Test-Result "Trockenlauf der M3-Kennungen: Plan A Exit 0 ($($planA.Count) Schritte, $planASekunden s), $planBText, kein Kindprozess, keine Sicherungsdatei, 5 Registrierungswerte (SmartScreen, UAC, TRIM, Drossel der Wiederherstellungspunkte) und $lesewerteText ($($m3ImCode.Count) Kennungen zur Laufzeit; $sicherungText$weggelassenText)" ($hits.Count -eq 0) $hits
+
+# 2. Ablehnungen: jede Parameterpruefung einer M3-Kennung hat hier einen Fall, der VOR dem ersten
+# Eingriff mit Exit 2 und einer abgelehnt-Zeile enden muss (keine anfang-Zeile, kein Prozess).
+# Die Faelle sind die Einschleusungen, die der Helfer abfangen muss: WQL ("10 OR 1=1", a'b),
+# Pfade statt Buchstaben, ein Semikolon im Wertnamen (Listentrenner), Anfuehrungszeichen und
+# Elternverweise im Aufgabenpfad, ein Defender-Dienst auf Disabled, eine fremde Datei als
+# Sicherung (Pfad nach oben, keine .json, nicht vorhanden) und Freigaben, die nicht freischaltbar
+# sind (netz.dhcp.erneuern greift in die Verbindung ein, volume.optimieren haengt an keiner Regel).
+# --trocken steht dabei, weil die Ablehnung VOR der Trocken-Weiche faellt: kommt ein Fall durch,
+# laeuft er trotzdem nur trocken (zweites Netz, die Suite laeuft in der CI erhoeht). Gegenprobe:
+# MSSQL$SQLEXPRESS ist ein gueltiger Dienstname ($ erlaubt) und darf NICHT mit 2 enden; ohne den
+# Dienst meldet der Schritt das fehlende Objekt (Exit 1), mit ihm laeuft er trocken (Exit 0).
+$hits = @()
+$m3Faelle = @(
+    @{ name = 'netz.dhcp.erneuern adapter "x"'; schritte = @(@{ kennung = 'netz.dhcp.erneuern'; parameter = @{ adapter = 'x' } }) },
+    @{ name = 'netz.dhcp.erneuern adapter "10 OR 1=1"'; schritte = @(@{ kennung = 'netz.dhcp.erneuern'; parameter = @{ adapter = '10 OR 1=1' } }) },
+    @{ name = 'sicherheit.firewall.einschalten profil "3"'; schritte = @(@{ kennung = 'sicherheit.firewall.einschalten'; parameter = @{ profil = '3' } }) },
+    @{ name = 'volume.scan buchstabe "C:\.."'; schritte = @(@{ kennung = 'volume.scan'; parameter = @{ buchstabe = 'C:\..' } }) },
+    @{ name = 'volume.scan buchstabe "CD"'; schritte = @(@{ kennung = 'volume.scan'; parameter = @{ buchstabe = 'CD' } }) },
+    @{ name = 'leistung.autostart.deaktivieren ort "Foo"'; schritte = @(@{ kennung = 'leistung.autostart.deaktivieren'; parameter = @{ hive = 'HKLM'; ort = 'Foo'; name = 'a' } }) },
+    @{ name = 'leistung.autostart.deaktivieren name "a;b"'; schritte = @(@{ kennung = 'leistung.autostart.deaktivieren'; parameter = @{ hive = 'HKLM'; ort = 'Run'; name = 'a;b' } }) },
+    @{ name = 'leistung.aufgabe.deaktivieren pfad mit Anfuehrungszeichen'; schritte = @(@{ kennung = 'leistung.aufgabe.deaktivieren'; parameter = @{ pfad = '\A"B' } }) },
+    @{ name = 'leistung.aufgabe.deaktivieren pfad "\Fremd\..\Update"'; schritte = @(@{ kennung = 'leistung.aufgabe.deaktivieren'; parameter = @{ pfad = '\Fremd\..\Update' } }) },
+    @{ name = 'leistung.aufgabe.deaktivieren pfad unter Windows Defender'; schritte = @(@{ kennung = 'leistung.aufgabe.deaktivieren'; parameter = @{ pfad = '\Microsoft\Windows\Windows Defender\Probe' } }) },
+    @{ name = 'leistung.dienst.startart WinDefend Disabled'; schritte = @(@{ kennung = 'leistung.dienst.startart'; parameter = @{ name = 'WinDefend'; startart = 'Disabled' } }) },
+    @{ name = "leistung.dienst.startart name a'b"; schritte = @(@{ kennung = 'leistung.dienst.startart'; parameter = @{ name = "a'b"; startart = 'Manual' } }) },
+    @{ name = 'update.dienst.aktivieren name Spooler'; schritte = @(@{ kennung = 'update.dienst.aktivieren'; parameter = @{ name = 'Spooler' } }) },
+    @{ name = 'update.verbergen updateId "abc"'; schritte = @(@{ kennung = 'update.verbergen'; parameter = @{ updateId = 'abc' } }) },
+    @{ name = "geraet.aktivieren instanzId a'b"; schritte = @(@{ kennung = 'geraet.aktivieren'; parameter = @{ instanzId = "a'b" } }) },
+    @{ name = 'rueckweg sicherung "..\..\zeitplan.json"'; schritte = @(@{ kennung = 'rueckweg'; parameter = @{ sicherung = '..\..\zeitplan.json' } }) },
+    @{ name = 'rueckweg sicherung "hosts"'; schritte = @(@{ kennung = 'rueckweg'; parameter = @{ sicherung = 'hosts' } }) },
+    @{ name = 'rueckweg sicherung nicht vorhanden'; schritte = @(@{ kennung = 'rueckweg'; parameter = @{ sicherung = ('probe-gibt-es-nicht-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.json') } }) },
+    @{ name = 'wartung.massnahmen freigaben leer'; schritte = @(@{ kennung = 'wartung.massnahmen'; parameter = @{ freigaben = '' } }) },
+    @{ name = 'wartung.massnahmen freigaben "foo"'; schritte = @(@{ kennung = 'wartung.massnahmen'; parameter = @{ freigaben = 'foo' } }) },
+    @{ name = 'wartung.massnahmen freigaben "wartung.auto"'; schritte = @(@{ kennung = 'wartung.massnahmen'; parameter = @{ freigaben = 'wartung.auto' } }) },
+    @{ name = 'wartung.massnahmen freigaben "Bad;Chars"'; schritte = @(@{ kennung = 'wartung.massnahmen'; parameter = @{ freigaben = 'Bad;Chars' } }) },
+    @{ name = 'wartung.massnahmen freigaben "netz.dhcp.erneuern"'; schritte = @(@{ kennung = 'wartung.massnahmen'; parameter = @{ freigaben = 'netz.dhcp.erneuern' } }) },
+    @{ name = 'wartung.massnahmen freigaben "volume.optimieren"'; schritte = @(@{ kennung = 'wartung.massnahmen'; parameter = @{ freigaben = 'volume.optimieren' } }) }
+)
+foreach ($fall in $m3Faelle) {
+    $planId = 'probe-m3abl-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $protokoll = Join-Path $protokollOrdner ('lauf-' + $planId + '.jsonl')
+    $planDatei = $null
+    try {
+        if (-not (Test-Path $exeApp)) { $hits += "bin\WindowsWartung.exe fehlt"; break }
+        $planDatei = Schreibe-Plan $planId $fall.schritte
+        $lauf = Starte-Helfer @('--helfer', '--plan', ('"' + $planDatei + '"'), '--trocken') $true
+        if ($lauf.ExitCode -ne 2) { $hits += "$($fall.name): Exit $($lauf.ExitCode) statt 2" }
+        if ($lauf.Kinder.Count -gt 0) { $hits += "$($fall.name): Kindprozesse " + ($lauf.Kinder -join ', ') }
+        if (-not (Test-Path $protokoll)) { $hits += "$($fall.name): kein Laufprotokoll $protokoll" }
+        else {
+            $zeilen = Lies-Laufprotokoll $protokoll
+            if (@($zeilen | Where-Object { $_.art -eq 'abgelehnt' }).Count -lt 1) { $hits += "$($fall.name): keine Protokollzeile art=abgelehnt" }
+            if (@($zeilen | Where-Object { $_.art -eq 'anfang' }).Count -gt 0) { $hits += "$($fall.name): trotz Ablehnung ist etwas angelaufen (anfang-Zeile)" }
+        }
+    }
+    finally {
+        if ($planDatei) { Remove-Item $planDatei -ErrorAction SilentlyContinue }
+        Remove-Item $protokoll -ErrorAction SilentlyContinue
+    }
+}
+# Gegenprobe: ein Dienstname mit $ ist gueltig und darf nicht abgelehnt werden.
+$gegenText = 'Gegenprobe nicht gelaufen'
+$planId = 'probe-m3gegen-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+$protokoll = Join-Path $protokollOrdner ('lauf-' + $planId + '.jsonl')
+$planDatei = $null
+try {
+    if (Test-Path $exeApp) {
+        $planDatei = Schreibe-Plan $planId @(@{ kennung = 'leistung.dienst.startart'; parameter = @{ name = 'MSSQL$SQLEXPRESS'; startart = 'Manual' } })
+        $lauf = Starte-Helfer @('--helfer', '--plan', ('"' + $planDatei + '"'), '--trocken') $true
+        $gegenText = 'MSSQL$SQLEXPRESS Exit ' + $lauf.ExitCode
+        if ($lauf.ExitCode -ne 0 -and $lauf.ExitCode -ne 1) { $hits += "Gegenprobe MSSQL`$SQLEXPRESS: Exit $($lauf.ExitCode) statt 0 oder 1 (ein Dienstname mit `$ wird abgelehnt)" }
+        if ($lauf.Kinder.Count -gt 0) { $hits += "Gegenprobe: Kindprozesse " + ($lauf.Kinder -join ', ') }
+    }
+}
+finally {
+    if ($planDatei) { Remove-Item $planDatei -ErrorAction SilentlyContinue }
+    Remove-Item $protokoll -ErrorAction SilentlyContinue
+}
+Test-Result "Helfer lehnt ungueltige M3-Parameter, fremde Sicherungen und nicht freischaltbare Freigaben ab (Exit 2, nichts laeuft; $($m3Faelle.Count) Faelle; $gegenText)" ($hits.Count -eq 0) $hits
+
+# 3. und 4. Sicherungsdatei-Herkunft und Rueckweg-Inhalt, in-process ueber tests\HelferProbe.cs
+# (Gruppen sicherung und rueckweg der vor Pruefung 1 uebersetzten Probe $exeM3; Probe 7 oben faehrt
+# dieselbe Uebersetzung mit allen Gruppen).
+# Warum die Herkunft: der Rueckweg schreibt die Werte aus der Datei erhoeht zurueck (Firewall aus,
+# EnableLUA 0, Dienst-Startart). Gaelte jede Datei unter sicherungen\massnahmen, koennte ein
+# Benutzer ohne Rechte dort eine Datei ablegen und den erhoehten Helfer damit die Firewall
+# abschalten lassen. Deshalb zaehlt nur eine Datei mit Besitzer Administratoren, genau der
+# geschuetzten DACL und genau einem Namen; erhoeht (CI) wird das an einer echten Datei des Helfers
+# gemessen, nicht erhoeht daran, dass Schreiben wirft und eine Datei des Nutzers abgelehnt wird.
+# Warum der Inhalt: auch eine echte Datei kann Werte tragen, die der Helfer nie geschrieben haette
+# (ein Dienst aus NieDeaktivieren auf Disabled, FirewallEnabled 2, "Off;calc", 8.8.8.8;evil);
+# jeder Wert wird vor dem Eingriff so geprueft wie der Parameter der Hin-Massnahme.
+# Erhoeht setzt die Probe voraus, dass der Token Administratoren als Standardbesitzer traegt (jeder
+# UAC-erhoehte Token, der CI-Runner); die Probe nennt den Standardbesitzer in ihrer Modus-Zeile.
+# Gemessen 18.09.2026: eine erhoehte Shell aus Git-Bash trug das Konto selbst als Standardbesitzer,
+# und Schreiben verwarf dort jede Datei. Das ist dann ein Befund gegen Sicherungsdatei.DateiSchreiben
+# (setzt den Besitzer nicht selbst), nicht gegen die Probe.
+$hitsSicherung = @()
+$hitsRueckweg = @()
+$sicherungModus = 'Uebersetzung fehlgeschlagen'
+try {
+    if ($null -eq $exeM3) { $hitsSicherung += $exeM3Fehler; $hitsRueckweg += $exeM3Fehler }
+    else {
+        $exe = $exeM3
+        $ausgabe = @(& $exe sicherung 2>&1 | ForEach-Object { "$_" })
+        if ($LASTEXITCODE -ne 0) { $hitsSicherung += "mindestens eine Teilpruefung der Sicherungsdatei ist rot:"; $hitsSicherung += @($ausgabe | Where-Object { $_ -match '\[FEHL\]' } | Select-Object -First 8) }
+        $modusZeile = @($ausgabe | Where-Object { $_ -match 'Sicherungsdatei-Probe laeuft' })
+        if ($modusZeile.Count -gt 0) { if ($modusZeile[0] -match 'nicht erhoeht') { $sicherungModus = 'nicht erhoeht: Schreiben wirft, Nutzerdatei abgelehnt' } else { $sicherungModus = 'erhoeht: Besitzer, DACL, Hardlink an einer echten Datei' } }
+        else { $hitsSicherung += "Die Sicherungsdatei-Probe ist nicht gelaufen (keine Modus-Zeile in der Ausgabe)" }
+        $anzahl = @($ausgabe | Where-Object { $_ -match '^\s+\[(ok|FEHL)\]' }).Count
+        if ($anzahl -lt 10) { $hitsSicherung += "Nur $anzahl Teilpruefungen der Sicherungsdatei gelaufen (erwartet mindestens 10)" }
+
+        $ausgabe = @(& $exe rueckweg 2>&1 | ForEach-Object { "$_" })
+        if ($LASTEXITCODE -ne 0) { $hitsRueckweg += "mindestens eine Teilpruefung des Rueckweg-Inhalts ist rot:"; $hitsRueckweg += @($ausgabe | Where-Object { $_ -match '\[FEHL\]' } | Select-Object -First 8) }
+        $anzahl = @($ausgabe | Where-Object { $_ -match '^\s+\[(ok|FEHL)\]' }).Count
+        if ($anzahl -lt 30) { $hitsRueckweg += "Nur $anzahl Teilpruefungen des Rueckweg-Inhalts gelaufen (erwartet mindestens 30)" }
+    }
+}
+catch { $hitsSicherung += "Helferprobe: " + $_.Exception.Message; $hitsRueckweg += "Helferprobe: " + $_.Exception.Message }
+finally { if ($exeM3) { Remove-Item $exeM3 -ErrorAction SilentlyContinue }; $exeM3 = $null }
+Test-Result "Sicherungsdatei: nur Besitzer Administratoren, genau die geschuetzte DACL, ein Name; Namen mit Pfadzeichen abgelehnt; Trockenlauf schreibt nichts ($sicherungModus)" ($hitsSicherung.Count -eq 0) $hitsSicherung
+Test-Result "Rueckweg-Inhalt: untergeschobene Werte (Dienst Disabled, FirewallEnabled 2, Off;calc, EnableLUA 7, 8.8.8.8;evil, a'b) werden abgelehnt, gueltige angenommen" ($hitsRueckweg.Count -eq 0) $hitsRueckweg
+
+# 5. Kein PowerShell und kein eigener Prozessstart in helfer\Massnahmen\: die Massnahmen arbeiten
+# ueber WMI, COM und die Registrierung im eigenen Prozess (Konzept 3.8: kein Skriptprozess, den
+# Defender als ClickFix-Muster sperrt); die zwei Werkzeuge, die es brauchen (schtasks, MpCmdRun),
+# laufen ueber Werkzeuge.Lauf/Schritt mit Zeitgrenze und Job-Objekt. Kommentare zaehlen nicht,
+# Zeichenketten schon (ein "powershell" im Literal waere ein Aufruf).
+$hits = @()
+$kommentarRx = [regex]'^((?:[^"/]|"(?:[^"\\]|\\.)*"|/(?!/))*)//'
+foreach ($f in (Get-ChildItem $m3Ordner -File -Filter *.cs)) {
+    $i = 0
+    foreach ($line in [IO.File]::ReadAllLines($f.FullName, [Text.Encoding]::UTF8)) {
+        $i++
+        if ($line -match '^\s*(///|//)') { continue }
+        $code = $line
+        $mk = $kommentarRx.Match($line)
+        if ($mk.Success) { $code = $mk.Groups[1].Value }
+        if ($code -match '(?i)powershell|pwsh|cmd\.exe|-EncodedCommand|Invoke-Expression') { $hits += "$($f.Name):$i  $($line.Trim())" }
+        if ($code -match 'Process\.Start|new Process\b|ProcessStartInfo|ShellExecute|CreateProcess') { $hits += "$($f.Name):$i  $($line.Trim())" }
+    }
+}
+Test-Result "Kein PowerShell und kein Process.Start in helfer\Massnahmen\ (Prozesse nur ueber Werkzeuge.Lauf/Schritt)" ($hits.Count -eq 0) $hits
+
+# 6. Werkzeugkasten, ersetzte Eintraege: genau drei Werkzeuge (DNS-Cache, DHCP, Schnellscan) sind
+# durch eine Massnahme an der Karte ersetzt (ErsetztDurch); jede genannte Kennung muss im
+# Kern-Katalog stehen, und der Host filtert sie beim Senden des Katalogs (Vertrag 0.6, 9.3). Ein
+# ErsetztDurch auf eine Kennung, die es nicht gibt, liesse den Eintrag verschwinden, ohne dass eine
+# Massnahme ihn ersetzt.
+$hits = @()
+$aktionText = [IO.File]::ReadAllText((Join-Path $root 'src\ActionCatalog.cs'), [Text.Encoding]::UTF8)
+$kernKatalogText = [IO.File]::ReadAllText((Join-Path $root 'kern\Massnahmen.Katalog.cs'), [Text.Encoding]::UTF8)
+$ersetzt = @([regex]::Matches($aktionText, 'ErsetztDurch\s*=\s*"([a-z.]+)"') | ForEach-Object { $_.Groups[1].Value })
+if ($ersetzt.Count -ne 3) { $hits += "src\ActionCatalog.cs hat $($ersetzt.Count) ErsetztDurch-Eintraege statt 3: " + ($ersetzt -join ', ') }
+foreach ($k in $ersetzt) {
+    if ($kernKatalogText -notmatch ('Kennung\s*=\s*"' + [regex]::Escape($k) + '"')) { $hits += "ErsetztDurch = '$k', aber kern\Massnahmen.Katalog.cs kennt diese Kennung nicht" }
+}
+if ($shellText3 -notmatch 'string\.IsNullOrEmpty\(a\.ErsetztDurch\)') { $hits += "host\ShellForm.cs filtert ersetzte Werkzeuge nicht mehr mit string.IsNullOrEmpty(a.ErsetztDurch)" }
+Test-Result "Werkzeugkasten: genau 3 Eintraege durch Massnahmen ersetzt, jede Kennung im Kern-Katalog, Host filtert sie" ($hits.Count -eq 0) $hits
+
+# 7. Nachrichten der Phase 2 woertlich (Vertrag 9.1, 9.2): die dynamischen Pruefungen oben decken
+# "jede Host-Nachricht hat einen case-Zweig" und "jeder Host-Befehl ist erreichbar" ab, aber eine
+# Umbenennung auf beiden Seiten liefe dort still durch. Hier stehen die Namen fest.
+$hits = @()
+$hostM3 = ($csFiles | Where-Object { $_.DirectoryName -like '*\host' } | ForEach-Object { [IO.File]::ReadAllText($_.FullName, [Text.Encoding]::UTF8) }) -join "`n"
+foreach ($n in @('massnahmeVorschau', 'freigaben')) {
+    if ($hostM3 -notmatch ('type\s*=\s*"' + $n + '"')) { $hits += "Der Host sendet keine Nachricht type = ""$n""" }
+    if ($jsText2 -notmatch ("case\s+'" + $n + "'")) { $hits += "ui\app.js hat keinen Zweig case '$n'" }
+}
+foreach ($b in @('massnahmeAusfuehren', 'massnahmeRueckweg', 'massnahmeAnsicht', 'freigabenSetzen')) {
+    if ($shellText3 -notmatch ('type == "' + $b + '"')) { $hits += "host\ShellForm.cs versteht den Befehl ""$b"" nicht" }
+    if ($jsText2 -notmatch ("'" + $b + "'")) { $hits += "ui\app.js sendet '$b' nirgends" }
+}
+foreach ($m in @('massnahme', 'rueckweg')) {
+    if ($hostM3 -notmatch ('mode\s*=\s*"' + $m + '"')) { $hits += "Der Host startet keinen Ablauf mit mode = ""$m""" }
+    if ($jsText2 -notmatch ("mode === '" + $m + "'")) { $hits += "ui\app.js wertet mode === '$m' nirgends aus" }
+}
+Test-Result "Nachrichten der Massnahmen stehen woertlich auf beiden Seiten (massnahmeVorschau, freigaben, massnahmeAusfuehren, massnahmeRueckweg, massnahmeAnsicht, freigabenSetzen)" ($hits.Count -eq 0) $hits
+
+# 8. Freischaltbare Massnahmen: genau sechs, und volume.optimieren nicht darunter (es haengt an
+# keiner Regel; ein Kaestchen in den Einstellungen, das nie feuert, waere eine Luege, Vertrag 8.1).
+# Die Kernprobe (d) prueft die Zahl ueber den Katalog im Speicher; hier steht die Menge woertlich.
+$hits = @()
+$freiErwartet = @('netz.dnscache.leeren', 'sicherheit.signaturen.aktualisieren', 'sicherheit.schnellscan',
+                  'sicherheit.firewall.einschalten', 'systemschutz.punkt.anlegen', 'volume.scan')
+$freiZeilen = @([IO.File]::ReadAllLines((Join-Path $root 'kern\Massnahmen.Katalog.cs'), [Text.Encoding]::UTF8) | Where-Object { $_ -match 'Freischaltbar\s*=\s*true' })
+if ($freiZeilen.Count -ne 6) { $hits += "kern\Massnahmen.Katalog.cs hat $($freiZeilen.Count) Zeilen mit Freischaltbar = true statt 6" }
+$freiKennungen = @()
+foreach ($z in $freiZeilen) {
+    $mk = [regex]::Match($z, 'Kennung\s*=\s*"([a-z.]+)"')
+    if ($mk.Success) { $freiKennungen += $mk.Groups[1].Value } else { $hits += "Freischaltbar = true ohne Kennung auf derselben Zeile: $($z.Trim())" }
+}
+foreach ($k in $freiKennungen) { if ($freiErwartet -notcontains $k) { $hits += "'$k' ist freischaltbar, steht aber nicht in der Sechser-Liste" } }
+foreach ($k in $freiErwartet) { if ($freiKennungen -notcontains $k) { $hits += "'$k' ist nicht mehr freischaltbar" } }
+if ($freiKennungen -contains 'volume.optimieren') { $hits += "volume.optimieren ist freischaltbar, haengt aber an keiner Regel" }
+if ($kernKatalogText -notmatch 'Kennung\s*=\s*"volume\.optimieren"[^\r\n]*Freischaltbar\s*=\s*false') { $hits += "volume.optimieren traegt nicht Freischaltbar = false auf der Kennungszeile" }
+Test-Result "Freischaltbar sind genau sechs Massnahmen, volume.optimieren nicht darunter" ($hits.Count -eq 0) $hits
+
+# 9. CI live (nur erhoeht): netz.dnscache.leeren ohne --trocken. Die einzige M3-Massnahme, die hier
+# echt laeuft: MSFT_DNSClientCache.Clear() ist WMI (kein Kindprozess), aendert keine Einstellung,
+# der Zwischenspeicher fuellt sich sofort wieder. Erwartet: Exit 0, eine nachweis-Zeile mit
+# bestanden = true (der Rueckgabewert 0 ist der Beleg, Vertrag Abschnitt 1), kein Kindprozess;
+# das Laufprotokoll wird danach entfernt. Nicht erhoeht: uebersprungen, mit Zeile, zaehlt trotzdem.
+# Erhoehung ueber die Rolle (WindowsBuiltInRole.Administrator), nicht ueber den Namen: IsInRole
+# ("Administrator") vergleicht mit einem Gruppennamen, den es auf einem deutschen Windows
+# ("Administratoren") nicht gibt, und liefert dort in einer erhoehten Shell false.
+# Gemessen 18.09.2026 auf Windows 11 26200: ManagementClass.InvokeMethod("Clear") liefert fuer
+# MSFT_DNSClientCache null (kein Ausgabeobjekt, obwohl die Klasse UInt32 Clear() deklariert), und
+# helfer\Massnahmen\Netz.cs meldet dann "kein Beleg" mit Exit 1. Bleibt diese Pruefung rot, ist
+# das ein Befund gegen den Beleg in Netz.cs (Rueckgabewert als einziger Nachweis), nicht gegen die Probe.
+$hits = @()
+$liveText = 'uebersprungen (nicht erhoeht)'
+$erhoehtLive = $false
+try { $erhoehtLive = (New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) } catch { }
+if ($erhoehtLive) {
+    $planId = 'probe-m3live-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $protokoll = Join-Path $protokollOrdner ('lauf-' + $planId + '.jsonl')
+    $planDatei = $null
+    try {
+        if (-not (Test-Path $exeApp)) { $hits += "bin\WindowsWartung.exe fehlt" }
+        else {
+            $planDatei = Schreibe-Plan $planId @(@{ kennung = 'netz.dnscache.leeren'; parameter = @{} })
+            $lauf = Starte-Helfer @('--helfer', '--plan', ('"' + $planDatei + '"')) $true
+            if ($null -eq $lauf.ExitCode) { $hits += "ExitCode nicht lesbar" }
+            elseif ($lauf.ExitCode -ne 0) { $hits += "netz.dnscache.leeren live: Exit $($lauf.ExitCode) statt 0 (Grund in $protokoll und logs\app.log)" }
+            if ($lauf.Kinder.Count -gt 0) { $hits += "netz.dnscache.leeren hat Kindprozesse gestartet: " + ($lauf.Kinder -join ', ') }
+            if (-not (Test-Path $protokoll)) { $hits += "Laufprotokoll fehlt: $protokoll" }
+            else {
+                $zeilen = Lies-Laufprotokoll $protokoll
+                $nw = @($zeilen | Where-Object { $_.art -eq 'nachweis' -and $_.kennung -eq 'netz.dnscache.leeren' })
+                if ($nw.Count -lt 1) { $hits += "keine nachweis-Zeile fuer netz.dnscache.leeren" }
+                elseif ($nw[0].fachmann.bestanden -ne $true) { $hits += "nachweis-Zeile ohne bestanden=true: " + $nw[0].laie }
+                elseif ($nw[0].fachmann.trocken) { $hits += "die nachweis-Zeile traegt trocken=true, obwohl der Lauf echt war" }
+                $liveText = 'live erhoeht: Exit ' + $lauf.ExitCode + ', ' + $lauf.Sekunden + ' s'
+            }
+        }
+    }
+    catch { $hits += "Live-Probe: " + $_.Exception.Message }
+    finally {
+        if ($planDatei) { Remove-Item $planDatei -ErrorAction SilentlyContinue }
+        Remove-Item $protokoll -ErrorAction SilentlyContinue
+        if (Test-Path $protokoll) { $hits += "Das Laufprotokoll liess sich nicht entfernen: $protokoll" }
+    }
+}
+Test-Result "CI live: netz.dnscache.leeren ohne --trocken meldet Exit 0 und einen bestandenen Nachweis, ohne Kindprozess ($liveText)" ($hits.Count -eq 0) $hits
 
 Write-Host ""
 # Die Zahl der gelaufenen Pruefungen gegen den Kopf halten: eine Pruefung, die still wegfaellt

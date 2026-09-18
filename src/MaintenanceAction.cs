@@ -36,6 +36,16 @@ namespace WartungsToolbox
         public bool Danger;       // Sicherheitsabfrage vor Ausfuehrung
         public bool IsRepair;     // reparierende Aktion (steuert auch die Einordnung im UI)
         public bool NeedsRestore; // ausdruecklich einen Sicherungspunkt davor anlegen
+        // Seit 8.2 (Meilenstein 3) erledigt eine Massnahme des Kern-Katalogs dieselbe Aufgabe
+        // mit Vorbedingung und Nachweis (kern/Massnahmen.cs); hier steht dann ihre Kennung,
+        // etwa "netz.dnscache.leeren". Der Host laesst solche Eintraege in der catalog-Nachricht
+        // weg, die Karte im Befund uebernimmt. Der Eintrag selbst bleibt samt Steps bestehen,
+        // weil die Id ein Listenindex ist (Warteschlange, Verlauf, werkzeug-Plaene ueber
+        // Schritte.Werkzeug(id)). Die geplante Wartung haengt nicht daran: sie nimmt ihre
+        // Schritte aus AutoCatalog/AutoSet, nie aus Steps. null = sichtbar. Ein leerer String
+        // ist kein gueltiger Wert und darf nichts verstecken: der Host-Filter gehoert auf
+        // string.IsNullOrEmpty (Vertrag docs/M3-ENTWURF.md 8.9, Phase 2).
+        public string ErsetztDurch;
 
         /// <summary>
         /// Bekommt diese Aktion einen Sicherungspunkt, wenn der Nutzer das Haekchen gesetzt hat?

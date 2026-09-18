@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "aufgezeichnet": "2026-09-11T16:00:00Z",
+  "erhoeht": false,
+  "sprache": { "lcid": 1031, "mui": ["de-DE"] },
+  "sicherheit": { "secureBoot": true },
+  "leistung": {
+    "ramGesamtKB": 66196312,
+    "ramFreiKB": 42188296,
+    "verfuegbarMB": [40303, 40410, 40290],
+    "commitPct": [38, 38, 39],
+    "abstandMs": 4000,
+    "speicherQuelle": "perf",
+    "auslagerungMB": 3968
+  },
+  "autostart": {
+    "eintraege": [
+      { "quelle": "HKLM\\Run", "name": "Fremd01", "befehl": "\"C:\\Program Files\\Fremd\\fremd01.exe\" /start", "aktiviert": true, "signierer": "CN=Fremd GmbH, O=Fremd GmbH, C=DE", "microsoft": false, "dateiVorhanden": true },
+      { "quelle": "HKLM\\Run", "name": "Fremd02", "befehl": "\"C:\\Program Files\\Fremd\\fremd02.exe\"", "aktiviert": true, "signierer": "CN=Fremd GmbH, O=Fremd GmbH, C=DE", "microsoft": false, "dateiVorhanden": true },
+      { "quelle": "HKLM\\Run32", "name": "Fremd03", "befehl": "\"C:\\Program Files (x86)\\Fremd\\fremd03.exe\"", "aktiviert": null, "signierer": "CN=Fremd GmbH, O=Fremd GmbH, C=DE", "microsoft": false, "dateiVorhanden": true },
+      { "quelle": "HKCU\\Run", "name": "Fremd04", "befehl": "C:\\Users\\NUTZER\\AppData\\Local\\Fremd\\fremd04.exe", "aktiviert": true, "signierer": null, "microsoft": false, "dateiVorhanden": true },
+      { "quelle": "HKCU\\Run", "name": "Fremd05", "befehl": "C:\\Users\\NUTZER\\AppData\\Local\\Fremd\\fremd05.exe", "aktiviert": true, "signierer": null },
+      { "quelle": "HKCU\\Run", "name": "Fremd06", "befehl": "C:\\Users\\NUTZER\\AppData\\Local\\Fremd\\fremd06.exe", "aktiviert": true, "signierer": "CN=Anderer Hersteller Inc., O=Anderer Hersteller Inc., C=US" },
+      { "quelle": "HKCU\\Run", "name": "Fremd07", "befehl": "C:\\Users\\NUTZER\\AppData\\Local\\Fremd\\fremd07.exe", "aktiviert": true, "signierer": "CN=Anderer Hersteller Inc., O=Anderer Hersteller Inc., C=US", "microsoft": false, "dateiVorhanden": true },
+      { "quelle": "HKCU\\Run", "name": "Fremd08", "befehl": "C:\\Users\\NUTZER\\AppData\\Local\\Fremd\\fremd08.exe", "aktiviert": true, "signierer": "CN=Anderer Hersteller Inc., O=Anderer Hersteller Inc., C=US", "microsoft": false, "dateiVorhanden": true },
+      { "quelle": "HKCU\\Run", "name": "Fremd09", "befehl": "C:\\Users\\NUTZER\\AppData\\Local\\Fremd\\fremd09.exe", "aktiviert": true, "signierer": "CN=Anderer Hersteller Inc., O=Anderer Hersteller Inc., C=US", "microsoft": false, "dateiVorhanden": true },
+      { "quelle": "HKCU\\Run", "name": "Fremd10", "befehl": "C:\\Users\\NUTZER\\AppData\\Local\\Fremd\\fremd10.exe", "aktiviert": true, "signierer": "CN=Anderer Hersteller Inc., O=Anderer Hersteller Inc., C=US", "microsoft": false, "dateiVorhanden": true },
+      { "quelle": "HKCU\\Run", "name": "Fremd11", "befehl": "C:\\Users\\NUTZER\\AppData\\Local\\Fremd\\fremd11.exe", "aktiviert": true, "signierer": null, "microsoft": null, "dateiVorhanden": false },
+      { "quelle": "HKCU\\Run", "name": "Fremd12", "befehl": "C:\\Users\\NUTZER\\AppData\\Local\\Fremd\\fremd12.exe", "aktiviert": true, "signierer": null, "microsoft": null, "dateiVorhanden": false },
+      { "quelle": "Startup", "name": "Fremd13.lnk", "befehl": "C:\\Users\\NUTZER\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\Fremd13.lnk", "aktiviert": null, "signierer": null, "microsoft": false, "dateiVorhanden": null },
+      { "quelle": "CommonStartup", "name": "Fremd14.lnk", "befehl": "C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\StartUp\\Fremd14.lnk", "aktiviert": true, "signierer": null, "microsoft": false, "dateiVorhanden": true },
+      { "quelle": "Startup", "name": "start.bat", "befehl": "C:\\Users\\NUTZER\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\start.bat", "aktiviert": null, "signierer": null, "microsoft": false, "dateiVorhanden": true },
+      { "quelle": "HKCU\\Run", "name": "Hook", "befehl": "rundll32.exe \"C:\\Users\\NUTZER\\AppData\\Local\\Fremd\\hook.dll\",Start", "aktiviert": true, "signierer": null, "microsoft": false, "dateiVorhanden": true },
+      { "quelle": "HKLM\\Run", "name": "SecurityHealth", "befehl": "%windir%\\system32\\SecurityHealthSystray.exe", "aktiviert": true, "signierer": "CN=Microsoft Windows, O=Microsoft Corporation, L=Redmond, S=Washington, C=US", "microsoft": true, "dateiVorhanden": true },
+      { "quelle": "HKCU\\Run", "name": "OneDrive", "befehl": "\"C:\\Users\\NUTZER\\AppData\\Local\\Microsoft\\OneDrive\\OneDrive.exe\" /background", "aktiviert": false, "deaktiviertSeit": "2025-01-08T10:00:00Z", "signierer": "CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US", "microsoft": true, "dateiVorhanden": true }
+    ],
+    "aufgaben": [
+      { "pfad": "\\FremdUpdater", "autor": "Fremd GmbH", "zustand": 3, "logon": true, "boot": false, "letzterLauf": "2026-09-11T06:00:00Z", "letztesErgebnis": 0 },
+      { "pfad": "\\FremdHelfer", "autor": "Fremd GmbH", "zustand": 3, "logon": false, "boot": true, "letzterLauf": "2026-09-11T06:00:00Z", "letztesErgebnis": 0 },
+      { "pfad": "\\FremdAbgeschaltet", "autor": "Fremd GmbH", "zustand": 1, "logon": true, "boot": false, "letzterLauf": null, "letztesErgebnis": 267011 },
+      { "pfad": "\\FremdTaeglich", "autor": "Fremd GmbH", "zustand": 3, "logon": false, "boot": false, "letzterLauf": "2026-09-11T03:00:00Z", "letztesErgebnis": 0 },
+      { "pfad": "\\WindowsWartung-Autostart", "autor": "RECHNER\\NUTZER", "zustand": 3, "logon": true, "boot": false, "letzterLauf": "2026-09-11T06:00:00Z", "letztesErgebnis": 0, "eigen": true },
+      { "pfad": "\\Microsoft\\Windows\\WindowsUpdate\\Scheduled Start", "autor": "$(@%systemroot%\\system32\\wuaueng.dll,-1001)", "zustand": 3, "logon": true, "boot": true, "letzterLauf": "2026-09-11T06:00:00Z", "letztesErgebnis": 0 }
+    ],
+    "aufgabenVollstaendig": false,
+    "dienste": [
+      { "name": "FremdDienst1", "anzeige": "Fremd Dienst 1", "startart": "Auto", "zustand": "Running", "pfad": "\"C:\\Program Files\\Fremd\\dienst1.exe\"", "verzoegert": false, "signierer": "CN=Fremd GmbH, O=Fremd GmbH, C=DE", "microsoft": false },
+      { "name": "FremdDienst2", "anzeige": "Fremd Dienst 2", "startart": "Auto", "zustand": "Running", "pfad": "\"C:\\Program Files\\Fremd\\dienst2.exe\"", "verzoegert": true, "signierer": "CN=Fremd GmbH, O=Fremd GmbH, C=DE", "microsoft": false },
+      { "name": "FremdDienst3", "anzeige": "Fremd Dienst 3", "startart": "Auto", "zustand": "Stopped", "pfad": "\"C:\\Program Files\\Fremd\\dienst3.exe\"", "verzoegert": false, "signierer": null, "microsoft": false },
+      { "name": "FremdDienst4", "anzeige": "Fremd Dienst 4", "startart": "Auto", "zustand": "Running", "pfad": "\"C:\\Program Files\\Fremd\\dienst4.exe\"", "verzoegert": false, "signierer": "CN=Fremd GmbH, O=Fremd GmbH, C=DE", "microsoft": false },
+      { "name": "FremdManuell", "anzeige": "Fremd manuell", "startart": "Manual", "zustand": "Stopped", "pfad": "\"C:\\Program Files\\Fremd\\manuell.exe\"", "verzoegert": false, "signierer": "CN=Fremd GmbH, O=Fremd GmbH, C=DE", "microsoft": false },
+      { "name": "wuauserv", "anzeige": "Windows Update", "startart": "Auto", "zustand": "Running", "pfad": "C:\\WINDOWS\\system32\\svchost.exe -k netsvcs -p", "verzoegert": false, "signierer": "CN=Microsoft Windows Publisher, O=Microsoft Corporation, L=Redmond, S=Washington, C=US", "microsoft": true },
+      { "name": "LSM", "anzeige": "Local Session Manager", "startart": "Unknown", "zustand": "Running", "pfad": "", "verzoegert": false, "signierer": null, "microsoft": null }
+    ],
+    "shell": "explorer.exe",
+    "userinit": "C:\\WINDOWS\\system32\\userinit.exe,",
+    "appInitDlls": "",
+    "appInitDlls32": "",
+    "loadAppInitDlls": false
+  }
+}

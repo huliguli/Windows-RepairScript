@@ -1,15 +1,20 @@
 # Bauen, signieren, veröffentlichen, aktualisieren
 
 Das Pendant zur `DEPLOYMENT.md` der Webprojekte, für ein Desktop-Werkzeug. Was hier steht,
-ist der Weg, den jedes Release nimmt. Stand: v8.1.0 (Rechte-Modell B: Oberfläche ohne
-Administratorrechte, Helfer mit Rechten nur auf Anforderung).
+ist der Weg, den jedes Release nimmt. Stand: v8.2.0 (Maßnahmen Stufe 1 und 2: Vorschau an
+der Karte, Nachweis über dem neuen Systembild, Rückweg über die Sicherungsdatei, Freigaben für
+die geplante Wartung; Rechte-Modell B aus 8.1 unverändert).
 
 ## Aufbau
 
 ```
 kern/        Datenmodell (Systembild, Befund, Plan), Regeln, Entscheidungen, Protokoll, JSON
              hängt von nichts ab: kein WinForms, kein WMI, kein Prozessstart (Test wacht darüber)
-kern/Regeln/ eine Datei je Bereich, reine Funktionen über dem Systembild, Schwellen mit Quelle
+             Massnahmen.cs (Katalogkopf: Massnahme, Nachweis mit drei Ergebnisarten, Finde/Alle/Freischaltbare),
+             Massnahmen.Katalog.cs (die Tabelle je Kennung: Stufe, Texte, Sicherung, Rückweg, Parameter,
+             Nachweis als reine Funktion über dem NEUEN Systembild)
+kern/Regeln/ eine Datei je Bereich, reine Funktionen über dem Systembild, Schwellen mit Quelle;
+             hängen Kennungen und Pflichtparameter (Befund.Parameter) an Befunde
 sammler/     füllt das Systembild im eigenen Prozess: WMI, Ereignisprotokoll, Registry, COM, P/Invoke
              startet keinen Prozess (Test wacht darüber); Admin-Quellen tragen nicht erhöht "zugriff" ein
 helfer/      der erhöhte Teil, dieselbe EXE mit --helfer (kein WinForms, kein WebView2; Test wacht darüber):
@@ -17,7 +22,12 @@ helfer/      der erhöhte Teil, dieselbe EXE mit --helfer (kein WinForms, kein W
              Nachricht.cs (Anfrage/Antwort als JSON-Zeilen), Katalog.cs (Kennung → Maßnahme mit Prüfung),
              Ausfuehrung.cs (Plan Schritt für Schritt, Protokoll), Werkzeuge.cs (Prozessstart ohne Shell,
              ein Job-Objekt je Schritt, Wachhund), Messung.cs (erhöhtes Systembild), Helfer.cs (Einstieg, drei Modi)
-host/        Fenster, WebView2-Brücke, Hauptweg (CheckFlow), Suchläufe (ScanFlow), Update;
+helfer/Massnahmen/  die M3-Kennungen, eine Datei je Bereich (Netz, Sicherheit, Datentraeger, Leistung,
+             Updates, Hardware), Rueckweg.cs (Kennung rueckweg), Auto.cs (wartung.massnahmen mit Freigaben),
+             Gemeinsam.cs (Sicherungsdatei mit Besitzer/DACL/Handle-Prüfung, Wmi2, Com, Reg, Nachweise),
+             MassnahmenM3.cs (Sammelstelle); kein PowerShell, kein Process.Start (Test wacht darüber)
+host/        Fenster, WebView2-Brücke, Hauptweg (CheckFlow, seit 8.2 auch Maßnahme, Rückweg, Nachweis),
+             Suchläufe (ScanFlow), Update;
              Ausfuehrer.cs (IAusfuehrer: lokal im eigenen Prozess oder über die Pipe),
              HelferClient.cs (Start per runas, Wiederverwendung, --pipe-Abnahmeweg),
              Selbstpruefung.cs (eigene Signatur per WinVerifyTrust, ui\ gegen ui-hashes.txt)
@@ -80,9 +90,14 @@ Roslyn-Compiler im SDK und die net48-Referenzassemblies.
 `tests\run-tests.ps1` läuft lokal und in der CI (Windows PowerShell 5.1). Dazu gehören:
 
 - **Kernproben** (`tools\lauf-proben.ps1`): die Regeln gegen aufgezeichnete Systembilder in
-  `tests\aufzeichnungen\gepflanzt-*.json` (114 handgeschriebene Bilder, über 3.800 Zusicherungen
-  in acht Probenklassen), darunter die Fehlerfälle, die ein Reparaturwerkzeug falsch behandeln
-  könnte (absichtlich deaktiviertes Gerät, SMART-Warnung, englisches System). Läuft ohne
+  `tests\aufzeichnungen\gepflanzt-*.json` (146 handgeschriebene Bilder, über 7.600 Zusicherungen
+  in neun Probenklassen), darunter die Fehlerfälle, die ein Reparaturwerkzeug falsch behandeln
+  könnte (absichtlich deaktiviertes Gerät, SMART-Warnung, englisches System). Seit 8.2 dazu
+  `MassnahmenProben`: jede Kennung, die eine Regel anhängt, steht im Katalog; jeder Eintrag hat
+  Stufe, Art, Texte und Nachweis; 16 Vorher/Nachher-Paare `gepflanzt-massnahmen-<kennung>-*.json`
+  (Nachweis über VORHER nicht bestanden, über NACHHER bestanden, die Regeln hängen die Kennung
+  nach NACHHER an keinen Problem-Befund); `Freischaltbare()` = genau sechs; jeder Befund mit
+  Kennung trägt die Pflichtparameter. Läuft ohne
   Rechte, ohne Fenster, ohne Windows-Zugriff. Die Klasse `DieserPcProben` prüft zusätzlich
   drei echte Aufzeichnungen des Entwicklungsrechners (`dieser-pc-*.json`); die bleiben lokal
   (Software-Inventar), in der CI meldet die Klasse sich als übersprungen.
@@ -113,11 +128,35 @@ Skripts, `$erwartet`, zählt alle Prüfungen und wird am Ende gegen die gelaufen
 | Laufzeitordner | `Ablage.RechteSichern()` und die Übernahme alter Dateien gegen einen Temp-Ordner (kein Zugriff auf ProgramData im Test); Grep auf `UebernahmeAbschliessen` (die alte Datei wird auch dann auf `*.uebernommen` umbenannt, wenn die neue schon existiert); der Installer setzt `users-modify` |
 | Kein RunJobs/Job | Grep `RunJobs` und `class Job` über `host\` und `src\` = 0: jeder Lauf mit Rechten ist ein Plan |
 
+Neu mit 8.2 die Gruppe **„v8.2: Maßnahmen“** (9 Prüfungen, `$erwartet` = 61; Vertrag
+`docs\M3-ENTWURF.md` §10.1, die Namen unten sind die Kurzformen der Zeilen im Skript). Nichts
+davon greift live in den Rechner ein, mit einer Ausnahme (die letzte), die nur erhöht läuft:
+
+| Prüfung (Reihenfolge wie im Skript) | Was sie belegt |
+| --- | --- |
+| Trockenlauf der M3-Kennungen | Grundmenge: jede Kennung aus `Massnahmenbau.Neu("…")` in `helfer\Massnahmen\*.cs` plus `wartung.massnahmen` steht in einer festen Liste im Skript (fehlt eine oder ist eine zu viel → rot). Plan A mit maschinenunabhängigen Parametern (`netz.dnscache.leeren`, `netz.dns.zuruecksetzen` und `netz.dhcp.erneuern` mit dem ersten IPv4-DHCP-Adapter, `sicherheit.signaturen.aktualisieren`, `sicherheit.schnellscan`, `sicherheit.firewall.einschalten profil=2`, `sicherheit.smartscreen.warn`, `sicherheit.uac.standard`, `datentraeger.trim.einschalten`, `volume.scan buchstabe=C`, `volume.optimieren buchstabe=C`, `systemschutz.punkt.anlegen`, `leistung.aufgabe.deaktivieren` mit `\Microsoft\Windows\Defrag\ScheduledDefrag`, `leistung.dienst.startart name=Spooler startart=Manual`, `update.dienst.aktivieren name=wuauserv`, `wartung.massnahmen freigaben=netz.dnscache.leeren`) → `--trocken` Exit 0, je Kennung eine `schritt`-Zeile, kein Kindprozess, keine Datei unter `sicherungen\massnahmen` (vorher/nachher gezählt), Wächterdatei bleibt, Folgenummer der Wiederherstellungspunkte und 5 Registrywerte (SmartScreen, UAC, TRIM und die Drossel der Wiederherstellungspunkte `SystemRestorePointCreationFrequency`, die `systemschutz.punkt.anlegen` im echten Lauf auf 0 setzt) vorher == nachher; weil ein Rechner die Drossel schon auf 0 haben kann (0 → 0 sieht nichts), dazu strukturell: `DrosselAufheben(k)` steht in `helfer\Katalog.cs` genau einmal und hinter dem `return false;` des `if (k.Trocken)`-Blocks von `Wiederherstellungspunkt`. Plan B mit Objekten, die es geben muss (`leistung.autostart.deaktivieren` mit einem vorhandenen Run-Wert, `update.verbergen` mit einer UpdateID aus der WUA-Suche, `geraet.aktivieren` mit einem Gerät mit Code 22, sonst Platzhalter) → Exit 0 oder 1, nie 2, kein Kindprozess, keine Datei |
+| Helfer lehnt ungültige M3-Parameter, fremde Sicherungen und nicht freischaltbare Freigaben ab | je Fall Exit 2 mit Protokollzeile `abgelehnt`, kein Prozess: `netz.dhcp.erneuern adapter=x` und `adapter=10 OR 1=1`; `sicherheit.firewall.einschalten profil=3`; `volume.scan buchstabe=C:\..` und `buchstabe=CD`; `leistung.autostart.deaktivieren hive=HKLM ort=Foo name=a` und `name=a;b`; `leistung.aufgabe.deaktivieren pfad=\A"B`, `pfad=\Fremd\..\Update` und `pfad=\Microsoft\Windows\Windows Defender\Probe`; `leistung.dienst.startart name=WinDefend startart=Disabled` und `name=a'b startart=Manual`; `update.dienst.aktivieren name=Spooler`; `update.verbergen updateId=abc`; `geraet.aktivieren instanzId=a'b`; `rueckweg sicherung=..\..\zeitplan.json`, `sicherung=hosts` und eine nicht vorhandene `.json`; `wartung.massnahmen freigaben=` (leer), `freigaben=foo`, `freigaben=wartung.auto`, `freigaben=Bad;Chars`, `freigaben=netz.dhcp.erneuern` (nicht freischaltbar), `freigaben=volume.optimieren` (seit 8.2 nicht freischaltbar). Gegenprobe: `leistung.dienst.startart name=MSSQL$SQLEXPRESS startart=Manual` ist **nicht** Exit 2 (`$` ist im Dienstnamen erlaubt) |
+| Sicherungsdatei: nur Besitzer Administratoren, genau die geschützte DACL, ein Name | `tests\HelferProbe.cs` in-process mit `Sicherungsdatei.OrdnerFuerProbe` auf einem Temp-Ordner: erhöht (CI-Runner, lokale Werkzeug-Shell) schreibt `Schreiben` eine Datei mit Besitzer Administratoren, Vererbung aus und genau drei ACEs, `Lesen` gelingt; danach Besitzer auf das eigene Konto → `Lesen` lehnt ab („stammt nicht vom Helfer“); eine zusätzliche ACE für das eigene Konto → abgelehnt; ein Hardlink auf die Datei → beide Namen abgelehnt („mehr als einen Namen“). Nicht erhöht: `Schreiben` wirft `InvalidOperationException`, oder die Datei gehört dem Nutzer und `Lesen` lehnt ab (beides gilt). Ein Name mit Pfadzeichen, `..`, Leerzeichen oder falscher Endung → `ArgumentException`. Der Trockenlauf schreibt keine Datei (zählt die erste Prüfung) |
+| Rückweg-Inhalt: untergeschobene Werte werden abgelehnt, gültige angenommen | in-process mit untergeschobenen Dateien im Probe-Ordner (`RueckwegMassnahmen.InhaltPruefen` bzw. `ZurueckNetzPruefen`/`ZurueckSicherheitPruefen`): `update.dienst.aktivieren` mit `vorher.startart=Disabled` → abgelehnt; `leistung.dienst.startart` für `mpssvc` mit `Disabled` → abgelehnt; `sicherheit.firewall.einschalten` mit `FirewallEnabled=2` → abgelehnt, mit `0` und `Profil=2` → gültig; `sicherheit.smartscreen.warn` mit `SmartScreenEnabled=Off;calc` → abgelehnt; `sicherheit.uac.standard` mit `EnableLUA=7` → abgelehnt; `netz.dns.zuruecksetzen` mit `NameServer=8.8.8.8;evil` → abgelehnt, leer → gültig (DHCP); `geraet.aktivieren` mit `instanzId=a'b` → abgelehnt |
+| Kein PowerShell und kein Process.Start in helfer\Massnahmen\ | Grep `powershell` (ohne Kommentare) über `helfer\Massnahmen\*.cs` = 0 und Grep `Process.Start` dort = 0: Prozesse (`fsutil.exe`, `schtasks.exe`, `MpCmdRun.exe`) laufen nur über `Werkzeuge.Lauf`, alles andere über WMI, COM und Registry |
+| Werkzeugkasten: genau 3 Einträge durch Maßnahmen ersetzt | genau 3 `ErsetztDurch = "…"` in `src\ActionCatalog.cs`, jeder Wert steht als `Kennung = "…"` in `kern\Massnahmen.Katalog.cs`, und `host\ShellForm.cs` filtert die `catalog`-Nachricht mit `string.IsNullOrEmpty(a.ErsetztDurch)` |
+| Nachrichten der Maßnahmen stehen wörtlich auf beiden Seiten | die Namen wörtlich auf beiden Seiten: `type = "massnahmeVorschau"` und `"freigaben"` im Host, `case 'massnahmeVorschau'` und `case 'freigaben'` in `ui\app.js`; `type == "massnahmeAusfuehren"`, `"massnahmeRueckweg"`, `"massnahmeAnsicht"`, `"freigabenSetzen"` im Verteiler des Hosts und als Sendungen in `app.js`. Eine Umbenennung auf nur einer Seite fällt so auf; die Prüfung „Host startet keine Werkzeuge“ bleibt daneben bestehen |
+| Freischaltbar sind genau sechs Maßnahmen | Grep `Freischaltbar = true` in `kern\Massnahmen.Katalog.cs` = 6, `volume.optimieren` nicht darunter (die Kernprobe (d) misst dasselbe über `Freischaltbare()`) |
+| CI live: netz.dnscache.leeren ohne --trocken | nur erhöht, sonst übersprungen mit Zeile: der Plan `netz.dnscache.leeren` **ohne** `--trocken` → Exit 0, `nachweis`-Zeile mit `bestanden = true`, kein Kindprozess (`MSFT_DNSClientCache.Clear` ist WMI); das Laufprotokoll wird danach entfernt. Nichts anderes läuft live |
+
+Die Prüfungen aus 8.1 (bin-Frische, Manifest, Schichtregel, Trockenlauf und Ablehnungen der
+M2-Kennungen, Pipe, Startprüfung, Laufzeitordner) bleiben unverändert (52); `$erwartet` = 61
+wird am Ende gegen die gelaufenen Prüfungen gehalten, und alle Zeilen des Skripts bleiben ASCII (5.1 liest ANSI,
+Umlaute nur als `\u`-Muster in Regexen).
+
 Kommandozeilen, die dabei benutzt werden (alle ohne Fenster, Ergebnis im Exit-Code und in
 `logs\app.log`):
 
 ```powershell
 .\bin\WindowsWartung.exe --helfer --plan C:\Temp\plan.json --trocken   # Exit = PlanErgebnis.Exit (0 ok, 1 Problem, 2 abgelehnt, 3 Ausnahme, 4 abgebrochen); 7 = Argumente
+# Plandatei einer M3-Kennung, z. B. Firewall für das Profil Privat (Trockenlauf: bis zur Sicherung, nichts geschrieben):
+#   { "id": "probe-firewall", "titel": "Firewall einschalten", "schritte": [ { "kennung": "sicherheit.firewall.einschalten", "parameter": { "profil": "2" } } ] }
+# Ohne --trocken greift der Helfer ein; Exit 0 und die nachweis-Zeile im lauf-<id>.jsonl sind der Beleg, sicherung.datei der Rückweg.
 .\bin\WindowsWartung.exe --helfer --messen C:\Temp\bild.json           # erhöhte Messung, unredigiert (nur aus erhöhter Shell sinnvoll)
 .\bin\WindowsWartung.exe --helfer --pipe ww-test-1 --sid S-1-5-21-…    # Pipe-Server für einen Client derselben SID
 .\bin\WindowsWartung.exe --selbstpruefung C:\Temp\selbst.txt           # Signatur + ui-Liste, Exit 0/5/6; 3 = Prüfung abgebrochen oder Ausgabedatei nicht schreibbar (Grund in app.log)
@@ -152,10 +191,21 @@ Beim Schließen des Fensters schickt sie `ende`, der Helfer endet: für einen zw
 der Oberfläche den Helfer in der erhöhten Shell neu starten. Ein nicht erhöht gestarteter
 Helfer wird angenommen, misst aber nur, was ohne Rechte geht (die Zählung bleibt ehrlich).
 
+Seit 8.2 lassen sich auf diesem Weg auch Maßnahmen belegen, ohne Klick im Fenster: `--shot`
+mit `--view check,massnahme:<kennung>` prüft, drückt an der ersten Karte mit dieser Kennung
+„Beheben“ und in der Vorschau „Jetzt ausführen“ (800 ms Abstand), misst nach und zeigt die
+Nachweiskarte; `--view check,massnahme:<kennung>,rueckweg` drückt danach „Rückgängig“ auf der
+Nachweiskarte und bestätigt die Nachfrage (nur, wenn eine Sicherung geschrieben wurde und der
+Rückweg möglich ist); `--view check,ergaenzen,massnahme:<kennung>` wartet die erhöhte Messung ab,
+bevor es den Knopf sucht (Befunde, die erst erhöht entstehen); `--view schedule` zeigt die
+Freigaben. `docs\werkzeuge\abnahme-pipe.ps1 -View check,massnahme:<kennung>` fasst Helfer,
+LIMITED-Aufgabe und Shot zusammen. Beides greift **echt** in den Rechner ein; harmlos sind
+`netz.dnscache.leeren`, `systemschutz.punkt.anlegen` und `sicherheit.signaturen.aktualisieren`.
+
 Was sich nur mit einem echten Klick im UAC-Dialog prüfen lässt (Start des Helfers aus der
 Oberfläche, Ablehnung, die Ergänzung der Messwerte, die Tiefenprüfung mit DISM und SFC, die
-Reparatur, Umstellung der Selbststart-Aufgabe), steht als Prüfliste für den Betreiber in
-`docs\UEBERGABE.md`.
+Reparatur, Umstellung der Selbststart-Aufgabe, jede Maßnahme einmal live mit Nachweis und
+Rückweg), steht als Prüfliste für den Betreiber in `docs\UEBERGABE.md`.
 
 ## Signieren
 
@@ -208,8 +258,8 @@ Der Release-Weg ist der annotierte Tag. **Kein `gh release create`.**
    und Installer, legt aber kein Release an. `gh run watch --exit-status` bis zum Ende.
 5. Tag setzen und pushen:
    ```powershell
-   git tag -a v8.1.0 -F tagmsg.txt
-   git push origin v8.1.0
+   git tag -a v8.2.0 -F docs\werkzeuge\tagmsg-8.2.0.txt
+   git push origin v8.2.0
    gh run watch --exit-status
    ```
 6. Nach dem Lauf: Prüfsummen und Signatur gegen den echten Download vergleichen
@@ -248,7 +298,7 @@ Installer-Weg nennt darin den Namen des Programms; der ZIP-Weg startet die Austa
 über `cmd.exe`, der Dialog nennt also den Befehlsprozessor. Vor dem Austausch beendet die App
 einen laufenden Helfer (dieselbe EXE), sonst kann `robocopy` sie nicht ersetzen; danach startet
 die Batch die neue Fassung über `explorer.exe`, damit sie nicht erhöht läuft. Ein sauberer
-Weg über den Helfer (`update.anwenden`) ist für 8.2 vorgesehen.
+Weg über den Helfer (`update.anwenden`) ist für M4 (8.3) vorgesehen.
 
 Rückruf eines kaputten Releases: `gh release edit vX.Y.Z --prerelease`, Assets behalten,
 Korrektur als neue Patch-Version. Der Updater kennt kein Downgrade.
@@ -266,6 +316,7 @@ Original auf `*.uebernommen` umbenannt).
 | Verlauf | `%ProgramData%\WindowsWartung\verlauf\history.json` (+ `.alt`) |
 | Zeitplan der geplanten Wartung | `%ProgramData%\WindowsWartung\zeitplan.json` |
 | Sicherungen (`.reg` der Registrierungs-Suche, verborgene Updates, Werte) | `%ProgramData%\WindowsWartung\sicherungen\<art>\` |
+| Sicherungsdateien der Maßnahmen (`<yyyyMMdd-HHmmss>-<kennung>-<4hex>.json` mit `kennung`, `zeit`, `parameter`, `vorher`), Rückweg über die Kennung `rueckweg` | `%ProgramData%\WindowsWartung\sicherungen\massnahmen\`: eigene, nicht vererbende DACL (SYSTEM und Administratoren Vollzugriff, Benutzer Lesen und Ausführen), Besitzer Administratoren; der Helfer setzt sie bei jedem Schreiben und (wenn der Ordner schon da ist) bei jedem Start und prüft beim Lesen Besitzer, DACL und Hardlink-Zahl am geöffneten Handle |
 | App-Protokoll (Host, Helfer, geplante Wartung) | `%ProgramData%\WindowsWartung\logs\app.log` |
 | WebView2-Datenordner, Zoom (`zoom.txt`) | `%LOCALAPPDATA%\WindowsWartung\` |
 | Update-Arbeitsordner (`update.zip` oder `setup.exe`, Sicherung `vorher\`, `ww_update.cmd`, bei Fehlschlag `fehler.txt`) | `%LOCALAPPDATA%\WindowsWartung\update\` (wird beim nächsten Update geräumt, der Ordner selbst bleibt) |
@@ -285,7 +336,30 @@ ersetzen (`File.Replace` braucht Löschrecht). Darum bekommt `%ProgramData%\Wind
 3. der Host, wenn er den Ordner selbst anlegt (als Besitzer darf er die Rechte setzen, auch ohne
    Erhöhung; ein fremder Ordner bleibt unangetastet, Rückgabe `false`, nie eine Ausnahme),
 4. die Austausch-Batch des ZIP-Updates (läuft erhöht): `icacls "%ProgramData%\WindowsWartung"
-   /grant *S-1-5-32-545:(OI)(CI)M /T`.
+   /grant *S-1-5-32-545:(OI)(CI)M /T`; seit 8.2 direkt danach eine zweite Zeile, die
+   `sicherungen\massnahmen` erneut schützt, weil `/T` das Änderungsrecht auch dorthin
+   geschrieben hat: `if exist "…\sicherungen\massnahmen" icacls "…\sicherungen\massnahmen"
+   /inheritance:r /grant:r *S-1-5-32-544:(OI)(CI)F *S-1-5-18:(OI)(CI)F *S-1-5-32-545:(OI)(CI)RX /T`
+   (nur, wenn es den Ordner schon gibt).
+
+**Ausnahme `sicherungen\massnahmen` (seit 8.2).** `Users` Ändern auf dem ganzen Baum gilt
+nicht für diesen einen Ordner: der Rückweg schreibt die Werte aus einer Sicherungsdatei erhöht
+zurück (Firewall aus, `EnableLUA` 0, Dienst-Startart), also darf nur eine Datei gelten, die der
+erhöhte Helfer selbst angelegt hat. `Sicherungsdatei.Schreiben` (`helfer\Massnahmen\Gemeinsam.cs`)
+öffnet den Ordner einmal per Handle, prüft, wohin er wirklich führt, setzt an diesem Handle
+Besitzer Administratoren und die eigene DACL (Vererbung aus; SYSTEM und Administratoren
+Vollzugriff, Benutzer Lesen und Ausführen; idempotent, nur bei Abweichung) und legt die Datei
+relativ zum Handle mit derselben DACL an; scheitert eines davon, wird nichts gesichert und
+nichts geändert (`InvalidOperationException`). `Sicherungsdatei.Lesen` lehnt einen
+Reparse-Punkt am Pfad ab, öffnet die Datei genau einmal und verlangt an diesem Handle Besitzer
+Administratoren oder SYSTEM, exakt die geschützte DACL und genau einen Namen
+(`GetFileInformationByHandle`, `nNumberOfLinks` = 1); der Inhalt kommt aus demselben Handle.
+Ein nicht erhöhter Prozess kann weder Administratoren als Besitzer eintragen noch diese DACL
+setzen, deshalb braucht es keinen HMAC. Der Helfer schützt einen vorhandenen Ordner zusätzlich
+bei jedem Start (`OrdnerAbsichern`), die Batch des ZIP-Updates nach ihrem `icacls /T`
+(Stelle 4); der Host bildet Pfade dorthin nur mit `Path.Combine` und `Ablage.IstAbzweigung`,
+ohne den Ordner anzulegen. Offen für M4: derselbe Schutz beim erhöhten Start des **Hosts**
+(`Program.cs` ruft nur `Ablage.RechteSichern`).
 
 **ZIP-Update von 8.0:** Keine der vier Stellen greift dort beim ersten Start. 8.0 legte
 `entscheidungen.json` erhöht an (Besitzer Administratoren, `Users` nur Lesen), die Batch von
@@ -296,7 +370,10 @@ Antworten gehören noch der vorigen Fassung; nach dem nächsten Schritt mit Admi
 klappt es“. Der Installer-Weg hat das Problem nicht (Stelle 1).
 
 **Abzweigungen unter ProgramData.** `Users` Ändern auf dem ganzen Baum heißt: jedes lokale
-Konto darf `logs\`, `verlauf\` oder `sicherungen\` löschen und als Junction neu anlegen. Die
+Konto darf `logs\`, `verlauf\` oder `sicherungen\` löschen und als Junction neu anlegen
+(`sicherungen\massnahmen` selbst nicht mehr, sobald der Helfer es geschützt hat; der
+Elternordner `sicherungen\` bleibt für Benutzer änderbar, deshalb prüft der Helfer jede
+Sicherungsdatei am geöffneten Handle, siehe oben). Die
 erhöhten Schreiber (Helfer, geplante Wartung, erhöhter Host) folgen einer Abzweigung nicht:
 `Ablage.IstAbzweigung(pfad)` prüft jede Komponente unterhalb von `Maschinenweit()` auf
 `ReparsePoint`, `Ablage.Unterordner` liefert dann `null`, der Protokoll-Konstruktor schreibt

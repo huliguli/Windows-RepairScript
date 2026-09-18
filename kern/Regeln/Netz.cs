@@ -26,11 +26,19 @@ namespace WartungsToolbox.Kern.Regeln
     /// </summary>
     public static class Netz
     {
-        // Massnahmen-Kennungen (Katalog kommt in Meilenstein 3, die Kennungen sind hier schon fest).
+        // Massnahmen-Kennungen (Katalog kern/Massnahmen.cs seit Meilenstein 3; netz.hosts.pruefen bleibt Rat bis M4).
         public const string MDhcpErneuern = "netz.dhcp.erneuern";
         public const string MDnsCacheLeeren = "netz.dnscache.leeren";
         public const string MDnsZuruecksetzen = "netz.dns.zuruecksetzen";
         public const string MHostsPruefen = "netz.hosts.pruefen";
+
+        /// <summary>
+        /// Parameter fuer den Plan (docs/M3-ENTWURF.md, Abschnitt 1): der Adapter-Index
+        /// (MSFT_NetAdapter.InterfaceIndex = Win32_NetworkAdapterConfiguration.InterfaceIndex) als
+        /// Text. netz.dhcp.erneuern und netz.dns.zuruecksetzen brauchen ihn; der Helfer prueft
+        /// ihn erneut gegen sein eigenes Bild, die Oberflaeche schickt nie eigene Werte.
+        /// </summary>
+        public const string ParamAdapter = "adapter";
 
         /// <summary>
         /// Domains, deren Umleitung in der hosts-Datei ein Angriffs- oder Schadsoftware-Muster
@@ -47,10 +55,19 @@ namespace WartungsToolbox.Kern.Regeln
         static readonly string[] VirenschutzDomains = { "wdcp.microsoft.com", "wd.microsoft.com" };
         static readonly string[] NcsiDomains = { "msftconnecttest.com", "msftncsi.com" };
 
-        /// <summary>Bekannte Virenschutz-Hersteller: ein Label des Hostnamens, das so beginnt.</summary>
+        /// <summary>
+        /// Bekannte Virenschutz-Hersteller: ein Label des Hostnamens, das so beginnt. Dieselbe Liste
+        /// entscheidet in Regeln/Leistung.cs, ob ein Dienst eine Schutzsoftware ist (Signierer oder
+        /// Anzeigename, siehe IstAvHersteller): der bekommt keine Startart-Massnahme. Zweiteilige
+        /// Namen stehen zusammengezogen (trendmicro, fsecure, gdata), IstAvHersteller zieht
+        /// benachbarte Woerter ebenso zusammen. Ein Produkt, das hier fehlt, faengt Leistung.cs
+        /// ueber die im Sicherheitscenter registrierten Namen (Sicherheit.DrittAv) ab.
+        /// </summary>
         static readonly string[] AvHersteller =
         {
-            "avast", "avg", "bitdefender", "eset", "kaspersky", "mcafee", "norton", "sophos", "trendmicro",
+            "avast", "avg", "avira", "bitdefender", "comodo", "crowdstrike", "cylance", "emsisoft", "eset",
+            "fsecure", "gdata", "kaspersky", "malwarebytes", "mcafee", "norton", "panda", "sentinelone",
+            "sophos", "symantec", "trendmicro", "webroot",
         };
 
         public static BereichErgebnis Pruefen(Kontext ctx)
@@ -135,6 +152,7 @@ namespace WartungsToolbox.Kern.Regeln
                     b.Detail.Add("PrefixOrigin 2 (WellKnown) = automatische private Adresse (APIPA), AddressState " + apipa.Zustand);
                     b.Detail.Add("Adapter " + a.Index + " (" + (a.Beschreibung ?? a.Name) + "), DHCP " + (a.Dhcp == true ? "aktiv" : "Status nicht ermittelbar (APIPA belegt DHCP)") + ", Zustand Up");
                     b.Massnahmen.Add(MDhcpErneuern);
+                    b.Parameter[ParamAdapter] = IndexText(a);
                     e.Befunde.Add(b);
                     ursacheGefunden = true;
                 }
@@ -189,6 +207,10 @@ namespace WartungsToolbox.Kern.Regeln
                                 ? "Die feste Adresskonfiguration prüfen: das Feld „Standardgateway“ muss die Adresse des Routers enthalten."
                                 : "Die Adresszuteilung (DHCP oder fest) in den Adaptereinstellungen prüfen; bei fester Adresse muss das Feld „Standardgateway“ die Adresse des Routers enthalten.";
                         b.Messwert = Messwert.Von(0, "Standardrouten", "mindestens 1");
+                        // Der Befund handelt von diesem Anschluss: der Index steht auch ohne
+                        // Massnahme dabei (Dhcp false oder null), damit Nachmessung und Verlauf
+                        // wissen, welcher Adapter gemeint war.
+                        b.Parameter[ParamAdapter] = IndexText(a);
                         if (a.Dhcp == true) b.Massnahmen.Add(MDhcpErneuern);
                     }
                     e.Befunde.Add(b);
@@ -224,7 +246,13 @@ namespace WartungsToolbox.Kern.Regeln
             if (!ursacheGefunden && so.Dns == false)
             {
                 string art = so.DnsFehler ?? "andere";
-                bool statischDa = n.Dns.Any(d => d.Statisch == true && d.Server.Any(x => !IstDnsPlatzhalter(x)));
+                // Der Anschluss mit fest eingetragenen IPv4-Servern ist das Ziel von netz.dns.zuruecksetzen:
+                // nur ein verbundener physischer DHCP-Anschluss (die Massnahme setzt nur IPv4 zurueck
+                // und lehnt feste Adressen ab). Ein fester Eintrag anderswo (IPv6, fester Anschluss,
+                // Adapter ohne Verbindung) bleibt ein Rat, nie eine Massnahme, die der Helfer ablehnt.
+                var statisch = StatischerDnsAdapter(n, physischUp);
+                bool statischDa = statisch.HasValue;
+                bool festIrgendwo = n.Dns.Any(d => d.Statisch == true && d.Server.Any(x => !IstDnsPlatzhalter(x)));
                 if (art == "nxdomain" || art == "timeout")
                 {
                     var b = Neu("netz.sonde.dns", "Dns.GetHostAddresses(ActiveDnsProbeHost)");
@@ -235,14 +263,20 @@ namespace WartungsToolbox.Kern.Regeln
                         : "Der Namensdienst hat innerhalb der Wartezeit nicht geantwortet; Webseiten sind so nicht erreichbar.";
                     b.Rat = statischDa
                         ? "DNS-Zwischenspeicher leeren; die fest eingetragenen Namensserver auf automatisch zurücksetzen."
-                        : "DNS-Zwischenspeicher leeren; hilft das nicht, den Router neu starten.";
+                        : festIrgendwo
+                            ? "DNS-Zwischenspeicher leeren; die fest eingetragenen Namensserver in den Adaptereinstellungen von Hand prüfen (das Programm setzt nur IPv4 auf einem DHCP-Anschluss zurück)."
+                            : "DNS-Zwischenspeicher leeren; hilft das nicht, den Router neu starten.";
                     b.Messwert = Messwert.Von(art, "Fehlerart", "Antwort mit der erwarteten Adresse");
                     b.Detail.Add("SocketErrorCode: " + (art == "nxdomain" ? "HostNotFound (NXDOMAIN)" : "TimedOut/TryAgain oder Zeitgrenze der Sonde"));
                     foreach (var d in n.Dns)
                         b.Detail.Add("Namensserver Adapter " + d.AdapterIndex + " (" + FamilieText(d.Familie) + "): " + string.Join(", ", d.Server.Where(x => !IstDnsPlatzhalter(x)))
                                      + (d.Statisch == true ? " [fest eingetragen]" : d.Statisch == false ? " [automatisch]" : ""));
                     b.Massnahmen.Add(MDnsCacheLeeren);
-                    if (statischDa) b.Massnahmen.Add(MDnsZuruecksetzen);
+                    if (statischDa)
+                    {
+                        b.Massnahmen.Add(MDnsZuruecksetzen);
+                        b.Parameter[ParamAdapter] = statisch.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    }
                     e.Befunde.Add(b);
                     ursacheGefunden = true;
                 }
@@ -450,7 +484,9 @@ namespace WartungsToolbox.Kern.Regeln
                 b.Rat = "Die Zeilen aus der hosts-Datei entfernen (vorher eine Kopie sichern) und danach einen Virenscan laufen lassen.";
                 b.Messwert = Messwert.Von(treffer.Count, "umgeleitete Einträge", "0");
                 foreach (var h in treffer) b.Detail.Add(h.Ip + "  " + h.Host + "  [" + KlasseText(HostsKlasse(h.Host)) + "]");
-                b.Detail.Add("Nur gemeldet, nie automatisch bereinigt; die Maßnahme zeigt die Zeilen und legt vorher hosts.<datum>.bak an.");
+                // Bis M4 gibt es keine Massnahme, die die Datei anfasst oder sichert (netz.hosts.pruefen ist
+                // Rat, Stufe 3): die Kopie legt der Nutzer selbst an. Sobald M4 die Massnahme baut, den Satz drehen.
+                b.Detail.Add("Nur gemeldet, nie automatisch bereinigt: die Zeilen stehen oben; eine Kopie der Datei legen Sie vor dem Bearbeiten selbst an (etwa hosts.<datum>.bak im selben Ordner), dieses Programm schreibt keine.");
                 b.Massnahmen.Add(MHostsPruefen);
                 e.Befunde.Add(b);
             }
@@ -463,6 +499,60 @@ namespace WartungsToolbox.Kern.Regeln
         static Befund Neu(string schluessel, string quelle)
         {
             return new Befund { Bereich = Bereich.Netz, Schluessel = schluessel, Quelle = quelle };
+        }
+
+        /// <summary>Adapter-Index als Planparameter: immer invariant, nie mit Tausenderzeichen.</summary>
+        static string IndexText(Adapter a)
+        {
+            return a.Index.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>
+        /// Index des Anschlusses, den netz.dns.zuruecksetzen zuruecksetzen kann: fest eingetragene
+        /// IPv4-Namensserver (Familie 2, Statisch true, mindestens ein Server, der kein Platzhalter
+        /// ist) auf einem verbundenen physischen Anschluss mit DHCP (Dhcp true). Ein nur unter IPv6
+        /// fester Eintrag zaehlt nicht (die Massnahme setzt nur IPv4 zurueck, der Nachweis liest nur
+        /// Familie 2), ein Anschluss mit fester Adresse nicht (der Helfer lehnt ihn ab), ein nicht
+        /// verbundener nicht (sein Namensserver erklaert die versagende Sonde nicht). Der erste
+        /// Treffer in der Reihenfolge des Bilds; null = kein Treffer.
+        /// </summary>
+        public static int? StatischerDnsAdapter(Kern.Netz n, List<Adapter> physischUp)
+        {
+            foreach (var d in n.Dns)
+            {
+                if (d.Familie != 2 || d.Statisch != true || !d.Server.Any(x => !IstDnsPlatzhalter(x))) continue;
+                if (physischUp.Any(a => a.Index == d.AdapterIndex && a.Dhcp == true)) return d.AdapterIndex;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Ob ein Text (Signierer-Subject oder Anzeigename eines Dienstes) einen der bekannten
+        /// Virenschutz-Hersteller nennt. Geprueft werden die Woerter des Texts (Buchstaben und
+        /// Ziffern, alles andere trennt) einzeln und je zwei benachbarte zusammengezogen ("Trend
+        /// Micro Inc." trifft trendmicro, "F-Secure" fsecure, "G DATA" gdata), mit derselben Regel
+        /// wie fuer hosts-Labels. Reine Funktion; null oder leer ist kein Treffer.
+        /// </summary>
+        public static bool IstAvHersteller(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return false;
+            var woerter = new List<string>();
+            var aktuell = new System.Text.StringBuilder();
+            foreach (char c in text.ToLowerInvariant())
+            {
+                if (char.IsLetterOrDigit(c)) { aktuell.Append(c); continue; }
+                if (aktuell.Length > 0) { woerter.Add(aktuell.ToString()); aktuell.Length = 0; }
+            }
+            if (aktuell.Length > 0) woerter.Add(aktuell.ToString());
+            for (int i = 0; i < woerter.Count; i++)
+            {
+                foreach (string av in AvHersteller)
+                {
+                    if (LabelPasst(woerter[i], av)) return true;
+                    if (i + 1 < woerter.Count && LabelPasst(woerter[i] + woerter[i + 1], av)) return true;
+                }
+            }
+            return false;
         }
 
         public static bool IstApipa(string adresse)

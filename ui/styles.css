@@ -321,6 +321,15 @@ details.disc > summary b{font-weight:600;color:var(--text)}
 .rcard.rechte{border-color:var(--line-strong)}
 .rcard.rechte .rico{color:var(--accent)}
 .rbtns{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+/* v8.2: die Nachweiskarte über dem Ergebnis einer Maßnahme hängt an keinem Befund. Bestanden
+   bleibt flächig neutral wie „in Ordnung“, nur die Haarlinie ist kräftiger; ein nicht
+   bestandener Nachweis trägt die Warnfarbe der Befundkarten (.rcard.warn). Die Liste der
+   Einzelkarten mit Maßnahme liegt zugeklappt in einer Karte, ohne zweiten Schatten. */
+.rcard.nachweis{border-color:var(--line-strong)}
+.rcard.nachweis.warn{border-color:var(--warn-line)}
+.rcard.nachweis.bad{border-color:var(--bad-line)}
+.rlist{display:flex;flex-direction:column;gap:10px;padding-top:12px}
+.rlist .rcard{box-shadow:none}
 
 .next{padding:17px 20px;border-radius:var(--r);border:1px solid var(--line-strong);
   background:var(--surface-2);display:flex;align-items:center;gap:18px;flex-wrap:wrap}
@@ -442,6 +451,9 @@ details.disc > summary b{font-weight:600;color:var(--text)}
   transition:transform .2s var(--ease)}
 .switch input:checked + i{background:var(--accent);border-color:var(--accent)}
 .switch input:checked + i::after{transform:translateX(17px)}
+/* Ein Schalter, der auf die Antwort des Hosts wartet (Freigaben der geplanten Wartung) */
+.switch input:disabled{cursor:default}
+.switch input:disabled + i{opacity:.5}
 
 /* Eingabefelder */
 input[type=text],input[type=number],input[type=time],select{
@@ -457,7 +469,7 @@ input:focus-visible,select:focus-visible{border-color:var(--accent)}
 }
 .modal{
   background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);
-  box-shadow:var(--shadow-2);max-width:520px;width:100%;padding:26px 26px 20px;
+  box-shadow:var(--shadow-2);max-width:520px;width:100%;padding:26px 26px 0;
   max-height:86vh;overflow-y:auto;
 }
 .modal-ico{width:44px;height:44px;border-radius:11px;display:grid;place-items:center;
@@ -469,8 +481,24 @@ input:focus-visible,select:focus-visible{border-color:var(--accent)}
 .modal p{font-size:14px;color:var(--text-2);line-height:1.6;white-space:pre-line}
 .modal .lead{font-size:11.5px;letter-spacing:1px;text-transform:uppercase;
   color:var(--text-3);font-weight:600;margin-bottom:6px}
-.modal-btns{display:flex;gap:9px;justify-content:flex-end;margin-top:20px;flex-wrap:wrap}
+/* Die Knopfzeile klebt am unteren Rand des Dialogs: passt der Inhalt nicht in 86vh
+   (Mindestfenster 760×560, Schrift ab 115 %), bleibt „Jetzt ausführen“ ohne Rollen
+   erreichbar, und der Dialog öffnet trotzdem oben bei der Überschrift. Der untere
+   Abstand des Dialogs (20px) wandert dafür in die Knopfzeile; ohne Überlauf sieht der
+   Dialog aus wie vorher. Die Haarlinie erscheint nur, wenn Text darunter rollt. */
+.modal-btns{display:flex;gap:9px;justify-content:flex-end;margin-top:8px;flex-wrap:wrap;
+  position:sticky;bottom:0;background:var(--surface);padding:12px 0 20px}
+.modal.scrollt .modal-btns{box-shadow:0 -1px 0 var(--line)}
 .modal-input{width:100%;margin-top:14px}
+/* v8.2: Vorschau einer Maßnahme. Drei Absätze mit Zwischenzeile (.lead), darunter die
+   Kennzeile „Sicherung · Rückweg · Dauer“ und die Hinweise, kleiner und ruhiger als der
+   Text; der Grund einer Ablehnung in Warnfarbe, ohne Kasten. */
+.modal .modal-abs{margin-top:14px}
+.modal .modal-meta{font-size:13px;color:var(--text-3);margin-top:12px}
+.modal .modal-grund{color:var(--warn);margin-top:12px}
+/* Die Fachzeile trägt Registrierungspfade ohne Leerzeichen; ohne Umbruchpunkt liefen sie
+   waagerecht aus dem Dialog. */
+.modal .card-tech{overflow-wrap:anywhere}
 
 /* ---------- Banner ---------- */
 .banner{

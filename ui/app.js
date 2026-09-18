@@ -36,6 +36,9 @@ function el(tag, cls, html){
 /* ---------- Zustand ---------- */
 const S = {
   catalog: null,        // vom Host
+  massnahmen: {},       // Maßnahmenkatalog des Kerns je Kennung (aus catalog.massnahmen, v8.2)
+  busy: false,          // ein Klick auf „Beheben“/„Rückgängig“ wartet auf die Antwort des Hosts
+  shotAusfuehren: false,// Belegaufnahme: im nächsten Vorschau-Dialog „Jetzt ausführen“ klicken
   checks: [],           // Bereichszeilen des letzten Laufs (Startseite)
   befunde: [],          // einzelne Befunde des letzten Laufs (Ergebnis)
   fragen: 0,            // offene Fragen an den Nutzer
@@ -44,7 +47,7 @@ const S = {
   storage: null,        // letztes Ergebnis "wo steckt der Platz?"
   registry: null,       // letztes Ergebnis der Registrierungs-Pruefung
   cat: null,            // gewaehlte Werkzeug-Kategorie
-  mode: null,           // 'check' | 'deep' | 'fix' | 'ergaenzen' | 'action'
+  mode: null,           // 'check' | 'deep' | 'fix' | 'ergaenzen' | 'action' | 'massnahme' | 'rueckweg'
   steps: [],
   stepIndex: 0,
   stepTotal: 0,
@@ -324,6 +327,19 @@ const FLOW_TEXT = {
     title:'Die Messwerte werden ergänzt',
     lead:UAC_SATZ + ' Danach werden die fehlenden Werte gelesen; das dauert etwa 10 Sekunden.',
     foot:'Es wird nur gelesen, nichts verändert. Lehnen Sie den Dialog ab, bleibt das bisherige Ergebnis stehen.' },
+  /* v8.2: eine Maßnahme aus einer Befundkarte und ihr Rückweg. Beide startet nie ein Klick hier
+     direkt, sondern erst der Host mit flowStart (Vertrag M3 §9.1); die Überschrift kommt aus
+     dessen titel. Kein befehl, weil startFlow diese Wege nicht kennt. */
+  massnahme: {
+    icon:'wrench', befehl:null,
+    title:'Die Maßnahme wird ausgeführt',
+    lead:'Drei Schritte: die Maßnahme über den Helfer, eine Nachmessung, das Ergebnis mit Nachweis. ' + UAC_SATZ,
+    foot:'Sie können abbrechen. Was bis dahin geändert wurde, bleibt so; eine angelegte Sicherung bleibt liegen.' },
+  rueckweg: {
+    icon:'rotate', befehl:null,
+    title:'Wird rückgängig gemacht',
+    lead:'Die gemerkten Werte aus der Sicherung werden zurückgeschrieben, danach misst das Programm nach. ' + UAC_SATZ,
+    foot:'Sie können abbrechen. Die Sicherungsdatei bleibt in jedem Fall liegen.' },
 };
 
 /* Ablauf-Bildschirm für einen Lauf herrichten, ohne ihn zu starten. Getrennt von
@@ -351,6 +367,9 @@ function zeigeAblauf(mode){
 }
 
 function startFlow(mode){
+  // Maßnahme und Rückweg haben keinen Startbefehl hier (siehe FLOW_TEXT): ein Aufruf wäre ein
+  // Programmfehler, und ein Wartebildschirm ohne Befehl dahinter wäre die Sackgasse aus B29.
+  if(!(FLOW_TEXT[mode] || FLOW_TEXT.check).befehl) return;
   zeigeAblauf(mode);
   send({ type: (FLOW_TEXT[mode] || FLOW_TEXT.check).befehl });
   // Der Hauptweg schickt seine Wahl getrennt: startCheck/startFix tragen sie nicht mit,
@@ -397,6 +416,9 @@ function cancelClick(){
   confirmModal('Vorgang abbrechen?',
     S.mode === 'fix'
       ? 'Was bereits repariert wurde, bleibt erhalten. Den Rest können Sie später erneut starten.'
+      : (S.mode === 'massnahme' || S.mode === 'rueckweg')
+      ? 'Der Helfer hält an der nächsten sicheren Stelle an. Was bis dahin geändert wurde, bleibt so; ' +
+        'eine angelegte Sicherung bleibt liegen.'
       : 'Die Prüfung wird beendet. Ihrem PC passiert dabei nichts.',
     'Abbrechen', () => { send({type:'cancel'}); });
 }
@@ -407,12 +429,23 @@ $('#btn-cancel').onclick = cancelClick;
    ===================================================================== */
 function renderResult(r){
   S.result = r;
+  // Ein neues Ergebnis ist die Antwort auf alles, was vorher wartete („Beheben“, „Rückgängig“);
+  // die Karten werden gleich frisch gezeichnet, mit freien Knöpfen.
+  S.busy = false;
   const ico = $('#res-ico');
   ico.className = 'vico ' + r.overall;
   ico.innerHTML = svg(r.overall === 'ok' ? 'checkCircle' : 'alert');
 
+  // v8.2: nach einer Maßnahme oder ihrem Rückweg trägt die Kopfzeile den Nachweis, nicht das
+  // Gesamturteil; das steht darunter in den Karten wie nach jeder Prüfung (Vertrag M3 §9.4).
+  const nachweis = (r.mode === 'massnahme' || r.mode === 'rueckweg') && r.nachweis ? r.nachweis : null;
   const fixedNow = r.mode === 'fix';
-  if(r.overall === 'ok'){
+  if(nachweis){
+    ico.className = 'vico ' + nachweisStufe(nachweis);
+    ico.innerHTML = svg(nachweis.bestanden ? 'checkCircle' : (nachweis.unbestimmt ? 'info' : 'alert'));
+    $('#res-title').textContent = nachweisTitel(nachweis, r.mode);
+    $('#res-lead').textContent = nachweisLead(nachweis, r.mode);
+  } else if(r.overall === 'ok'){
     $('#res-title').textContent = fixedNow ? 'Fertig, Ihr PC ist in Ordnung' : 'Alles in Ordnung';
     $('#res-lead').textContent = fixedNow
       ? 'Wir haben behoben, was zu beheben war. Es ist nichts weiter zu tun.'
@@ -446,6 +479,9 @@ function renderResult(r){
 
   const box = $('#res-list');
   box.innerHTML = '';
+  // Die Nachweiskarte steht über allem: sie ist die Antwort auf den Klick, und die
+  // Befundkarte, an der die Maßnahme hing, ist nach einem Erfolg verschwunden.
+  if(nachweis) box.appendChild(nachweisCard(nachweis, r.mode));
   // Ganz oben, wenn Messwerte fehlen, weil eine Quelle erst mit Administratorrechten
   // lesbar ist. Das ist der einzige Ort, an dem der UAC-Dialog angeboten wird, bevor
   // etwas verändert wird: einmal klicken, einmal bestätigen, etwa 10 Sekunden.
@@ -459,6 +495,15 @@ function renderResult(r){
   if(fileIssue) box.appendChild(resultCard(fileIssue));
   issues.forEach(b => box.appendChild(resultCard(b)));
   absicht.forEach(b => box.appendChild(resultCard(b)));
+  // Unauffällige Befunde mit eigener Maßnahme (ein Startprogramm, eine Aufgabe, ein Dienst je
+  // Karte, wenn die Sammelkarte „beachten“ sagt): ohne diese Gruppe gäbe es die Knöpfe nie,
+  // weil ok-Befunde sonst nur in der Bereichsgruppe stehen. Zugeklappt, weil es viele sind.
+  // Die Einzelbefunde der Leistungsregel gehören auch ohne Knopf dazu (Dienst einer Schutz-
+  // software, ein Name, den der Helfer nicht annimmt): sie tragen dann nur den Rat, und die
+  // Sammelkarte zählt sie mit („N von M, davon K mit dem Schalter und J nur mit Rat“).
+  const einzeln = befunde.filter(b => !b.frage && b.state === 'ok' &&
+    (massnahmenKnoepfe(b).length || (b.key || '').indexOf('leistung.autostart.eintrag.') === 0));
+  if(einzeln.length) box.appendChild(einzelCard(einzeln));
 
   // Nicht Prüfbares wird getrennt ausgewiesen. Es unter "unauffällig" zu verbuchen
   // wäre eine Behauptung, die wir nicht belegen können.
@@ -487,9 +532,13 @@ function renderResult(r){
     const b = el('button','btn btn-primary btn-md','Windows-Dateien reparieren');
     b.onclick = () => startFlow('fix');
     next.appendChild(b);
-  } else if(!r.filesGeprueft && (r.mode === 'check' || r.mode === 'answer' || r.mode === 'ergaenzt')){
+  } else if(!r.filesGeprueft && !(nachweis && nachweis.neustart === true) &&
+            (r.mode === 'check' || r.mode === 'answer' || r.mode === 'ergaenzt' || r.mode === 'massnahme' || r.mode === 'rueckweg')){
     // Die Tiefenprüfung ist ein eigener, bewusster Schritt: sie dauert Minuten. Sie hängt
     // seit 8.1 nicht mehr an den Rechten des Hosts: der Helfer holt sie sich beim Start.
+    // Auch nach einer Maßnahme oder ihrem Rückweg (v8.2): das Ergebnis darunter ist dasselbe
+    // wie eine Minute vorher, und der Weg zur Tiefenprüfung darf nicht mit ihr verschwinden.
+    // Verlangt der Nachweis einen Neustart, ist der die eine Empfehlung (Zweig darunter).
     next.appendChild(el('span','next-b',
       '<div class="next-t">' + (r.problems ? 'Was Sie jetzt tun sollten' : 'Wenn Sie es genau wissen wollen') + '</div>' +
       '<div class="next-s">' + (r.problems ? 'Die Hinweise oben sagen bei jedem Punkt, was zu tun ist. '
@@ -499,7 +548,9 @@ function renderResult(r){
     const b = el('button', r.problems ? 'btn btn-ghost' : 'btn btn-primary btn-md', 'Windows-Dateien tief prüfen');
     b.onclick = () => startFlow('deep');
     next.appendChild(b);
-  } else if(r.restart){
+  } else if(r.restart || (nachweis && nachweis.neustart === true)){
+    // Auch der Nachweis einer Maßnahme kann den Neustart verlangen (UAC, Gerät): dann ist er
+    // die eine Empfehlung, nicht die Tiefenprüfung.
     next.appendChild(el('span','next-b',
       '<div class="next-t">Was Sie jetzt tun sollten</div>' +
       '<div class="next-s">Starten Sie den PC einmal neu. Erst dann sind die Änderungen ' +
@@ -590,6 +641,203 @@ function rechteCard(n, checks){
   return card;
 }
 
+/* =====================================================================
+   Maßnahmen (v8.2, Vertrag M3 §9)
+
+   Der Kern hängt an Befunde Kennungen (c.massnahmen); was sie bedeuten, sagt der
+   Katalog aus der catalog-Nachricht (S.massnahmen: Titel, Art, Stufe, Marken). Die
+   Oberfläche kennt keine Kennung selbst: eine Kennung ohne Katalogeintrag bekommt
+   keinen Knopf, statt einen Plan zu versprechen, den der Host ablehnt.
+   ===================================================================== */
+
+/* Die Knöpfe, die ein Befund bekommt: „Beheben: <Titel>“ je ausführbarer Maßnahme (in der
+   Reihenfolge des Befunds), „Ansehen“ je Ansicht, nichts bei Rat und nichts, wenn der Nutzer
+   den Zustand als gewollt bestätigt hat. Der Speicherplatz behält seine bewährte Beschriftung,
+   weil derselbe Weg auf der Startseite so heißt. */
+function massnahmenKnoepfe(c){
+  const out = [];
+  if(!Array.isArray(c.massnahmen) || c.state === 'absicht') return out;
+  c.massnahmen.forEach(k => {
+    const m = S.massnahmen[k];
+    if(!m) return;
+    if(m.art === 'ausfuehren') out.push({ kennung:k, art:'ausfuehren', label:'Beheben: ' + (m.titel || k) });
+    else if(m.art === 'ansicht') out.push({ kennung:k, art:'ansicht', label: k === 'speicher.aufraeumen' ? 'Wo steckt der Platz?' : 'Ansehen' });
+  });
+  return out;
+}
+
+/* Klick auf „Beheben“: der Knopf wartet, bis der Host die Vorschau (massnahmeVorschau)
+   oder eine Ablehnung (flowError, flowBusy) schickt; ein zweiter Klick wäre eine zweite
+   Anfrage. Die anderen Knöpfe des Ergebnisses sind derweil gesperrt, damit nicht zwei
+   Vorschauen übereinander liegen. */
+function massnahmeVorschauAnfragen(btn, kennung, schluessel){
+  S.busy = true;
+  knopfWartet(btn, 'Wird vorbereitet …');
+  massnahmeKnoepfeSperren();
+  send({type:'massnahmeVorschau', kennung:kennung, schluessel:schluessel});
+}
+
+/* „Jetzt ausführen“ im Vorschau-Dialog. Umgeschaltet wird erst mit flowStart vom Host;
+   bis dahin steht der Knopf der Karte auf „Wird gestartet …“ (Grundsatz: die Oberfläche
+   schaltet auf die Antwort um, nicht auf den Klick). */
+function massnahmeStarten(kennung, schluessel){
+  S.busy = true;
+  knopfWartet(massnahmeKnopf(kennung, schluessel), 'Wird gestartet …');
+  massnahmeKnoepfeSperren();
+  send({type:'massnahmeAusfuehren', kennung:kennung, schluessel:schluessel});
+}
+
+/* Der Knopf einer Kennung an einer Karte. Über die Datenfelder verglichen statt über einen
+   Selektor: ein Befundschlüssel darf Backslash und Kaufmanns-Und tragen (Geräte-Instanz). */
+function massnahmeKnopf(kennung, schluessel){
+  return $$('#res-list button[data-massnahme]').find(b =>
+    b.dataset.massnahme === kennung && (schluessel == null || b.dataset.schluessel === schluessel)) || null;
+}
+
+/* Alle Maßnahmen- und Rückgängig-Knöpfe des Ergebnisses sperren (ohne Zwischentext); frei
+   werden sie mit der Antwort des Hosts (resKnoepfeFrei) oder mit dem nächsten Ergebnis. */
+function massnahmeKnoepfeSperren(){
+  $$('#res-list button[data-massnahme], #res-list button[data-rueckweg]').forEach(b => { b.disabled = true; });
+}
+
+/* Gegenstück zu subKnoepfeFrei für den Ergebnis-Bildschirm: wartende Knöpfe bekommen ihren
+   Text zurück, gesperrte werden frei. Gerufen bei jeder Antwort, die keinen Lauf beginnt. */
+function resKnoepfeFrei(){
+  S.busy = false;
+  $$('#res-list [data-wartet-text]').forEach(knopfFrei);
+  $$('#res-list button[data-massnahme], #res-list button[data-rueckweg]').forEach(b => { b.disabled = false; });
+}
+
+/* „Rückgängig“ von der Nachweiskarte oder aus dem Verlauf: eine Nachfrage, dann der Plan
+   rueckweg mit dem Dateinamen der Sicherung. Der Knopf wartet bis flowStart, flowError
+   oder flowBusy; der Verlauf gibt seine Knöpfe über subKnoepfeFrei frei. */
+function rueckwegFragen(btn, sicherung, titel){
+  confirmModal('Rückgängig machen?',
+    'Die gemerkten Werte von „' + (titel || 'dieser Maßnahme') + '“ werden aus der Sicherung ' +
+    'zurückgeschrieben; danach misst das Programm nach. Was Sie seitdem an derselben Stelle ' +
+    'selbst geändert haben, geht dabei verloren.\n\n' + UAC_SATZ,
+    'Rückgängig machen', () => {
+      S.busy = true;
+      knopfWartet(btn, 'Wird zurückgenommen …');
+      massnahmeKnoepfeSperren();
+      send({type:'massnahmeRueckweg', sicherung:sicherung});
+    });
+}
+
+/* Kopfzeile des Ergebnisses nach einer Maßnahme. Der Titel sagt, was geschehen ist, die
+   Zeile darunter, was die Nachmessung dazu sagt; ein „Rückgängig gemacht“ über einem
+   nicht bestandenen Nachweis wäre eine Behauptung ohne Beleg. Ein Nein heißt nur „nicht
+   bestätigt“: nach einem Helferfehler (Exit 1) hat der Kern gar nicht gemessen, und ein
+   Nein des Kerns kann ein neuer, aber nicht guter Zustand sein („hat eine Adresse, aber
+   weiterhin keinen Router“). Deshalb behauptet der Satz nichts über „alt“ oder „neu“.
+   Schickt der Host das Feld fehler (Helfer mit Exit 1), sagt der Titel das; ohne das Feld
+   bleibt der Vertragstitel (M3 §9.4), der Satz ist in beiden Fällen ehrlich. */
+function nachweisFehler(n){ return !!n && n.fehler === true; }
+function nachweisTitel(n, mode){
+  if(nachweisFehler(n)) return mode === 'rueckweg' ? 'Rückgängig mit Fehler beendet' : 'Maßnahme mit Fehler beendet';
+  if(mode === 'rueckweg'){
+    return n.bestanden ? 'Rückgängig gemacht'
+         : (n.unbestimmt ? 'Rückgängig gemacht, Wirkung nicht messbar' : 'Rückgängig nicht gelungen');
+  }
+  return n.bestanden ? 'Maßnahme ausgeführt'
+       : (n.unbestimmt ? 'Maßnahme ausgeführt, Wirkung nicht messbar' : 'Maßnahme ausgeführt, Wirkung nicht belegt');
+}
+function nachweisLead(n, mode){
+  if(n.bestanden){
+    return (mode === 'rueckweg'
+      ? 'Die Nachmessung bestätigt den früheren Zustand. '
+      : 'Die Nachmessung bestätigt die Änderung. ') +
+      'Darunter steht das Ergebnis der Prüfung, wie es jetzt aussieht.';
+  }
+  if(n.unbestimmt) return 'Die Nachmessung konnte die Wirkung nicht ablesen; was sie gelesen hat, steht in der Karte oben.';
+  if(nachweisFehler(n)) return 'Der Helfer meldete ein Problem, deshalb gab es keine Nachmessung; was er gemeldet hat, steht in der Karte oben.';
+  return (mode === 'rueckweg'
+    ? 'Die Nachmessung bestätigt die Rücknahme nicht; '
+    : 'Die Nachmessung bestätigt die Änderung nicht; ') + 'der Grund steht in der Karte oben.';
+}
+/* Farbe und Symbol des Nachweises, für Kopfzeile und Nachweiskarte gleich: bestanden ok,
+   nicht messbar unknown, nicht bestanden warn, Helferfehler bad. */
+function nachweisStufe(n){
+  return n.bestanden ? 'ok' : (n.unbestimmt ? 'unknown' : (nachweisFehler(n) ? 'bad' : 'warn'));
+}
+
+/* Die Nachweiskarte: Symbol nach Ausgang, der Satz des Kerns, der Neustart-Hinweis und, wenn
+   der Helfer eine Sicherung geschrieben hat und den Rückweg nicht ausschließt, „Rückgängig“.
+   Sie hängt an keiner Befundkarte: die Karte, an der die Maßnahme hing, ist nach einem
+   Erfolg weg. Bestanden bleibt flächig neutral wie „in Ordnung“. */
+function nachweisCard(n, mode){
+  const st = nachweisStufe(n);
+  const card = el('div','rcard nachweis ' + st);
+  const praefix = n.bestanden ? 'Nachweis: ' : (n.unbestimmt ? 'Nachweis nicht messbar: ' : 'Nachweis nicht bestanden: ');
+  const rueckwegMoeglich = !!n.sicherung && n.rueckwegMoeglich !== false;
+  card.innerHTML =
+    '<span class="rico">' + svg(n.bestanden ? 'check' : (n.unbestimmt ? 'info' : 'alert')) + '</span>' +
+    '<span class="rbody">' +
+      '<span class="rt">' + esc(n.titel || (mode === 'rueckweg' ? 'Rückgängig' : 'Maßnahme')) + '</span>' +
+      '<div class="rs">' + esc(praefix + (n.satz || '')) + '</div>' +
+      (n.neustart === true ? '<div class="radv">Wirkt vollständig erst nach einem Neustart.</div>' : '') +
+      (n.sicherung && !rueckwegMoeglich
+        ? '<div class="rs">Ein Rückweg ist für diese Maßnahme nicht vorgesehen; die Sicherung bleibt als Beleg liegen.</div>'
+        : '') +
+    '</span>';
+  if(rueckwegMoeglich){
+    const row = el('div','rbtns');
+    const zurueck = el('button','btn btn-ghost','Rückgängig');
+    zurueck.type = 'button';
+    zurueck.dataset.rueckweg = n.sicherung;
+    // Der Name für Vorlesehilfen nennt die Maßnahme, wie bei jedem wiederholten Knopf.
+    if(n.titel) zurueck.setAttribute('aria-label', 'Rückgängig: ' + n.titel);
+    zurueck.disabled = S.busy;
+    zurueck.onclick = () => rueckwegFragen(zurueck, n.sicherung, n.titel);
+    row.appendChild(zurueck);
+    card.querySelector('.rbody').appendChild(row);
+  }
+  const fach = [];
+  if(n.kennung) fach.push('Kennung: ' + n.kennung);
+  if(n.hinKennung) fach.push('Hin-Maßnahme: ' + n.hinKennung);
+  if(n.sicherung) fach.push('Sicherung: sicherungen\\massnahmen\\' + n.sicherung);
+  if(fach.length){
+    const d = el('details','disc');
+    d.style.marginTop = '0';
+    d.innerHTML = '<summary>' + svg('chevron') + ' <b>Fachlich</b></summary>' +
+                  '<div class="disc-body"><p class="fach" style="white-space:pre-line">' + esc(fach.join('\n')) + '</p></div>';
+    card.querySelector('.rbody').appendChild(d);
+  }
+  return card;
+}
+
+/* Unauffällige Befunde mit eigener Maßnahme, zugeklappt in einer Karte. Der Titel nennt zwei
+   Zahlen, sobald nicht jeder Eintrag einen Knopf hat: die Sammelkarte der Leistungsregel
+   verspricht „K mit dem Schalter und J nur mit Rat“, und das Sichtbare muss dazu passen. */
+function einzelCard(list){
+  const mit = list.filter(b => massnahmenKnoepfe(b).length).length;
+  const n = list.length;
+  let titel, satz;
+  if(mit === n){
+    titel = n === 1 ? 'Ein weiterer Eintrag lässt sich einzeln beheben'
+                    : n + ' weitere Einträge lassen sich einzeln beheben';
+    satz = 'Für sich genommen unauffällig; jeder Eintrag trägt seinen eigenen Knopf. ';
+  } else {
+    titel = n === 1 ? 'Ein weiterer Eintrag im Einzelnen, nur mit Rat'
+                    : n + ' weitere Einträge im Einzelnen, davon ' + (mit === 0 ? 'keiner' : mit === 1 ? 'einer' : mit) + ' mit Schalter';
+    satz = 'Für sich genommen unauffällig; ' + (mit === 0 ? 'kein Eintrag' : mit === 1 ? 'ein Eintrag' : mit + ' Einträge') +
+           ' mit Knopf, ' + (n - mit === 1 ? 'einer' : (n - mit)) + ' nur mit Rat. ';
+  }
+  const card = el('div','rcard ok');
+  card.innerHTML =
+    '<span class="rico">' + svg('check') + '</span>' +
+    '<span class="rbody"><span class="rt">' + titel + '</span>' +
+    '<div class="rs">' + satz + (mit === 0 ? 'Das Programm ändert an diesen Einträgen nichts.' : 'Ohne Klick bleibt alles, wie es ist.') + '</div></span>';
+  const d = el('details','disc');
+  d.style.marginTop = '0';
+  d.innerHTML = '<summary>' + svg('chevron') + ' <b>Im Einzelnen ansehen</b></summary>';
+  const platz = el('div','rlist');
+  list.forEach(b => platz.appendChild(resultCard(b)));
+  d.appendChild(platz);
+  card.querySelector('.rbody').appendChild(d);
+  return card;
+}
+
 /* Eine Karte je Befund (oder je Bereichszeile für die Windows-Dateien). Der Laie liest
    Titel, Satz und Rat; der Fachmann klappt „Fachlich“ auf: Messwert, Schwelle, Quelle
    und die Einzelzeilen. */
@@ -603,10 +851,32 @@ function resultCard(c){
       '<div class="rs">' + esc(c.summary) + '</div>' +
       (c.advice ? '<div class="radv">' + esc(c.advice) + '</div>' : '') +
     '</span>';
+  // v8.2: die Knöpfe der Maßnahmen, die der Kern an diesen Befund gehängt hat. Gesperrt,
+  // solange ein anderer Klick auf den Host wartet (S.busy).
+  const knoepfe = massnahmenKnoepfe(c);
+  if(knoepfe.length){
+    const row = el('div','rbtns');
+    knoepfe.forEach(k => {
+      const b = el('button', k.art === 'ausfuehren' ? 'btn btn-primary btn-md' : 'btn btn-ghost', esc(k.label));
+      b.type = 'button';
+      b.dataset.massnahme = k.kennung;
+      b.dataset.schluessel = c.key || '';
+      // Ein Dutzend Karten „Startprogramm „…““ tragen denselben Knopftext; der Name für
+      // Vorlesehilfen hängt den Befund an, damit die Knopfliste unterscheidbar bleibt.
+      if(c.title) b.setAttribute('aria-label', k.label + ' (' + c.title + ')');
+      b.disabled = S.busy;
+      if(k.art === 'ausfuehren') b.onclick = () => massnahmeVorschauAnfragen(b, k.kennung, c.key || '');
+      else if(k.kennung === 'speicher.aufraeumen') b.onclick = () => go('storage');
+      else b.onclick = () => send({type:'massnahmeAnsicht', kennung:k.kennung});
+      row.appendChild(b);
+    });
+    card.querySelector('.rbody').appendChild(row);
+  }
   // Beim Speicherplatz bleibt der Rat sonst abstrakt. Von hier aus geht es dorthin,
-  // wo steht, WAS den Platz belegt.
+  // wo steht, WAS den Platz belegt. Trägt der Befund die Ansicht schon als Maßnahme,
+  // steht der Knopf oben und nicht ein zweites Mal.
   const speicher = c.key === 'speicherplatz' || (c.key || '').indexOf('speicher.') === 0 || c.bereich === 'speicherplatz';
-  if(speicher && (c.state === 'warn' || c.state === 'bad')){
+  if(speicher && (c.state === 'warn' || c.state === 'bad') && !knoepfe.some(k => k.kennung === 'speicher.aufraeumen')){
     const wo = el('button','btn btn-ghost','Wo steckt der Platz?');
     wo.style.marginTop = '10px';
     wo.onclick = () => go('storage');
@@ -679,7 +949,8 @@ function frageKnoepfeFrei(){
    stehen die Schaltflächen für den nächsten Versuch, und „erneut versuchen“ heißt dann ein
    Klick statt einer ganzen neuen Prüfung (B24). Ohne solches Ergebnis geht es zum Anfang. */
 function zumErgebnisOderStart(){
-  if(S.result && (S.mode === 'ergaenzen' || S.mode === 'deep' || S.mode === 'fix')) show('result');
+  if(S.result && (S.mode === 'ergaenzen' || S.mode === 'deep' || S.mode === 'fix' ||
+                  S.mode === 'massnahme' || S.mode === 'rueckweg')) show('result');
   else go('start');
 }
 
@@ -1199,10 +1470,23 @@ function buildModal(opts){
   ov.appendChild(box);
   document.body.appendChild(ov);
 
+  // Der Dialog öffnet oben, mit Überschrift und erstem Absatz im Bild. Die Aufrufer hängen
+  // erst nach der Rückkehr Absätze und Knöpfe an und setzen den Fokus (mit preventScroll);
+  // bei kleinem Fenster oder großer Schrift rollte der Fokus den Knopf sonst ins Bild und
+  // die Überschrift hinaus (Vorschau bei 760×560 oder 115 % Schrift). Der Knopf bleibt
+  // erreichbar, weil die Knopfzeile am unteren Rand klebt (.modal-btns); sobald der Inhalt
+  // höher als der Dialog ist, trennt eine Haarlinie sie vom rollenden Text (.scrollt).
+  function ueberlauf(){
+    box.classList.toggle('scrollt', box.scrollHeight > box.clientHeight + 1);
+  }
+  requestAnimationFrame(() => { box.scrollTop = 0; ueberlauf(); });
+  window.addEventListener('resize', ueberlauf);
+
   function close(){
     ov.remove();
     openDialog = null;
     document.removeEventListener('keydown', keys, true);
+    window.removeEventListener('resize', ueberlauf);
     // Zurück zum Element von vorher, sofern es noch im Dokument steht und bedienbar ist.
     // Wurde der Bildschirm inzwischen gewechselt oder die Karte neu gezeichnet, bekommt
     // die Überschrift des sichtbaren Bildschirms den Fokus (wie bei show()).
@@ -1236,7 +1520,7 @@ function infoModal(title, body, tone, tech){
   const ok = el('button','btn btn-primary btn-md','Verstanden');
   ok.onclick = m.close;
   m.btns.appendChild(ok);
-  ok.focus();
+  ok.focus({preventScroll:true});
 }
 
 /* Bereichszeile auf der Startseite angeklickt: alle Befunde dieses Bereichs, jeder mit
@@ -1271,7 +1555,7 @@ function detailModal(c){
     m.btns.appendChild(wo);
   }
   m.btns.appendChild(ok);
-  ok.focus();
+  ok.focus({preventScroll:true});
 }
 
 function confirmModal(title, body, okLabel, onOk, dangerous){
@@ -1284,7 +1568,83 @@ function confirmModal(title, body, okLabel, onOk, dangerous){
   m.btns.appendChild(cancel);
   m.btns.appendChild(ok);
   // Bei riskanten Aktionen liegt der Fokus auf dem sicheren Weg.
-  (dangerous ? cancel : ok).focus();
+  (dangerous ? cancel : ok).focus({preventScroll:true});
+}
+
+/* Die Marken des Kerns in Alltagssprache (Vertrag M3 §9.4). Eine unbekannte Marke wird
+   wörtlich gezeigt statt verschwiegen: dann stimmt der Katalog nicht mit dieser Fassung. */
+const MARKE_SICHERUNG = {
+  'keine':'keine nötig',
+  'werte-merken':'die bisherigen Werte werden gemerkt',
+  'wiederherstellungspunkt':'Wiederherstellungspunkt',
+  'reg-export':'Export der Registrierung',
+};
+const MARKE_RUECKWEG = { 'von selbst':'nicht nötig', 'sicherung':'über die angelegte Sicherung', 'keiner':'keiner' };
+function marke(tabelle, wert){ return tabelle[wert] || (wert ? String(wert) : 'unbekannt'); }
+
+/* Dauer im Nominativ („etwa eine Minute“); dauer() liefert den Dativ für „in einer Minute“. */
+function dauerText(sekunden){
+  const s = Number(sekunden) || 0;
+  if(s <= 0) return 'wenige Sekunden';
+  if(s === 1) return 'eine Sekunde';
+  if(s < 90) return s + ' Sekunden';
+  const m = Math.round(s / 60);
+  return m === 1 ? 'eine Minute' : m + ' Minuten';
+}
+
+/* Die Vorschau einer Maßnahme (Antwort massnahmeVorschau): Titel, drei Absätze, die Zeile
+   mit Sicherung, Rückweg und Dauer, Hinweise, dann „Jetzt ausführen“. Ist die Maßnahme
+   gerade nicht ausführbar, steht der Grund des Hosts da und nur „Schließen“: ein Knopf, der
+   auf eine Ablehnung zuläuft, wäre ein Versprechen. Liefert den Start-Knopf (null, wenn es
+   keinen gibt), damit die Belegaufnahme ihn drücken kann. */
+function vorschauModal(v){
+  const m = buildModal({ title: v.titel || 'Maßnahme', lead:'Was passiert', body: v.wasPassiert || '', icon:'wrench' });
+  const teil = (label, text) => {
+    m.box.insertBefore(el('div','lead modal-abs', esc(label)), m.btns);
+    m.box.insertBefore(el('p','', esc(text || '')), m.btns);
+  };
+  teil('Was bleibt', v.wasBleibt);
+  teil('Risiko', v.risiko);
+  m.box.insertBefore(el('p','modal-meta',
+    'Sicherung: ' + esc(marke(MARKE_SICHERUNG, v.sicherung)) +
+    ' · Rückweg: ' + esc(marke(MARKE_RUECKWEG, v.rueckweg)) +
+    ' · Dauer: etwa ' + esc(dauerText(v.dauer))), m.btns);
+  const hinweise = [];
+  if(v.neustart === true) hinweise.push('Nach der Maßnahme ist ein Neustart nötig, damit sie vollständig wirkt.');
+  hinweise.push(UAC_SATZ);
+  if(v.rueckweg === 'sicherung') hinweise.push('Rückgängig geht über die angelegte Sicherung.');
+  m.box.insertBefore(el('p','modal-meta', esc(hinweise.join(' '))), m.btns);
+  // Die Fachzeile wie bei den Werkzeugkarten: Kennung, Stufe, Parameter des Plans.
+  m.box.insertBefore(el('p','card-tech modal-abs', 'Fachlich: ' + esc((v.kennung || '') +
+    (v.stufe != null ? ' · Stufe ' + v.stufe : '') + parameterText(v.parameter))), m.btns);
+
+  if(v.ausfuehrbar === false){
+    m.box.insertBefore(el('p','modal-grund', esc(v.grund || 'Diese Maßnahme lässt sich gerade nicht ausführen.')), m.btns);
+    const zu = el('button','btn btn-primary btn-md','Schließen');
+    zu.onclick = m.close;
+    m.btns.appendChild(zu);
+    zu.focus({preventScroll:true});
+    m.box.scrollTop = 0;
+    return null;
+  }
+  const cancel = el('button','btn btn-ghost','Abbrechen');
+  cancel.onclick = m.close;
+  const ok = el('button','btn btn-primary btn-md','Jetzt ausführen');
+  ok.onclick = () => { m.close(); massnahmeStarten(v.kennung, v.schluessel); };
+  m.btns.appendChild(cancel);
+  m.btns.appendChild(ok);
+  // Die einzige Einwilligung vor einem Eingriff: Titel und „Was passiert“ stehen beim Öffnen
+  // im Bild, der Fokus liegt trotzdem auf „Jetzt ausführen“ (die Knopfzeile klebt unten).
+  ok.focus({preventScroll:true});
+  m.box.scrollTop = 0;
+  return ok;
+}
+
+/* Parameter des Plans als Fachzeile („adapter=8“); leer, wenn es keine gibt. */
+function parameterText(p){
+  if(!p || typeof p !== 'object') return '';
+  const teile = Object.keys(p).map(k => k + '=' + p[k]);
+  return teile.length ? ' · ' + teile.join(' ') : '';
 }
 
 /* =====================================================================
@@ -1327,6 +1687,10 @@ function onHost(m){
     case 'catalog':
       S.catalog = m;
       S.version = m.version || '';
+      // v8.2: der Maßnahmenkatalog des Kerns, je Kennung Titel, Art und Marken. Er beschriftet
+      // die Knöpfe der Befundkarten; ohne ihn gibt es keine Knöpfe (siehe massnahmenKnoepfe).
+      S.massnahmen = {};
+      (Array.isArray(m.massnahmen) ? m.massnahmen : []).forEach(x => { if(x && x.kennung) S.massnahmen[x.kennung] = x; });
       // Belegaufnahme: gewuenschte Ansicht direkt oeffnen
       ['tools','history','restore','schedule','autostart','apps','power','settings','storage','registry']
         .forEach(k => { if(HASH.indexOf(k) >= 0) go(k); });
@@ -1372,6 +1736,23 @@ function onHost(m){
       // Bildschirm wie ein Werkzeug; 'done' beendet ihn genauso (B29).
       if(m.mode === 'action'){
         zeigeHostAktion(m.titel || m.title || 'Geplante Wartung', m.lead, m.total);
+        break;
+      }
+      // v8.2: Maßnahme oder Rückweg. Kein Klick hier hat den Bildschirm vorbereitet (der
+      // Vorschau-Dialog schließt nur und wartet); erst diese Nachricht schaltet um, mit der
+      // Überschrift des Hosts („Rückgängig: <Titel>“) und dem Balken von vorn.
+      if(m.mode === 'massnahme' || m.mode === 'rueckweg'){
+        zeigeAblauf(m.mode);
+        if(m.titel) $('#run-title').textContent = m.titel;
+        S.stepTotal = m.total || 3;
+        S.steps = [];
+        S.stepIndex = 0;
+        renderSteps();
+        // Der Host setzt seine Wahl nach jedem Lauf auf „nichts“ zurück; der Bildschirm
+        // zeigt aber die gemerkte Wahl (S.post) als gewählt. Ohne diese Zeile stünde
+        // „PC herunterfahren“ markiert, und nach der Maßnahme geschähe nichts (wie in
+        // startFlow für den Hauptweg; hier der eine Ort für Maßnahme und Rückweg).
+        send({type:'setPost', post:S.post, delay:S.delay});
         break;
       }
       // Meldet der Host einen Lauf, den kein Klick hier vorbereitet hat (der Ablauf-
@@ -1432,6 +1813,26 @@ function onHost(m){
       if(S.shot && m.mode === 'check' && HASH.indexOf('ergaenzen') >= 0 && (m.adminFehlend|0) > 0){
         setTimeout(() => startFlow('ergaenzen'), 800);
       }
+      // Belegaufnahme einer Maßnahme (--view check,massnahme:<kennung>): den ersten Knopf
+      // „Beheben“ dieser Kennung drücken; im Vorschau-Dialog drückt der massnahmeVorschau-
+      // Zweig dann „Jetzt ausführen“. Ohne solchen Knopf bleibt das Ergebnis stehen.
+      // Mit „ergaenzen“ im Adresszusatz erst nach der erhöhten Messung (mode ergaenzt): der
+      // Befund, an dem die Maßnahme hängt, braucht oft erst die Werte mit Administratorrechten.
+      const ergaenzenErst = HASH.indexOf('ergaenzen') >= 0 && (m.adminFehlend|0) > 0;
+      if(S.shot && ((m.mode === 'check' && !ergaenzenErst) || m.mode === 'ergaenzt')){
+        const wunsch = HASH.find(h => h.indexOf('massnahme:') === 0);
+        const knopf = wunsch ? massnahmeKnopf(wunsch.slice('massnahme:'.length), null) : null;
+        if(knopf){ S.shotAusfuehren = true; setTimeout(() => knopf.click(), 800); }
+      }
+      // Belegaufnahme des Rückwegs (…,rueckweg): „Rückgängig“ auf der Nachweiskarte und die
+      // Nachfrage bestätigen; ohne Sicherung gibt es den Knopf nicht, dann bleibt es beim Ergebnis.
+      if(S.shot && m.mode === 'massnahme' && HASH.indexOf('rueckweg') >= 0){
+        const zurueck = $('#res-list .nachweis button[data-rueckweg]');
+        if(zurueck) setTimeout(() => {
+          zurueck.click();
+          setTimeout(() => { const ok = $('.modal .modal-btns .btn-primary'); if(ok) ok.click(); }, 800);
+        }, 800);
+      }
       // Belegaufnahme des unteren Teils (Karte „so gewollt“, Gruppen, Empfehlung).
       if(S.shot && HASH.indexOf('unten') >= 0) requestAnimationFrame(() => { $('#s-result').scrollTop = 1e6; });
       break;
@@ -1441,31 +1842,45 @@ function onHost(m){
        hinter das Overlay: Tab wanderte auf „PC jetzt prüfen“, Enter startete erneut, der
        Dialog blieb stehen und ließ sich nur noch mit Escape schließen (B22). */
     case 'flowCancelled':
-      // Vom Ergebnis aus gestartet (Ergänzen, Tiefenprüfung, Reparatur)? Dann zurück
-      // dorthin, das Ergebnis samt seiner Schaltflächen bleibt gültig (B24).
+      // Vom Ergebnis aus gestartet (Ergänzen, Tiefenprüfung, Reparatur, Maßnahme)? Dann
+      // zurück dorthin, das Ergebnis samt seiner Schaltflächen bleibt gültig (B24).
       zumErgebnisOderStart();
-      toast('Abgebrochen', 'Der Vorgang wurde beendet. Ihrem PC ist nichts passiert.', 'warn');
+      resKnoepfeFrei();
+      subKnoepfeFrei();
+      // Eine Maßnahme oder ein Rückweg kann schon geschrieben haben, bevor der Abbruch
+      // ankam (der Helfer bringt den laufenden Schritt zu Ende); „nichts passiert“ wäre
+      // dann eine Behauptung ohne Beleg. Der Host sagt in Konsole und Verlauf, was blieb.
+      toast('Abgebrochen', (S.mode === 'massnahme' || S.mode === 'rueckweg')
+        ? 'Der Vorgang wurde angehalten. Was bis dahin geändert wurde, bleibt so; der Verlauf zeigt, ob eine Sicherung angelegt wurde.'
+        : 'Der Vorgang wurde beendet. Ihrem PC ist nichts passiert.', 'warn');
       break;
 
     case 'flowError':
       // Eine abgelehnte Antwort auf eine Frage („ließ sich nicht speichern“, oder der Host
       // war beschäftigt) kommt auf dem Ergebnis-Bildschirm an: dort bleiben, und die
       // Knöpfe der Frage wieder freigeben, sonst wären sie bis zur nächsten Prüfung tot (B21).
+      // Dasselbe für „Beheben“ und „Rückgängig“ (v8.2): der Host lehnt eine Maßnahme mit
+      // flowError ab, ohne dass ein Lauf begann; der wartende Knopf bekommt seinen Text zurück.
       if(S.screen === 'result') frageKnoepfeFrei();
+      resKnoepfeFrei();
+      // „Rückgängig“ aus dem Verlauf wartet in der Nebenansicht; dort bleibt der Nutzer,
+      // die Liste ist noch gültig.
+      if(S.screen === 'sub') subKnoepfeFrei();
       // Abgelehnter UAC-Dialog: kein Fehler des PCs und kein Dialog obendrauf (Entwurf
       // Abschnitt 9: „ohne Modal“). Eine Meldung am Rand, und zurück zum Ergebnis, falls
       // eines da ist: dort steht die Schaltfläche für den nächsten Versuch. Das Feld
       // abgelehnt ist der Vertrag (Abschnitt 13); der Satzanfang bleibt als Rückfall für
       // einen Host, der das Feld noch nicht schickt.
       if(m.abgelehnt === true || /^Ohne Administratorrechte/.test(m.message || '')){
-        if(S.result) show('result'); else go('start');
+        if(S.screen !== 'sub'){ if(S.result) show('result'); else go('start'); }
         toast('Nicht gestartet', m.message, 'warn');
         break;
       }
       // Sonst: das Ergebnis behalten, von dem aus der Lauf gestartet wurde (Helfer meldet
       // sich nicht binnen 60 s, „bleibt gültig, jederzeit erneut versuchen“, B24); ohne
-      // solches Ergebnis zum Anfang. Auf dem Ergebnis-Bildschirm selbst wird nicht gewechselt.
-      if(S.screen !== 'result') zumErgebnisOderStart();
+      // solches Ergebnis zum Anfang. Auf dem Ergebnis-Bildschirm und in einer Nebenansicht
+      // wird nicht gewechselt.
+      if(S.screen !== 'result' && S.screen !== 'sub') zumErgebnisOderStart();
       infoModal('Das hat nicht geklappt', m.message, 'warn');
       break;
 
@@ -1483,8 +1898,10 @@ function onHost(m){
         else go('start');
       }
       // Ergebnis-Bildschirm: die Antwort auf eine Frage wurde abgewiesen (geplante Wartung
-      // läuft gerade). Die Knöpfe kommen frei, das Ergebnis bleibt stehen (B21).
+      // läuft gerade). Die Knöpfe kommen frei, das Ergebnis bleibt stehen (B21); ebenso
+      // „Beheben“ und „Rückgängig“ (v8.2).
       if(S.screen === 'result') frageKnoepfeFrei();
+      resKnoepfeFrei();
       // Nebenansichten (Sicherungspunkt, Apps, Zeitplan) haben keinen Ablauf-Bildschirm
       // gezeigt: dort bleibt alles stehen; nur die wartenden Knöpfe kommen frei, denn ein
       // 'done' kommt für einen abgelehnten Start nicht (B26).
@@ -1501,6 +1918,7 @@ function onHost(m){
       // die Tiefenprüfung nichts gefunden hat (oder noch nicht lief). Zurück dorthin,
       // wo der Nutzer herkam.
       if(S.result) show('result'); else go('start');
+      resKnoepfeFrei();
       infoModal('Es gibt nichts zu beheben', m.message, '');
       break;
 
@@ -1508,6 +1926,31 @@ function onHost(m){
       // „Abbrechen“ auf einem Bildschirm, hinter dem gar nichts mehr lief: dieselbe Regel
       // wie beim Abbruch, das Ergebnis bleibt, falls der Lauf von dort kam.
       zumErgebnisOderStart();
+      resKnoepfeFrei();
+      break;
+
+    // --- Maßnahmen (v8.2, Vertrag M3 §9) ---
+    case 'massnahmeVorschau': {
+      // Die Antwort auf „Beheben“: die wartenden Knöpfe kommen frei, dann der Dialog. Nur
+      // auf dem Ergebnis-Bildschirm, zu dem der Klick gehört; wer ihn inzwischen verlassen
+      // hat, sieht keinen Dialog über einer fremden Ansicht (erst Bildschirm, dann Dialog).
+      resKnoepfeFrei();
+      if(S.screen !== 'result') break;
+      const ok = vorschauModal(m);
+      // Belegaufnahme (--view check,massnahme:<kennung>): „Jetzt ausführen“ drücken.
+      if(S.shot && S.shotAusfuehren){
+        S.shotAusfuehren = false;
+        if(ok) setTimeout(() => ok.click(), 800);
+      }
+      break;
+    }
+
+    case 'freigaben':
+      // Antwort auf freigabenSetzen: die Schalter zeigen den gespeicherten Stand, nicht
+      // den geklickten; bei ok = false stehen sie wieder so, wie es in der Datei steht.
+      freigabenAnzeigen(Array.isArray(m.freigaben) ? m.freigaben : []);
+      if(m.ok === true) toast('Gespeichert', 'Die Freigaben gelten ab der nächsten geplanten Wartung.', 'good');
+      else toast('Nicht gespeichert', 'Die Freigaben ließen sich nicht schreiben; die Schalter zeigen den gespeicherten Stand.', 'bad');
       break;
 
     // --- Einzelaktionen aus dem Werkzeugkasten ---
@@ -1636,8 +2079,8 @@ function onHost(m){
         const auf = el('button','btn btn-primary btn-md','Sicherung anzeigen');
         auf.onclick = () => { dlg.close(); send({type:'openRegBackup'}); };
         dlg.btns.appendChild(auf);
-        auf.focus();
-      } else zu.focus();
+        auf.focus({preventScroll:true});
+      } else zu.focus({preventScroll:true});
       break;
     }
 
@@ -1757,7 +2200,7 @@ function onHost(m){
       br.onclick = () => { dlg.close(); send({type:'openUpdate'}); };
       dlg.btns.appendChild(zu);
       dlg.btns.appendChild(br);
-      br.focus();
+      br.focus({preventScroll:true});
       break;
     }
     case 'updated':
@@ -1802,9 +2245,18 @@ function renderHistory(items){
     '<button class="link danger" id="hist-clear">Verlauf leeren</button></div><div class="panel-b">';
   items.forEach(it => {
     const k = ['good','bad','warn'].indexOf(it.kind) >= 0 ? it.kind : 'unknown';
+    // v8.2: ein Eintrag mit Sicherung (der Host schickt sie nur, solange die Datei noch
+    // unter sicherungen\massnahmen liegt) bietet „Rückgängig“ auf demselben Weg wie die
+    // Nachweiskarte; der Dateiname reist im Datenfeld, nicht im Text. Mehrere Einträge
+    // tragen denselben Knopftext, deshalb nennt der Name für Vorlesehilfen Maßnahme und Zeit.
+    const hinTitel = it.sicherungTitel || String(it.action || '').replace(/^Maßnahme: /, '');
     h += '<div class="row"><span class="dot ' + (k === 'good' ? 'ok' : (k === 'bad' ? 'bad' : 'warn')) + '"></span>' +
       '<span class="row-b"><span class="row-t">' + esc(it.action) + '</span>' +
       '<span class="row-s">' + esc(words[k] || 'Ausgeführt') + (it.message ? ' · ' + esc(it.message) : '') + '</span></span>' +
+      (it.sicherung
+        ? '<button class="btn btn-ghost" type="button" data-rueckweg="' + esc(it.sicherung) + '" data-titel="' +
+          esc(hinTitel) + '" aria-label="' + esc('Rückgängig: ' + hinTitel + (it.time ? ' vom ' + it.time : '')) + '">Rückgängig</button>'
+        : '') +
       '<span class="row-m">' + esc(it.time || '') + '</span></div>';
   });
   h += '</div></div>';
@@ -1812,6 +2264,9 @@ function renderHistory(items){
   $('#hist-clear').onclick = () => confirmModal('Verlauf leeren?',
     'Alle Einträge werden endgültig gelöscht. Auf Ihren PC hat das keine Auswirkung.',
     'Leeren', () => send({type:'historyClear'}));
+  b.querySelectorAll('[data-rueckweg]').forEach(btn => {
+    btn.onclick = () => rueckwegFragen(btn, btn.dataset.rueckweg, btn.dataset.titel);
+  });
 }
 
 /* Knöpfe der Nebenansichten, die einen Plan über den Helfer starten (Sicherungspunkt,
@@ -1823,15 +2278,26 @@ function renderHistory(items){
 function knopfWartet(btn, text){
   if(!btn || btn.disabled) return;
   btn.dataset.wartetText = btn.textContent;
+  // Ein eigener Name für Vorlesehilfen („Rückgängig: …“) ruht, solange der Zwischentext
+  // steht; sonst hieße der Knopf anders, als er aussieht.
+  if(btn.hasAttribute('aria-label')){
+    btn.dataset.wartetLabel = btn.getAttribute('aria-label');
+    btn.removeAttribute('aria-label');
+  }
   btn.disabled = true;
   if(text) btn.textContent = text;
 }
+function knopfFrei(b){
+  b.disabled = false;
+  b.textContent = b.dataset.wartetText;
+  delete b.dataset.wartetText;
+  if(b.dataset.wartetLabel){
+    b.setAttribute('aria-label', b.dataset.wartetLabel);
+    delete b.dataset.wartetLabel;
+  }
+}
 function subKnoepfeFrei(){
-  $$('#sub-body [data-wartet-text]').forEach(b => {
-    b.disabled = false;
-    b.textContent = b.dataset.wartetText;
-    delete b.dataset.wartetText;
-  });
+  $$('#sub-body [data-wartet-text]').forEach(knopfFrei);
 }
 
 function renderRestore(items){
@@ -2089,21 +2555,57 @@ function renderSchedule(m){
     '<span class="row-s">Am besten eine Zeit, zu der der PC an ist, aber nicht gebraucht wird.</span></span>' +
     '<input type="time" id="sc-time" value="12:00" /></div></div>';
 
+  // Zwei getrennte Listen (Vertrag M3 §8.9): die Werkzeugsätze laufen bei jeder Wartung,
+  // die Freigaben darunter nur, wenn ein Befund die Maßnahme vorschlägt.
   h += '<div class="panel"><div class="panel-h"><div class="panel-t">Was soll erledigt werden?</div>' +
     '<div class="panel-d">Ohne Änderung läuft der bewährte Standard.</div></div>';
   tasks.forEach(t => {
     h += '<label class="row"><span class="row-b"><span class="row-t">' + esc(t.title) + '</span>' +
-      '<span class="row-s">' + esc(t.desc) + '</span></span>' +
+      '<span class="row-s">' + esc(t.desc) + ' Läuft bei jeder Wartung.</span></span>' +
       '<span class="switch"><input type="checkbox" data-key="' + esc(t.key) + '"' +
       (t.std ? ' checked' : '') + ' aria-label="' + esc(t.title) + '" /><i></i></span></label>';
   });
+  h += '</div>';
+
+  // v8.2: Freigaben. Die Liste kommt vom Host (freischaltbar, aus dem Kern: sechs Kennungen
+  // der Stufe 1), der Stand aus zeitplan.json (freigaben). Vorgabe: alles aus. Jede Änderung
+  // wird sofort mit der vollen Liste gespeichert (freigabenSetzen), unabhängig vom Zeitplan;
+  // die Antwort freigaben setzt die Schalter auf den gespeicherten Stand.
+  const frei = Array.isArray(m.freischaltbar) ? m.freischaltbar : [];
+  const freigaben = Array.isArray(m.freigaben) ? m.freigaben : [];
+  h += '<div class="panel" id="sc-frei"><div class="panel-h"><div class="panel-t">Was das Programm von selbst beheben darf</div>' +
+    '<div class="panel-d">Nur, wenn die Prüfung es vorschlägt; die Werkzeugsätze oben laufen immer. ' +
+    'Ohne Haken bleibt es beim Vorschlag im Ergebnis' +
+    (m.exists ? '.' : '; wirksam wird die Freigabe, sobald die automatische Wartung eingerichtet ist.') + '</div></div>';
+  if(!frei.length){
+    h += '<div class="empty">Es liegt keine freischaltbare Maßnahme vor.</div>';
+  }
+  frei.forEach(f => {
+    h += '<label class="row"><span class="row-b"><span class="row-t">' + esc(f.titel || f.kennung) + '</span>' +
+      '<span class="row-s">' + esc(f.wasPassiert || '') +
+      (f.dauer ? ' Dauer: etwa ' + esc(dauerText(f.dauer)) + '.' : '') + '</span></span>' +
+      '<span class="switch"><input type="checkbox" data-kennung="' + esc(f.kennung) + '"' +
+      (freigaben.indexOf(f.kennung) >= 0 ? ' checked' : '') +
+      ' aria-label="' + esc(f.titel || f.kennung) + ' von selbst beheben" /><i></i></span></label>';
+  });
+  h += '</div>';
+
   // Die Aufgabe braucht höchste Rechte (DISM und SFC), also den Helfer: der UAC-Satz steht
   // hier, bevor geklickt wird, nicht erst in der verborgenen Konsole des Ablauf-Bildschirms.
-  h += '</div><div class="next"><span class="next-b"><span class="next-t">Automatische Wartung einrichten</span>' +
+  h += '<div class="next"><span class="next-b"><span class="next-t">Automatische Wartung einrichten</span>' +
     '<span class="next-s">Sie können das jederzeit wieder abschalten. ' + esc(UAC_SATZ) + '</span></span>' +
     '<button class="btn btn-primary btn-md" id="sc-save">Einrichten</button></div>';
 
   b.innerHTML = h;
+  // Freigaben: beim Umlegen sind alle Schalter gesperrt, bis der Host geantwortet hat; ein
+  // zweiter Klick dazwischen schickte sonst eine Liste, die der ersten widerspricht.
+  b.querySelectorAll('input[data-kennung]').forEach(x => {
+    x.onchange = () => {
+      const liste = $$('#sub-body input[data-kennung]:checked').map(i => i.dataset.kennung);
+      $$('#sub-body input[data-kennung]').forEach(i => { i.disabled = true; });
+      send({type:'freigabenSetzen', freigaben:liste});
+    };
+  });
   const del = $('#sc-del');
   if(del) del.onclick = () => confirmModal('Automatische Wartung abschalten?',
     'Der PC wartet sich dann nicht mehr von allein. Sie können sie jederzeit wieder einrichten.\n\n' + UAC_SATZ,
@@ -2127,6 +2629,15 @@ function renderSchedule(m){
   };
 }
 const DAY = {MON:'Montag',TUE:'Dienstag',WED:'Mittwoch',THU:'Donnerstag',FRI:'Freitag',SAT:'Samstag',SUN:'Sonntag'};
+
+/* Die Freigabe-Schalter auf den Stand des Hosts setzen und wieder freigeben. Außerhalb der
+   Ansicht „Automatische Wartung“ gibt es die Schalter nicht, dann passiert nichts. */
+function freigabenAnzeigen(liste){
+  $$('#sub-body input[data-kennung]').forEach(i => {
+    i.checked = liste.indexOf(i.dataset.kennung) >= 0;
+    i.disabled = false;
+  });
+}
 
 /* Wartezeiten in Alltagssprache. „in 1800 Sekunden“ rechnet niemand im Kopf um. */
 function dauer(sekunden){

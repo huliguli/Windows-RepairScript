@@ -80,6 +80,11 @@ namespace WartungsToolbox.Helfer
                 // beschreibbar (sonst gehoeren neue Dateien der Administratorengruppe).
                 bool rechte = Ablage.RechteSichern();
                 if (!rechte) AppLog.Warn("helfer: Rechte auf " + Ablage.Maschinenweit() + " konnten nicht gesetzt werden (nicht erhöht oder kein Zugriff).");
+                // Der Sicherungsordner der Massnahmen ist die Ausnahme von "Users: Aendern": er gehoert
+                // den Administratoren, sonst koennte ein Benutzer ihn vor der ersten Sicherung anlegen
+                // oder als Junction ersetzen (Entwurf M3, Abschnitt 8.10). Schreiben schuetzt ihn ohnehin;
+                // hier faellt die Luecke bis zur ersten Stufe-2-Massnahme weg.
+                Sicherungsdatei.OrdnerAbsichern();
 
                 if (pipe != null) return PipeModus(pipe, sid, rechte);
                 if (plan != null) return PlanModus(plan, trocken);

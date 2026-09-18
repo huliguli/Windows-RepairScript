@@ -132,7 +132,7 @@ namespace WartungsToolbox.Proben
 
             // Grundmenge der Klassen: verschwindet eine Datei oder verliert "Laufen" das public
             // static, bliebe der Lauf sonst gruen. Die Zahl wird bewusst hier gepflegt.
-            const int ErwarteteKlassen = 8;
+            const int ErwarteteKlassen = 9;
             foreach (var t in klassen)
             {
                 int vorher = h.Bestanden + h.Fehlgeschlagen;

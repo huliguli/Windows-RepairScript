@@ -95,10 +95,26 @@ namespace WartungsToolbox.Kern
         [DataMember(Name = "detail")] public List<string> Detail = new List<string>();
         /// <summary>Kennungen von Massnahmen aus dem Katalog (ab Meilenstein 3 ausfuehrbar).</summary>
         [DataMember(Name = "massnahmen")] public List<string> Massnahmen = new List<string>();
+        /// <summary>
+        /// Parameter fuer die Massnahmen dieses Befunds (Adapter-Index, Laufwerksbuchstabe, UpdateID,
+        /// Instanz-Id, Autostart-Ort und -Name, Aufgabenpfad, Dienstname, Firewall-Profil). Host und
+        /// Helfer bauen daraus den Plan; die Oberflaeche schickt nie eigene Werte (Meilenstein 3).
+        /// </summary>
+        [DataMember(Name = "parameter")] public Dictionary<string, string> Parameter = new Dictionary<string, string>();
         /// <summary>Gesetzt, wenn das System fragen statt handeln muss.</summary>
         [DataMember(Name = "frage")] public Frage Frage;
 
         public bool IstProblem { get { return Zustand == Kern.Zustand.Bad || Zustand == Kern.Zustand.Warn; } }
+
+        // Ein Befund aus JSON (Verlauf, Nachricht) ohne die drei Listen liesse Host und Helfer auf
+        // null laufen; wie in den Systembild-Klassen werden sie hier leer ersetzt, nie erraten.
+        [OnDeserialized]
+        void NachDemLesen(StreamingContext c)
+        {
+            if (Detail == null) Detail = new List<string>();
+            if (Massnahmen == null) Massnahmen = new List<string>();
+            if (Parameter == null) Parameter = new Dictionary<string, string>();
+        }
     }
 
     [DataContract]

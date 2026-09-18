@@ -40,6 +40,8 @@ namespace WartungsToolbox.Proben
                 h.Ist("Schluessel traegt die Kennung klein und ohne Klammern", b != null && b.Schluessel == "update.schleife.4340b239-4b90-4305-9c2e-6a24dfcb6757", b == null ? null : b.Schluessel);
                 h.Ist("Zustand warn", b != null && b.Zustand == Zustand.Warn);
                 h.Ist("Massnahme update.verbergen", b != null && b.Massnahmen.Contains("update.verbergen"));
+                // M3: update.verbergen sucht per UpdateID; die steht als Parameter dabei, klein und ohne Klammern wie im Schluessel.
+                h.Ist("Befund traegt Parameter updateId = 4340b239-... (klein, ohne Klammern)", b != null && b.Parameter.ContainsKey(Updates.ParamUpdateId) && b.Parameter[Updates.ParamUpdateId] == "4340b239-4b90-4305-9c2e-6a24dfcb6757", b == null ? null : string.Join(",", b.Parameter.Select(kv => kv.Key + "=" + kv.Value)));
                 h.Ist("Messwert 4 (eine Kennung in Gross- und Kleinschreibung zaehlt zusammen)", b != null && b.Messwert != null && b.Messwert.Wert == "4", b == null || b.Messwert == null ? null : b.Messwert.Wert);
                 h.Ist("Satz nennt den Titel und 'immer wieder'", b != null && b.Satz.Contains("Hewlett-Packard") && b.Satz.Contains("immer wieder"), b == null ? null : b.Satz);
                 h.Ist("kein Fehlschlag-Befund (nur Erfolge im Bild)", !Harness.AlleMit(erg, "update.fehlschlag.").Any());
@@ -142,8 +144,17 @@ namespace WartungsToolbox.Proben
                 h.Ist("Detail nennt den Code hexadezimal", f != null && f.Detail.Any(d => d.Contains("0x8024402C")), f == null ? null : string.Join(" | ", f.Detail));
                 h.Ist("Detail deutet den Code als Namensaufloesung", f != null && f.Detail.Any(d => d.Contains("Namensauflösung")));
                 h.Ist("Massnahme update.verbergen", f != null && f.Massnahmen.Contains("update.verbergen"));
+                h.Ist("Befund traegt Parameter updateId gleich dem Schluessel-Suffix", f != null && f.Parameter.ContainsKey(Updates.ParamUpdateId) && f.Schluessel == "update.fehlschlag." + f.Parameter[Updates.ParamUpdateId], f == null ? null : f.Schluessel);
                 h.Ist("kein Schleifen-Befund", !Harness.AlleMit(erg, "update.schleife.").Any());
                 alle.AddRange(Harness.Befunde(erg, Bereich.Updates));
+
+                // Gegenprobe: ohne UpdateID (Verlaufseintrag ohne Kennung) gibt es nichts zu verbergen:
+                // Befund bleibt (Schluessel "?"), aber ohne Massnahme und ohne Parameter.
+                foreach (var v in c.WindowsUpdate.Verlauf.Where(v => v.Ergebnis == 4)) v.UpdateId = null;
+                var ohneId = Harness.Einer(h.Pruefen(c), "update.fehlschlag.?");
+                h.Ist("Gegenprobe: ohne UpdateID kein update.verbergen und kein Parameter updateId", ohneId != null && !ohneId.Massnahmen.Contains("update.verbergen") && !ohneId.Parameter.ContainsKey(Updates.ParamUpdateId), ohneId == null ? "null" : string.Join(",", ohneId.Massnahmen));
+                h.Ist("Gegenprobe: Detail sagt, dass ohne UpdateID nur die Windows-Einstellungen bleiben", ohneId != null && ohneId.Detail.Any(d => d.Contains("Ohne UpdateID")));
+                foreach (var v in c.WindowsUpdate.Verlauf.Where(v => v.Ergebnis == 4)) v.UpdateId = "5f8daec5-9d8c-4416-9d8f-02485614a02e";
 
                 // Gegenprobe: nur ein Fehlschlag -> kein Befund.
                 var einer = c.WindowsUpdate.Verlauf.First(v => v.Ergebnis == 4);
@@ -257,7 +268,17 @@ namespace WartungsToolbox.Proben
                 h.Ist("Messwert traegt den Rohwert 'Disabled/Stopped'", w != null && w.Messwert.Wert == "Disabled/Stopped");
                 h.Ist("Detail listet alle 7 Dienste", w != null && w.Detail.Count(x => x.Contains(": ")) >= 7, w == null ? null : w.Detail.Count.ToString());
                 h.Ist("Massnahme update.dienst.aktivieren", w != null && w.Massnahmen.Contains("update.dienst.aktivieren"));
+                // M3: update.dienst.aktivieren braucht den Dienstnamen (Win32_Service.Name) als Parameter.
+                h.Ist("Befund traegt Parameter name = wuauserv", w != null && w.Parameter.ContainsKey(Updates.ParamName) && w.Parameter[Updates.ParamName] == "wuauserv", w == null ? null : string.Join(",", w.Parameter.Select(kv => kv.Key + "=" + kv.Value)));
+                // M3-Entwurf 8.5: der Rat sagt dasselbe wie die Massnahme (Automatisch), nie "Manuell (Standard)".
+                h.Ist("Rat sagt „Automatisch“, nicht „Manuell“ (wie die Massnahme update.dienst.aktivieren)", w != null && w.Rat.Contains("„Automatisch“") && !w.Rat.Contains("Manuell") && !w.Rat.Contains("Standard"), w == null ? null : w.Rat);
                 h.Ist("Bereichszustand bad", Harness.Bereich(erg, Bereich.Updates).Zustand == Zustand.Bad);
+                // Hilfsdienst: derselbe Weg, eigener Name.
+                fD.WindowsUpdate.Dienste["bits"] = "Disabled/Stopped";
+                var bits = Harness.Einer(h.Pruefen(fD), "update.dienst.bits");
+                h.Ist("Hilfsdienst BITS deaktiviert: warn mit Parameter name = bits", bits != null && bits.Zustand == Zustand.Warn && bits.Massnahmen.Contains("update.dienst.aktivieren") && bits.Parameter[Updates.ParamName] == "bits", bits == null ? "null" : string.Join(",", bits.Parameter.Select(kv => kv.Key + "=" + kv.Value)));
+                h.Ist("Hilfsdienst: Rat sagt „Automatisch“, nicht „Standard-Startart“", bits != null && bits.Rat.Contains("„Automatisch“") && !bits.Rat.Contains("Standard"), bits == null ? null : bits.Rat);
+                fD.WindowsUpdate.Dienste.Remove("bits");
                 alle.AddRange(Harness.Befunde(erg, Bereich.Updates));
                 fD.WindowsUpdate.Dienste["wuauserv"] = "Manual/Stopped";
                 erg = h.Pruefen(fD);

@@ -304,7 +304,7 @@ namespace WartungsToolbox.Proben
 
         static void DefenderEngine(Harness h, List<Befund> alle)
         {
-            h.Gruppe("Stabilität: MsMpEng.exe 1000 >= " + Schwellen.DefenderEngineAbsturzWarn + " in 30 Tagen = Defender-Engine warn mit Maßnahme Signaturen, kein generischer Programmabsturz");
+            h.Gruppe("Stabilität: MsMpEng.exe 1000 >= " + Schwellen.DefenderEngineAbsturzWarn + " in 30 Tagen = Defender-Engine warn mit Rat Signaturen (ohne Kennung), kein generischer Programmabsturz");
             var s = h.Bild("gepflanzt-stabilitaet-defender-engine.json"); if (s == null) return;
             var msmpeng = s.Ereignisse.Von("Application Error", 1000).Where(x => string.Equals(x.Feld("AppName"), "MsMpEng.exe", StringComparison.OrdinalIgnoreCase)).ToList();
             h.Ist("Grundmenge: drei MsMpEng.exe (eines klein geschrieben) mit mpengine.dll, alle in 30 Tagen, plus ein zwei.exe",
@@ -318,7 +318,9 @@ namespace WartungsToolbox.Proben
             h.Ist("kein Programmabsturz-Befund überhaupt (zwei.exe nur 1)", !Harness.AlleMit(erg, "stabilitaet.programmabsturz.").Any());
             if (b == null) return;
             h.Ist("Messwert 3", b.Messwert.Wert == "3", b.Messwert.Wert);
-            h.Ist("Maßnahme = Sicherheit.MassnahmeSignaturen", b.Massnahmen.Count == 1 && b.Massnahmen[0] == WartungsToolbox.Kern.Regeln.Sicherheit.MassnahmeSignaturen, string.Join(",", b.Massnahmen));
+            // M3-Entwurf 8.5: keine Kennung sicherheit.signaturen.aktualisieren an diesem Befund (der Nachweis
+            // "Signaturen unter 1 Tag alt" waere meist schon vorher erfuellt); der Rat bleibt Text.
+            h.Ist("keine Maßnahme (Rat bleibt Text, M3-Entwurf 8.5)", b.Massnahmen.Count == 0, string.Join(",", b.Massnahmen));
             h.Ist("Rat nennt Signaturen und sagt nicht 'neu installieren' als Weg", b.Rat.Contains("Signaturen") && !b.Rat.Contains("Programm neu installieren"), b.Rat);
             h.Ist("Satz nennt MsMpEng.exe und die Schwelle", b.Satz.Contains("MsMpEng.exe") && b.Satz.Contains("ab " + Schwellen.DefenderEngineAbsturzWarn + "-mal"), b.Satz);
             h.Ist("Detail nennt mpengine.dll mit Pfad je Ereignis", b.Detail.Count(d => d.Contains("mpengine.dll") && d.Contains("Definition Updates")) == 3, string.Join(" | ", b.Detail));

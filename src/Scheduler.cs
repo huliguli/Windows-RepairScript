@@ -230,22 +230,39 @@ namespace WartungsToolbox
                 "$s.DisallowStartIfOnBatteries = $false;" +
                 "$s.StopIfGoingOnBatteries = $false;" +
                 "$s.StartWhenAvailable = $true;" +          // verpasste Termine nachholen
-                "$s.ExecutionTimeLimit = 'PT2H';" +          // Reissleine gegen haengende Laeufe
+                "$s.ExecutionTimeLimit = '" + Zeitbudget + "';" +   // Reissleine gegen haengende Laeufe, siehe Zeitbudget
                 "Set-ScheduledTask -TaskName '" + TaskName + "' -Settings $s | Out-Null";
             string ausgabe;
             int rc = Run("powershell.exe", "-NoProfile -ExecutionPolicy Bypass -Command \"" + ps + "\"", out ausgabe, PowerShellZeitgrenzeMs);
             if (rc != 0)
             {
-                warnung = "Der Zeitplan ist angelegt, aber die Einstellungen für Akku und Nachholen ließen sich nicht setzen ("
+                warnung = "Der Zeitplan ist angelegt, aber die Einstellungen für Akku, Nachholen und Zeitbudget ließen sich nicht setzen ("
                           + (rc == -1 ? "PowerShell antwortete nicht binnen " + (PowerShellZeitgrenzeMs / 1000) + " s" : "PowerShell Exit " + rc + ": " + Kurz(ausgabe))
-                          + "). Auf einem Notebook läuft die Wartung dann nur am Netzteil, und ein verpasster Termin wird nicht nachgeholt.";
+                          + "). Auf einem Notebook läuft die Wartung dann nur am Netzteil, ein verpasster Termin wird nicht nachgeholt, und statt "
+                          + ZeitbudgetStunden + " Stunden gilt die Windows-Vorgabe von 72 Stunden je Lauf.";
                 AppLog.Warn(warnung);
+            }
+            else
+            {
+                AppLog.Info("Zeitplan „" + TaskName + "“ angelegt (" + sc + " " + hh + ":" + mm + "), Zeitbudget je Lauf " + ZeitbudgetStunden
+                            + " Stunden (ExecutionTimeLimit " + Zeitbudget + "); dauert ein Lauf länger, beendet ihn die Aufgabenplanung.");
             }
             return true;
         }
 
         /// <summary>Zeitgrenze fuer die PowerShell-Nachstellung der Aufgabeneinstellungen (Create).</summary>
         public const int PowerShellZeitgrenzeMs = 90000;
+
+        /// <summary>
+        /// Zeitbudget der Aufgabe (ExecutionTimeLimit, ISO-8601-Dauer). Bis 8.1 waren es 2 Stunden;
+        /// seit den Freigaben (Meilenstein 3) laufen VOR DISM und SFC eine Messung, ein Schnellscan
+        /// (bis 20 min), volume.scan (bis 30 min je Laufwerk) und die Nachmessung, danach der
+        /// Werkzeugsatz (60 bis 80 min). Mit 2 Stunden toetete die Aufgabenplanung den Prozess
+        /// mitten in DISM: kein Verlaufseintrag, keine Ende-Zeile. 4 Stunden lassen zwei
+        /// Laufwerke und eine langsame Platte zu und bleiben eine Reissleine gegen Haenger.
+        /// </summary>
+        public const string Zeitbudget = "PT4H";
+        public const int ZeitbudgetStunden = 4;
 
         public static void Delete()
         {
@@ -369,19 +386,31 @@ namespace WartungsToolbox
         // damit ein spaeter geaenderter Standard automatisch gilt).
         // Rueckgabe false, wenn die Datei nicht geschrieben werden konnte (Aufrufer meldet es;
         // die Aufgabe ist dann angelegt, der Aufgaben-Satz aber nicht gemerkt).
+        // Die Freigaben (siehe unten) bleiben dabei stehen: der Zeitplan beschreibt WANN und
+        // WAS an Werkzeugen laeuft, die Freigaben sind eine eigene Einstellung derselben Datei.
+        // Ist die Datei vorhanden, aber nicht lesbar, ersetzt der neue Zeitplan sie trotzdem
+        // (die Aufgabe ist in diesem Moment schon angelegt, und eine kaputte Datei liesse sich
+        // sonst nie mehr aus der Oberflaeche heraus loswerden); das steht dann im app.log.
         public static bool Write(string mode, string[] days, int dom, string time, string[] actions)
         {
             try
             {
-                Dictionary<string, object> d = new Dictionary<string, object>();
-                d["mode"] = mode;
-                if (mode == "weekly" && days != null) d["days"] = days;
-                if (mode == "monthly") d["dom"] = dom;
-                d["time"] = time;
-                if (actions != null && actions.Length > 0) d["actions"] = actions;
-                Directory.CreateDirectory(Path.GetDirectoryName(CfgPath()));
-                File.WriteAllText(CfgPath(), new JavaScriptSerializer().Serialize(d));
-                return true;
+                lock (_cfgLock)
+                {
+                    Dictionary<string, object> d = new Dictionary<string, object>();
+                    d["mode"] = mode;
+                    if (mode == "weekly" && days != null) d["days"] = days;
+                    if (mode == "monthly") d["dom"] = dom;
+                    d["time"] = time;
+                    if (actions != null && actions.Length > 0) d["actions"] = actions;
+                    bool unlesbar;
+                    Dictionary<string, object> alt = Roh(out unlesbar);
+                    if (unlesbar)
+                        AppLog.Warn("zeitplan.json war vorhanden, aber nicht lesbar; der neue Zeitplan ersetzt sie, gespeicherte Freigaben gehen dabei verloren: " + CfgPath());
+                    string[] freigaben = FreigabenRoh(alt);
+                    if (freigaben.Length > 0) d[FreigabenFeld] = freigaben;
+                    return Speichern(d);
+                }
             }
             catch (Exception ex)
             {
@@ -406,24 +435,226 @@ namespace WartungsToolbox
             catch { return null; }
         }
 
+        /// <summary>
+        /// Der gespeicherte Zeitplan (mode, days, dom, time, actions, freigaben) oder null. Null
+        /// auch dann, wenn die Datei nur Freigaben traegt (kein "mode"): fuer die Oberflaeche ist
+        /// das "nicht eingerichtet", sonst zeichnete sie einen Zeitplan ohne Uhrzeit. Die
+        /// Freigaben liest man ueber ReadFreigaben, nicht aus diesem Objekt.
+        /// </summary>
         public static object Read()
+        {
+            Dictionary<string, object> d = Roh();
+            return d != null && d.ContainsKey("mode") ? d : null;
+        }
+
+        // Loescht den Zeitplan aus der maschinenweiten Datei. Das Nutzerprofil bleibt
+        // unangetastet: die 8.0-Datei ist seit der Uebernahme *.uebernommen (CfgPfadErmitteln),
+        // also kommt nichts zurueck; und der Helfer laeuft erhoeht womoeglich unter einem
+        // anderen Konto als die Oberflaeche, dessen Profil ihn nichts angeht.
+        // Die Freigaben ueberleben das Abschalten: sie stehen in den Einstellungen, nicht im
+        // Zeitplan, und ein spaeter neu angelegter Zeitplan soll sie wieder vorfinden. Ohne
+        // Freigaben wird die Datei geloescht wie bis 8.1.
+        public static void Clear()
         {
             try
             {
-                if (!File.Exists(CfgPath())) return null;
-                return new JavaScriptSerializer().DeserializeObject(File.ReadAllText(CfgPath()));
+                lock (_cfgLock)
+                {
+                    bool unlesbar;
+                    Dictionary<string, object> alt = Roh(out unlesbar);
+                    if (unlesbar)
+                        AppLog.Warn("zeitplan.json war vorhanden, aber nicht lesbar; das Abschalten löscht sie, gespeicherte Freigaben gehen dabei verloren: " + CfgPath());
+                    string[] freigaben = FreigabenRoh(alt);
+                    var d = new Dictionary<string, object>();
+                    if (freigaben.Length > 0) d[FreigabenFeld] = freigaben;
+                    Speichern(d);
+                }
             }
-            catch { return null; }
+            catch (Exception ex) { AppLog.Warn("Zeitplan-Einstellung ließ sich nicht löschen: " + ex.Message); }
         }
 
-        // Loescht nur die maschinenweite Datei. Das Nutzerprofil bleibt unangetastet: die
-        // 8.0-Datei ist seit der Uebernahme *.uebernommen (CfgPfadErmitteln), also kommt
-        // nichts zurueck; und der Helfer laeuft erhoeht womoeglich unter einem anderen Konto
-        // als die Oberflaeche, dessen Profil ihn nichts angeht.
-        public static void Clear()
+        // ---- Freigaben fuer die geplante Wartung (Meilenstein 3) ----
+        // zeitplan.json traegt zusaetzlich "freigaben": die Kennungen der Massnahmen, die die
+        // geplante Wartung von selbst ausfuehren darf, wenn ein Befund sie vorschlaegt
+        // (Einstellungen: "Bei der geplanten Wartung darf das Programm von selbst: ..."). Erlaubt
+        // ist nur, was Kern.Massnahmen.Freischaltbare() nennt (Stufe 1, ausfuehrbar); die
+        // Voreinstellung ist leer. Die Oberflaeche schreibt sie ohne Rechte (der Laufzeitordner
+        // erlaubt Users Aendern, Ablage.RechteSichern), --auto und der Host lesen sie und geben
+        // sie dem Plan als Parameter "freigaben" (';'-Liste) mit.
+        //
+        // Lesen UND Schreiben filtern gegen den Katalog: eine Kennung, die nicht freischaltbar
+        // ist (von Hand in die Datei geschrieben, oder in einer spaeteren Fassung zurueckgestuft),
+        // kommt nie im Plan an. Der Helfer prueft sie unter wartung.massnahmen ein zweites Mal.
+        const string FreigabenFeld = "freigaben";
+
+        /// <summary>Freigegebene Kennungen, nur freischaltbare, ohne Doppelte; nie null.</summary>
+        public static string[] ReadFreigaben()
         {
-            try { if (File.Exists(CfgPath())) File.Delete(CfgPath()); }
-            catch (Exception ex) { AppLog.Warn("Zeitplan-Einstellung ließ sich nicht löschen: " + ex.Message); }
+            try { return FreigabenFiltern(FreigabenRoh(Roh()), null); }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Freigaben der geplanten Wartung nicht lesbar, es gilt: keine: " + ex.Message);
+                return new string[0];
+            }
+        }
+
+        /// <summary>
+        /// Speichert die Freigaben (null oder leer = keine). Kennungen, die nicht freischaltbar
+        /// sind, werden ohne Fehler weggelassen und im app.log genannt: die Oberflaeche schickt
+        /// nur, was der Host ihr als freischaltbar gemeldet hat, und ein Rest aus einer aelteren
+        /// Fassung darf das Speichern nicht blockieren. false = Datei nicht geschrieben.
+        ///
+        /// Ist zeitplan.json vorhanden, aber nicht lesbar, wird NICHT geschrieben: die Freigaben
+        /// sind nur ein Feld dieser Datei, und ein Schreiben ersetzte den Zeitplan (mode, time,
+        /// actions) still durch nichts, waehrend die Aufgabe weiterlaeuft. Der Weg heraus ist
+        /// der Zeitplan selbst (Write ersetzt eine kaputte Datei und sagt es) oder das Abschalten.
+        /// </summary>
+        public static bool WriteFreigaben(string[] kennungen)
+        {
+            try
+            {
+                var weggelassen = new List<string>();
+                string[] gefiltert = FreigabenFiltern(kennungen ?? new string[0], weggelassen);
+                if (weggelassen.Count > 0)
+                    AppLog.Warn("Freigaben: " + Zahlwort(weggelassen.Count, "Kennung", "Kennungen") + " nicht freischaltbar und weggelassen: " + string.Join(", ", weggelassen));
+                lock (_cfgLock)
+                {
+                    bool unlesbar;
+                    Dictionary<string, object> d = Roh(out unlesbar);
+                    if (unlesbar)
+                    {
+                        AppLog.Warn("Freigaben der geplanten Wartung nicht gespeichert: zeitplan.json ist vorhanden, aber nicht lesbar, und wird nicht überschrieben. "
+                                    + "Zeitplan neu anlegen oder abschalten, dann noch einmal speichern: " + CfgPath());
+                        return false;
+                    }
+                    if (d == null) d = new Dictionary<string, object>();
+                    if (gefiltert.Length > 0) d[FreigabenFeld] = gefiltert; else d.Remove(FreigabenFeld);
+                    bool ok = Speichern(d);
+                    if (ok) AppLog.Info("Freigaben der geplanten Wartung gespeichert: " + (gefiltert.Length == 0 ? "keine" : string.Join(", ", gefiltert)));
+                    return ok;
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Freigaben der geplanten Wartung konnten nicht gespeichert werden: " + ex.Message);
+                return false;
+            }
+        }
+
+        /// <summary>"1 Kennung", "2 Kennungen": Zahl mit dem passenden Wort.</summary>
+        static string Zahlwort(int n, string einzahl, string mehrzahl)
+        {
+            return n.ToString(System.Globalization.CultureInfo.InvariantCulture) + " " + (n == 1 ? einzahl : mehrzahl);
+        }
+
+        /// <summary>Nur freischaltbare Kennungen in der Reihenfolge der Eingabe, ohne Doppelte; weggelassen sammelt den Rest.</summary>
+        static string[] FreigabenFiltern(IEnumerable<string> roh, List<string> weggelassen)
+        {
+            var erlaubt = new HashSet<string>(StringComparer.Ordinal);
+            foreach (Kern.Massnahme m in Kern.Massnahmen.Freischaltbare()) erlaubt.Add(m.Kennung);
+            var erg = new List<string>();
+            foreach (string k in roh)
+            {
+                string t = k == null ? "" : k.Trim();
+                if (t.Length == 0) continue;
+                if (!erlaubt.Contains(t)) { if (weggelassen != null && !weggelassen.Contains(t)) weggelassen.Add(t); continue; }
+                if (!erg.Contains(t)) erg.Add(t);
+            }
+            return erg.ToArray();
+        }
+
+        /// <summary>Die Freigaben so, wie sie in der Datei stehen (ungefiltert, fuer Write und Clear); nie null.</summary>
+        static string[] FreigabenRoh(Dictionary<string, object> d)
+        {
+            var erg = new List<string>();
+            if (d == null || !d.ContainsKey(FreigabenFeld)) return erg.ToArray();
+            object[] arr = d[FreigabenFeld] as object[];
+            if (arr == null) return erg.ToArray();
+            foreach (object o in arr)
+            {
+                string s = o as string;
+                if (!string.IsNullOrEmpty(s) && !erg.Contains(s)) erg.Add(s);
+            }
+            return erg.ToArray();
+        }
+
+        /// <summary>Der ganze Inhalt der Datei als Woerterbuch, null wenn sie fehlt oder unlesbar ist.</summary>
+        static Dictionary<string, object> Roh()
+        {
+            bool unlesbar;
+            return Roh(out unlesbar);
+        }
+
+        /// <summary>
+        /// Wie Roh(); unlesbar = die Datei ist da, aber kein JSON-Objekt oder nicht zu oeffnen.
+        /// Die Schreibwege unterscheiden das von "fehlt": eine fehlende Datei wird angelegt,
+        /// eine unlesbare nie still ueberschrieben.
+        /// </summary>
+        static Dictionary<string, object> Roh(out bool unlesbar)
+        {
+            unlesbar = false;
+            string pfad = CfgPath();
+            try
+            {
+                if (!File.Exists(pfad)) return null;
+                var d = new JavaScriptSerializer().DeserializeObject(File.ReadAllText(pfad)) as Dictionary<string, object>;
+                if (d == null)
+                {
+                    unlesbar = true;
+                    AppLog.Warn("zeitplan.json ist nicht lesbar: der Inhalt ist kein JSON-Objekt (" + pfad + ").");
+                }
+                return d;
+            }
+            catch (Exception ex)
+            {
+                unlesbar = true;
+                AppLog.Warn("zeitplan.json ist nicht lesbar: " + ex.Message);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Schreibt das Woerterbuch; ein leeres loescht die Datei (wie bis 8.1 nach dem Abschalten).
+        /// Erst in eine Temp-Datei im selben Ordner, dann in einem Zug an die Stelle der alten
+        /// (File.Replace; File.Move, wenn es noch keine gibt): drei Prozesse lesen diese Datei
+        /// (Oberflaeche, Helfer, --auto), und keiner soll eine halb geschriebene sehen. Das
+        /// Ersetzen behaelt die Rechte der alten Datei; eine neue erbt die des Ordners (Users:
+        /// Aendern, Ablage.RechteSichern), so kann die nicht erhoehte Oberflaeche sie spaeter
+        /// weiter schreiben.
+        /// </summary>
+        static bool Speichern(Dictionary<string, object> d)
+        {
+            lock (_cfgLock)
+            {
+                string ziel = CfgPath();
+                if (d == null || d.Count == 0)
+                {
+                    if (File.Exists(ziel)) File.Delete(ziel);
+                    return true;
+                }
+                Directory.CreateDirectory(Path.GetDirectoryName(ziel));
+                string temp = ziel + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                try
+                {
+                    File.WriteAllText(temp, new JavaScriptSerializer().Serialize(d));
+                    try
+                    {
+                        if (File.Exists(ziel)) File.Replace(temp, ziel, null);
+                        else File.Move(temp, ziel);
+                    }
+                    catch (IOException) when (File.Exists(temp) && File.Exists(ziel))
+                    {
+                        // Zwischen Pruefung und Move hat ein anderer Prozess die Datei angelegt:
+                        // dann ersetzen statt scheitern.
+                        File.Replace(temp, ziel, null);
+                    }
+                    return true;
+                }
+                finally
+                {
+                    try { if (File.Exists(temp)) File.Delete(temp); } catch { }
+                }
+            }
         }
     }
 }

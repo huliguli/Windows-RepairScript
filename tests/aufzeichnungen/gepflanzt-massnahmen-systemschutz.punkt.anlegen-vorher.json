@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "aufgezeichnet": "2026-09-11T16:00:00Z",
+  "erhoeht": true,
+  "sprache": {
+    "lcid": 1031
+  },
+  "datentraeger": [
+    {
+      "nummer": 0,
+      "name": "Muster NVMe 1TB",
+      "medienTyp": 4,
+      "busTyp": 17,
+      "health": 0,
+      "opStatus": [
+        2
+      ],
+      "groesseBytes": 1000204886016,
+      "firmware": "1.0",
+      "trim": true,
+      "tempWarn": 90,
+      "tempKritisch": 94,
+      "nvme": {
+        "criticalWarning": 0,
+        "spare": 100,
+        "spareSchwelle": 10,
+        "usedPct": 1,
+        "tempC": 39,
+        "stunden": 3921,
+        "unsafeShutdowns": 66,
+        "medienFehler": 0
+      }
+    }
+  ],
+  "volumes": [
+    {
+      "pfad": "\\\\?\\Volume{00000000-0000-0000-0000-000000000001}\\",
+      "dateisystem": "NTFS",
+      "typ": 3,
+      "groesseBytes": 536870912000,
+      "freiBytes": 214748364800,
+      "health": 0,
+      "opStatus": [
+        2
+      ],
+      "gptTyp": "{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}",
+      "versteckt": false,
+      "system": false,
+      "boot": true,
+      "buchstabe": "C",
+      "dirty": false,
+      "label": "Windows"
+    }
+  ],
+  "ereignisse": {
+    "beginnSystem": "2026-05-01T00:00:00Z",
+    "beginnApplication": "2026-05-01T00:00:00Z",
+    "tage": 90,
+    "eintraege": []
+  },
+  "systemschutz": {
+    "diskPercent": 15,
+    "sessionInterval": 1,
+    "frequenz": 1440,
+    "policyAus": false,
+    "punkte": [],
+    "aktiv": true
+  },
+  "fehlerliste": []
+}

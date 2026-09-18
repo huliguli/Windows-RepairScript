@@ -37,6 +37,25 @@ namespace WartungsToolbox.Kern.Regeln
         /// <summary>MSFT_Volume.OperationalStatus: die Aktion steht hier, nicht in HealthStatus (lokales MOF, Get-Volume).</summary>
         const int VolumeScanNoetig = 0xD00D, VolumeSpotFixNoetig = 0xD00E, VolumeReparaturNoetig = 0xD00F;
 
+        /// <summary>
+        /// Planparameter der Volume-Massnahmen (docs/M3-ENTWURF.md, Abschnitt 1): der Laufwerksbuchstabe
+        /// ohne Doppelpunkt ("C"), wie ihn das Bild traegt. volume.scan und volume.optimieren (Stufe 1)
+        /// brauchen ihn; volume.spotfix und volume.reparatur (Stufe 3, bis M4 nur Rat) tragen ihn schon,
+        /// damit der Befund seinen Gegenstand nennt und M4 nichts nachruesten muss.
+        /// </summary>
+        public const string ParamBuchstabe = "buchstabe";
+
+        // Massnahmen-Kennungen aus kern/Massnahmen.cs (docs/M3-ENTWURF.md, Abschnitt 1 und 8.5), wie in
+        // Netz.cs und Leistung.cs als Konstanten: MScan, MPunktAnlegen (Stufe 1), MTrimEinschalten
+        // (Stufe 2), MSpotfix und MReparatur (Stufe 3, bis M4 nur Rat). MOptimieren steht im Katalog,
+        // aber keine Regel haengt es an: es gibt keinen Messwert "Optimierung faellig" im Bild.
+        public const string MTrimEinschalten = "datentraeger.trim.einschalten";
+        public const string MScan = "volume.scan";
+        public const string MOptimieren = "volume.optimieren";
+        public const string MSpotfix = "volume.spotfix";
+        public const string MReparatur = "volume.reparatur";
+        public const string MPunktAnlegen = "systemschutz.punkt.anlegen";
+
         /// <summary>GptType der EFI-Systempartition, der Wiederherstellungspartition und der Microsoft-Reserved-Partition (MSFT_Partition-Doku).</summary>
         const string GptEsp = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b", GptRecovery = "de94bba4-06d1-4d40-a16a-bfd50179d6ac", GptMsr = "e3c9e316-0b5c-4db8-817d-f92df00215ae";
 
@@ -184,10 +203,10 @@ namespace WartungsToolbox.Kern.Regeln
             if (d.IstSsd && d.Trim == false)
             {
                 var b = Neu(basis + "trim", Zustand.Warn, "TRIM ist abgeschaltet",
-                    "Für die SSD " + name + " ist TRIM in Windows abgeschaltet (DisableDeleteNotification = 1); ohne TRIM wird sie mit der Zeit langsamer und verschleißt schneller.",
-                    "TRIM einschalten (Registry DisableDeleteNotification auf 0); Windows schaltet es normalerweise selbst ein.",
-                    "Registry DisableDeleteNotification", Messwert.Von(1, "DisableDeleteNotification", "0 = TRIM an"));
-                b.Massnahmen.Add("datentraeger.trim.einschalten");
+                    "Für die SSD " + name + " ist TRIM in Windows abgeschaltet (NTFS-Bit von DisableDeleteNotification = 1); ohne TRIM wird sie mit der Zeit langsamer und verschleißt schneller.",
+                    "TRIM einschalten (NTFS-Bit von DisableDeleteNotification auf 0); Windows schaltet es normalerweise selbst ein.",
+                    "Registry DisableDeleteNotification", Messwert.Von(1, "NTFS-Bit von DisableDeleteNotification", "0 = TRIM an"));
+                b.Massnahmen.Add(MTrimEinschalten);
                 if (d.TrimGeraet == false) b.Detail.Add("Zusätzlich meldet das Laufwerk selbst keine TRIM-Unterstützung (DEVICE_TRIM_DESCRIPTOR.TrimEnabled 0); das ändert die Registry nicht");
                 e.Befunde.Add(b);
             }
@@ -321,7 +340,8 @@ namespace WartungsToolbox.Kern.Regeln
                         "Windows meldet für " + lw + " eine Beschädigung des Dateisystems, die nur eine Reparatur im abgemeldeten Zustand behebt (Status 0xD00F).",
                         "Sichern Sie zuerst Ihre Daten; die Reparatur braucht einen Neustart und kann beschädigte Dateien verwerfen.",
                         "MSFT_Volume.OperationalStatus", Messwert.Von(Hex(VolumeReparaturNoetig), "OperationalStatus", "2 = OK"));
-                    b.Massnahmen.Add("volume.reparatur");
+                    b.Massnahmen.Add(MReparatur);
+                    b.Parameter[ParamBuchstabe] = v.Buchstabe;
                     VolumeDetail(b, v);
                     e.Befunde.Add(b);
                 }
@@ -331,7 +351,8 @@ namespace WartungsToolbox.Kern.Regeln
                         "Windows hat auf " + lw + " Fehler im Dateisystem vermerkt, die eine kurze Reparatur behebt (Status 0xD00E).",
                         "Die Reparatur nimmt das Laufwerk kurz offline; auf dem Windows-Laufwerk braucht sie einen Neustart.",
                         "MSFT_Volume.OperationalStatus", Messwert.Von(Hex(VolumeSpotFixNoetig), "OperationalStatus", "2 = OK"));
-                    b.Massnahmen.Add("volume.spotfix");
+                    b.Massnahmen.Add(MSpotfix);
+                    b.Parameter[ParamBuchstabe] = v.Buchstabe;
                     VolumeDetail(b, v);
                     e.Befunde.Add(b);
                 }
@@ -344,7 +365,8 @@ namespace WartungsToolbox.Kern.Regeln
                         "Eine Online-Prüfung verändert nichts und dauert wenige Minuten; danach zeigt sich, ob eine Reparatur nötig ist.",
                         dirty ? "FSCTL_IS_VOLUME_DIRTY / Win32_Volume.DirtyBitSet" : "MSFT_Volume.OperationalStatus",
                         dirty ? Messwert.Von("gesetzt", "Dirty-Bit", "nicht gesetzt") : Messwert.Von(Hex(VolumeScanNoetig), "OperationalStatus", "2 = OK"));
-                    b.Massnahmen.Add("volume.scan");
+                    b.Massnahmen.Add(MScan);
+                    b.Parameter[ParamBuchstabe] = v.Buchstabe;
                     VolumeDetail(b, v);
                     e.Befunde.Add(b);
                 }
@@ -657,7 +679,7 @@ namespace WartungsToolbox.Kern.Regeln
                     "Es gibt keinen Wiederherstellungspunkt; vor jeder Reparatur sollte einer angelegt werden.",
                     "Legen Sie einen Wiederherstellungspunkt an; das dauert unter einer Minute und kostet wenig Platz.",
                     "SystemRestore (root\\default)", Messwert.Von(0, "Punkte", ">= 1"));
-                b.Massnahmen.Add("systemschutz.punkt.anlegen");
+                b.Massnahmen.Add(MPunktAnlegen);
                 Konfig(b, z);
                 e.Befunde.Add(b);
                 return;

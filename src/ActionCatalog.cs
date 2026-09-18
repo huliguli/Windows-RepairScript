@@ -18,6 +18,14 @@ namespace WartungsToolbox
     ///   * Desc       = ein Satz, was es bringt.
     ///   * Info       = die ausfuehrliche Erklaerung, ohne unerklaerte Fachbegriffe.
     ///   * Anrede durchgehend "Sie".
+    ///
+    /// Ids sind Listenindizes (Reihenfolge = Id, nie mittendrin einfuegen oder loeschen).
+    /// Ein Eintrag, den seit 8.2 eine Massnahme des Kern-Katalogs ersetzt, traegt
+    /// ErsetztDurch und wird vom Host nicht mehr an die Oberflaeche geschickt; er bleibt
+    /// hier stehen, weil die Id ein Listenindex ist (Schritte.Aktion(id), KatalogProbe und
+    /// run-tests zaehlen 0..Count-1) und werkzeug-Plaene mit dieser Id (Verlauf, Warteschlange)
+    /// weiter ihre Steps brauchen. Die geplante Wartung nimmt ihre Schritte NICHT von hier,
+    /// sondern aus den eigenen Kopien in AutoCatalog() (Schritte.Auto -> AutoSet).
     /// </summary>
     static class Catalog
     {
@@ -28,7 +36,13 @@ namespace WartungsToolbox
         public static readonly Dictionary<string, string> CategoryNotes = new Dictionary<string, string>
         {
             { "Reparieren", "Werkzeuge für ein Windows, das Probleme macht: Abstürze, Fehlermeldungen, hängende Updates. Ihre persönlichen Dateien werden dabei nicht angerührt. Im Zweifel ist die Rundum-Reparatur die richtige Wahl; sie darf ruhig ein paar Minuten dauern." },
-            { "Netzwerk",   "Hilfe bei Internet-Problemen. Sinnvolle Reihenfolge: erst die gemerkten Internet-Adressen verwerfen, dann eine neue Netzwerk-Adresse holen. Erst wenn das nicht hilft, alle Interneteinstellungen zurücksetzen und danach den PC neu starten." },
+            // Seit 8.2 stehen "Adressen verwerfen" (Id 9) und "neue Adresse holen" (Id 10) nicht mehr
+            // hier, sondern als Massnahme an der Netzwerk-Karte der Pruefung (ErsetztDurch). Der Hinweis
+            // verspricht nur, was die Regeln liefern: netz.dnscache.leeren haengt an den Befunden der
+            // DNS-Sonde (kern/Regeln/Netz.cs), netz.dhcp.erneuern an einer Notadresse 169.254.x.x.
+            // Die Titel sind die des Kern-Katalogs (kern/Massnahmen.Katalog.cs), nicht die alten
+            // Werkzeugnamen. Wortlaut: docs/M3-ENTWURF.md 8.8.
+            { "Netzwerk",   "Hilfe bei Internet-Problemen. Meldet die Prüfung eine Störung des Namensdienstes, steht dort „DNS-Cache leeren“; bei einer Notadresse „Adresse neu vom Router anfordern“. Erst wenn das nicht hilft, alle Interneteinstellungen zurücksetzen und danach den PC neu starten." },
             { "Aufräumen",  "Schafft Speicherplatz und entfernt Datenmüll. Ihre Dokumente, Bilder und Programme bleiben unberührt. Nur der Papierkorb wird, falls Sie ihn wählen, endgültig geleert." },
             { "Diagnose",   "Nur nachsehen, nichts verändern: Diese Aktionen prüfen den PC und berichten. Ein guter erster Schritt, wenn sich der PC merkwürdig verhält." },
         };
@@ -192,20 +206,31 @@ namespace WartungsToolbox
                     Cmd("netsh int ip reset"),
                 }
             });
+            // Id 9, seit 8.2 ersetzt: die Massnahme netz.dnscache.leeren (Kern-Katalog) leert den
+            // Zwischenspeicher ueber WMI und weist es nach; die Karte der DNS-Sonde bietet sie an.
+            // Der Eintrag bleibt, weil die Id ein Listenindex ist (loeschen verschoebe Id 10..29)
+            // und ein werkzeug-Plan mit Id 9 (alter Verlauf, Warteschlange) weiter seine Steps
+            // braucht. Die geplante Wartung nutzt diese Steps nicht: ihr Schluessel "dns" hat in
+            // AutoCatalog() eine eigene Kopie.
             l.Add(new MaintenanceAction {
                 Category = "Netzwerk", Glyph = "E774", Icon = "globe",
                 Title = "Gemerkte Internet-Adressen verwerfen",
                 TechTitle = "ipconfig /flushdns",
                 Desc = "Hilft, wenn einzelne Webseiten nicht laden, obwohl das Internet sonst geht.",
                 Info = "Ihr PC merkt sich, hinter welcher Nummer eine Webadresse steckt. Ist ein solcher Merkzettel veraltet, lädt eine einzelne Seite nicht mehr, während alles andere funktioniert. Diese Aktion wirft die Merkzettel weg, sie werden beim nächsten Aufruf neu geholt.",
+                ErsetztDurch = "netz.dnscache.leeren",
                 Steps = { Cmd("ipconfig /flushdns") }
             });
+            // Id 10, seit 8.2 ersetzt: netz.dhcp.erneuern (RenewDHCPLease ueber WMI, Nachweis:
+            // keine Notadresse mehr und ein Router eingetragen). Der Eintrag bleibt aus denselben Gruenden
+            // wie Id 9 (Listenindex, werkzeug-Plaene); kein AutoCatalog-Schluessel haengt daran.
             l.Add(new MaintenanceAction {
                 Category = "Netzwerk", Glyph = "E72C", Icon = "refresh",
                 Title = "Neue Netzwerk-Adresse vom Router holen",
                 TechTitle = "ipconfig /release + /renew",
                 Desc = "Hilft bei Verbindungsproblemen im Heimnetz.",
                 Info = "Ihr PC bekommt vom Router eine Adresse zugeteilt, damit die Geräte im Haus sich finden. Klemmt es dabei, holt diese Aktion eine frische Adresse. Die Verbindung ist dabei einen Moment lang weg.",
+                ErsetztDurch = "netz.dhcp.erneuern",
                 Steps = {
                     Cmd("ipconfig /release"),
                     Cmd("ipconfig /renew"),
@@ -275,12 +300,18 @@ namespace WartungsToolbox
                     Cmd("if exist \"%USERPROFILE%\\Desktop\\Akkubericht.html\" explorer.exe \"%USERPROFILE%\\Desktop\\Akkubericht.html\""),
                 }
             });
+            // Id 18, seit 8.2 ersetzt: sicherheit.schnellscan (MpCmdRun.exe, Nachweis ueber
+            // QuickScanAge). Der Eintrag bleibt, weil die Id ein Listenindex ist (loeschen
+            // verschoebe Id 19..29) und ein werkzeug-Plan mit Id 18 weiter seine Steps braucht.
+            // Die geplante Wartung nutzt diese Steps nicht: ihr Schluessel "defender" hat in
+            // AutoCatalog() eine eigene Kopie.
             l.Add(new MaintenanceAction {
                 Category = "Diagnose", Glyph = "E730", Icon = "shield",
                 Title = "Kurzen Virenscan starten",
                 TechTitle = "Microsoft Defender Schnellscan",
                 Desc = "Prüft die Stellen, an denen sich Schädlinge typischerweise einnisten.",
                 Info = "Lässt den in Windows eingebauten Virenschutz die wichtigsten Stellen auf Schädlinge prüfen. Das dauert meist ein paar Minuten. Für eine gründliche Prüfung des ganzen PCs nutzen Sie den vollständigen Scan in der Windows-Sicherheit.",
+                ErsetztDurch = "sicherheit.schnellscan",
                 Steps = { Ps("if (Get-Command Start-MpScan -EA SilentlyContinue) { try { Start-MpScan -ScanType QuickScan -EA Stop; 'Der Virenscan ist abgeschlossen. Es wurde nichts gemeldet.' } catch { 'Der Virenscan war nicht durchfuehrbar: ' + $_.Exception.Message } } else { 'Auf diesem PC ist der Windows-Virenschutz nicht aktiv. Vermutlich laeuft ein anderes Schutzprogramm.' }") }
             });
             l.Add(new MaintenanceAction {

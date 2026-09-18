@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Security.AccessControl;
 using System.Threading;
 using WartungsToolbox.Kern;
@@ -27,6 +29,12 @@ namespace WartungsToolbox
     /// brauchen, stehen als "zugriff" in der Fehlerliste und werden gezählt (adminFehlend).
     /// Ist ein Helfer verbunden, misst er sofort vollständig erhöht nach; sonst bietet die
     /// Oberfläche "ergaenzen" an. Vertrag: docs/M2-ENTWURF.md, Abschnitte 6, 9, 12 und 13.
+    ///
+    /// Seit 8.2 (Meilenstein 3) laufen hier auch die Maßnahmen des Kern-Katalogs (Abschnitt
+    /// „Maßnahmen“ unten): eine Karte trägt eine Kennung, die Oberfläche fragt die Vorschau ab,
+    /// der Plan geht mit den Parametern des Befunds an den Helfer, danach Nachmessung, Regeln,
+    /// Nachweis aus dem Kern und das Ergebnis mit Nachweiskarte; der Rückweg spielt eine
+    /// Sicherungsdatei zurück. Vertrag: docs/M3-ENTWURF.md, Abschnitte 4, 8.9, 8.10 und 9.
     ///
     /// Zwei Regeln aus v7.3.2 gelten weiter: nie still ablehnen (StartAbgelehnt antwortet
     /// mit Grund), und jeder Lauf protokolliert Anfang und Ende.
@@ -616,6 +624,498 @@ namespace WartungsToolbox
             return !string.IsNullOrEmpty(s) && int.TryParse(s, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out v) ? v : -1;
         }
 
+        // ---------------------------------------------------------------- Maßnahmen (Meilenstein 3)
+
+        // Kennungen mit fester Sonderbehandlung im Host (docs/M3-ENTWURF.md, Abschnitte 4 und 9.2).
+        const string KennungRueckweg = "rueckweg";
+        const string KennungGeraetAktivieren = "geraet.aktivieren";
+        const string KennungUpdateEinstellungen = "update.einstellungen.oeffnen";
+
+        // Werte-Schlüssel des Helfers, die in das Wörterbuch des Nachweises wandern (Entwurf 8.10):
+        // unverändert, unter demselben Namen, der Kern liest sie dort.
+        const string WertSicherungDatei = "sicherung.datei";
+        const string WertSicherungVorher = "sicherung.vorher";
+        const string WertNeustart = "neustart";
+        const string WertNachweisBestanden = "nachweis.bestanden";
+        const string WertNachweisSatz = "nachweis.satz";
+        const string WertRueckwegKennung = "rueckweg.kennung";
+        const string WertRueckwegParameter = "rueckweg.parameter.";
+        const string WertRueckwegMoeglich = "rueckweg.moeglich";
+
+        // Dateiname einer Sicherung, wie ihn die Kennung rueckweg annimmt (Vertrag Abschnitt 1):
+        // Buchstaben, Ziffern, Punkt, Unterstrich, Bindestrich, Endung .json, keine Pfadzeichen.
+        // Der Helfer prüft Ort und Herkunft der Datei beim Rückweg selbst noch einmal.
+        static readonly Regex SicherungNameRx = new Regex(@"^[A-Za-z0-9._-]{1,200}\.json$", RegexOptions.Compiled);
+        // Aus dem Namen lässt sich die Hin-Kennung lesen: yyyyMMdd-HHmmss-<kennung>-<4hex>.json
+        // (helfer/Massnahmen/Gemeinsam.cs). Nur für Titel und Knopf; der Nachweis nach dem Rückweg
+        // nimmt rueckweg.kennung aus den Werten des Helfers.
+        static readonly Regex SicherungKennungRx = new Regex(@"^\d{8}-\d{6}-(?<k>[a-z0-9.]+)-[0-9a-f]{4}\.json$", RegexOptions.Compiled);
+
+        /// <summary>Der Befund mit diesem Schlüssel im letzten Ergebnis; null, wenn keiner da ist.</summary>
+        Befund BefundFinden(string schluessel)
+        {
+            if (string.IsNullOrEmpty(schluessel)) return null;
+            var liste = _ergebnisse;
+            if (liste == null) return null;
+            return Alle.AlleBefunde(liste).FirstOrDefault(b => b != null && b.Schluessel == schluessel);
+        }
+
+        /// <summary>
+        /// Prüft eine Maßnahme aus der Oberfläche gegen Katalog, Befund und Antworten (Entwurf
+        /// 9.1 und 9.2): die Kennung muss am gefundenen Befund hängen (nie eine freie Kennung aus
+        /// der Oberfläche), die Art muss ausfuehren sein, jeder Pflichtparameter aus
+        /// Massnahme.Parameter muss am Befund stehen, und nur diese Namen wandern in den Plan;
+        /// geraet.aktivieren braucht dazu die Antwort „reparieren“ auf die Frage des Geräts
+        /// (Frage-Kennung geraet:&lt;instanzId&gt;:22, kern/Regeln/Hardware.cs). Liefert null,
+        /// wenn alles passt, sonst den Satz für die Oberfläche. Nur lesend; „gerade läuft etwas“
+        /// prüft der Aufrufer (Vorschau über LaufendesWas, Start über StartAbgelehnt).
+        /// </summary>
+        string MassnahmePruefen(string kennung, string schluessel, out Massnahme m, out Befund b, out Dictionary<string, string> parameter)
+        {
+            m = string.IsNullOrEmpty(kennung) ? null : Massnahmen.Finde(kennung);
+            b = BefundFinden(schluessel);
+            parameter = new Dictionary<string, string>(StringComparer.Ordinal);
+            if (m == null)
+                return "Die Maßnahme „" + (kennung ?? "") + "“ steht nicht im Katalog dieser Fassung; sie wird nicht ausgeführt.";
+            if (_bild == null || b == null)
+                return "Der Befund zu dieser Karte liegt nicht mehr vor; bitte prüfen Sie den PC noch einmal und starten Sie die Maßnahme danach erneut.";
+            if (b.Massnahmen == null || !b.Massnahmen.Contains(m.Kennung))
+                return "Der Befund „" + b.Titel + "“ schlägt die Maßnahme „" + m.Titel + "“ nicht vor; sie wird nicht ausgeführt.";
+            if (m.Art == Massnahme.ArtAnsicht)
+                return "„" + m.Titel + "“ ist eine Ansicht und kein Eingriff; sie wird über „Ansehen“ geöffnet, nicht ausgeführt.";
+            if (m.Art != Massnahme.ArtAusfuehren)
+                return "„" + m.Titel + "“ ist ein Rat (Stufe " + m.Stufe + "), den dieses Programm nicht ausführt.";
+            foreach (string name in m.Parameter ?? new string[0])
+            {
+                string wert = null;
+                if (b.Parameter == null || !b.Parameter.TryGetValue(name, out wert) || string.IsNullOrEmpty(wert))
+                    return "Dem Befund fehlt der Wert „" + name + "“, den „" + m.Titel + "“ braucht; bitte prüfen Sie den PC noch einmal.";
+                parameter[name] = wert;
+            }
+            if (m.Kennung == KennungGeraetAktivieren)
+            {
+                string instanzId;
+                parameter.TryGetValue("instanzId", out instanzId);
+                if (Entscheidungen.AntwortAuf("geraet:" + instanzId + ":22") != Entscheidungen.Reparieren)
+                    return "Das Gerät wird nur eingeschaltet, wenn Sie die Frage dazu mit „wieder einschalten“ beantwortet haben; diese Antwort fehlt.";
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Befehl „massnahmeVorschau“ (UI → Host, Entwurf 9.1): die Antwort ist immer die
+        /// gleichnamige Nachricht, mit ausfuehrbar = false und grund, wenn der Start scheitern
+        /// würde (nie stumm: die Oberfläche zeigt dann den Grund statt „Jetzt ausführen“).
+        /// Nur lesend, im Thread der Oberfläche; parameter sind die Werte des Befunds, die in
+        /// den Plan gingen.
+        /// </summary>
+        internal void MassnahmeVorschau(string kennung, string schluessel)
+        {
+            Massnahme m; Befund b; Dictionary<string, string> parameter;
+            string grund = MassnahmePruefen(kennung, schluessel, out m, out b, out parameter);
+            if (grund == null)
+            {
+                string laeuft = LaufendesWas();
+                if (laeuft != null) grund = "Gerade läuft " + laeuft + "; die Maßnahme startet erst, wenn der Lauf zu Ende ist.";
+            }
+            if (grund != null) AppLog.Info("Vorschau „" + (kennung ?? "") + "“ zu " + (schluessel ?? "") + ": nicht ausführbar (" + grund + ")");
+            UiPost(new
+            {
+                type = "massnahmeVorschau",
+                kennung = kennung ?? "",
+                schluessel = schluessel ?? "",
+                titel = m != null ? m.Titel : (kennung ?? ""),
+                wasPassiert = m != null ? m.WasPassiert : "",
+                wasBleibt = m != null ? m.WasBleibt : "",
+                risiko = m != null ? m.Risiko : "",
+                sicherung = m != null ? m.Sicherung : Massnahme.SicherungKeine,
+                rueckweg = m != null ? m.Rueckweg : Massnahme.RueckwegKeiner,
+                neustart = m != null && m.Neustart,
+                dauer = m != null ? m.DauerSekunden : 0,
+                stufe = m != null ? m.Stufe : 0,
+                parameter = parameter,
+                ausfuehrbar = grund == null,
+                grund = grund,
+            });
+        }
+
+        /// <summary>
+        /// Befehl „massnahmeAusfuehren“ (UI → Host, Entwurf 9.2): erst dieselbe Prüfung wie die
+        /// Vorschau (Absage als flowError, die Oberfläche steht schon auf dem Ablaufbildschirm),
+        /// dann StartAbgelehnt wie beim Hauptweg, dann der Lauf im eigenen Thread (MassnahmeWorker).
+        /// </summary>
+        internal void MassnahmeAusfuehren(string kennung, string schluessel)
+        {
+            Massnahme m; Befund b; Dictionary<string, string> parameter;
+            string grund = MassnahmePruefen(kennung, schluessel, out m, out b, out parameter);
+            if (grund != null)
+            {
+                AppLog.Warn("Maßnahme „" + (kennung ?? "") + "“ zu " + (schluessel ?? "") + " nicht gestartet: " + grund);
+                UiPost(new { type = "flowError", message = grund });
+                return;
+            }
+            if (StartAbgelehnt("Maßnahme „" + m.Titel + "“")) return;
+            _flowCancel = false;
+            AppLog.Info("Maßnahme „" + m.Titel + "“ (" + m.Kennung + ") gestartet, Befund " + b.Schluessel + ".");
+            Massnahme fm = m; Befund fb = b; Dictionary<string, string> fp = parameter;
+            _flowThread = new Thread(delegate () { MassnahmeWorker(fm, fb, fp); }) { IsBackground = true, Name = "massnahme" };
+            _flowThread.Start();
+        }
+
+        /// <summary>
+        /// Plan mit genau einem Schritt (Kennung plus die geprüften Parameter) über den Helfer,
+        /// dann Nachmessung (der Helfer ist verbunden, also erhöht), Regeln, Nachweis aus dem
+        /// Kern über dem neuen Bild und das Ergebnis mit Nachweiskarte. Drei Schritte des
+        /// Balkens: Maßnahme, Nachmessung, Ergebnis (Entwurf 9.1).
+        /// </summary>
+        void MassnahmeWorker(Massnahme m, Befund b, Dictionary<string, string> parameter)
+        {
+            var uhr = System.Diagnostics.Stopwatch.StartNew();
+            string was = "die Maßnahme „" + m.Titel + "“";
+            try
+            {
+                UiPost(new { type = "flowStart", mode = "massnahme", total = 3, titel = m.Titel });
+                // Erst den ersten Blick abwarten: der tauscht _protokoll aus, und der Anfang dieses
+                // Laufs soll in der Datei stehen, in der auch sein Ende steht.
+                ErstbefundAbwarten();
+                if (_protokoll == null) _protokoll = new Protokoll(Protokoll.NeueLaufId());
+                _protokoll.Schreibe(Protokoll.Host, Protokoll.Anfang, m.Kennung, "Maßnahme „" + m.Titel + "“ gestartet",
+                    new { befund = b.Schluessel, stufe = m.Stufe, sicherung = m.Sicherung, parameter = ParameterText(parameter) });
+
+                // Der Dialog kommt nur, wenn noch kein Helfer da ist; sonst wäre die Zeile eine Lüge.
+                bool dialog = !HelferClient.Verbunden && !HelferClient.Abnahmeweg;
+                FlowStep(1, dialog ? "Windows fragt nach Administratorrechten" : m.Titel);
+                IAusfuehrer a = AusfuehrerHolen(was, m.Kennung);
+                if (a == null) return;
+                if (_flowCancel) { FlowCancelled(); return; }
+                if (dialog) FlowStep(1, m.Titel);
+
+                var plan = Plan.Neu(m.Titel);
+                var schritt = new PlanSchritt { Kennung = m.Kennung };
+                foreach (var kv in parameter) schritt.Parameter[kv.Key] = kv.Value;
+                plan.Schritte.Add(schritt);
+                PlanErgebnis erg = PlanAusfuehren(a, plan, m.Kennung);
+                if (!MassnahmeErgebnisPruefen(erg, m.Kennung, was, MassnahmeFehlerSatz(m.Titel), "Maßnahme: " + m.Titel, uhr.Elapsed.TotalSeconds)) return;
+
+                // Nach dem Eingriff neu messen, damit das Ergebnis den Zustand DANACH zeigt; im
+                // laufenden Protokoll, damit Anfang und Ende in derselben Datei stehen.
+                FlowStep(2, "Ihr PC wird erneut gelesen");
+                Messen(false);
+                FlowStep(3, "Das Ergebnis wird zusammengestellt");
+                Bewerten();
+
+                // Nachweis: Befund-Parameter plus die Werte des Helfers unter ihrem Namen (8.10).
+                var p = new Dictionary<string, string>(parameter, StringComparer.Ordinal);
+                WerteUebernehmen(erg, p, WertSicherungVorher, WertNeustart, WertNachweisBestanden, WertNachweisSatz);
+                Nachweis nw = NachweisBilden(m, m.Titel, erg, p);
+                string sicherung = SicherungName(erg.Wert(WertSicherungDatei));
+                bool rueckwegMoeglich = sicherung != null && erg.Wert(WertRueckwegMoeglich) != "0";
+                MassnahmeAbschliessen("massnahme", m.Kennung, m.Titel, b.Schluessel, "Maßnahme: " + m.Titel,
+                    erg, nw, uhr.Elapsed.TotalSeconds, sicherung, rueckwegMoeglich, null);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("Maßnahme " + m.Kennung + " fehlgeschlagen", ex);
+                FlowFehler(m.Kennung, MassnahmeFehlerSatz(m.Titel), ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Befehl „massnahmeRueckweg“ (UI → Host, Entwurf 9.2): Plan rueckweg mit dem Dateinamen
+        /// der Sicherung. Der Host nimmt nur einen Namen nach dem Muster der Sicherungsdateien
+        /// (keine Pfadzeichen) und nur, wenn die Datei noch unter sicherungen\massnahmen liegt;
+        /// Ort und Herkunft (Besitzer, Rechte, Hardlinks) prüft der Helfer erneut. Der Titel
+        /// „Rückgängig: &lt;Hin-Titel&gt;“ kommt aus der Kennung im Dateinamen.
+        /// </summary>
+        internal void MassnahmeRueckweg(string sicherung)
+        {
+            string name = SicherungName(sicherung);
+            if (name == null)
+            {
+                AppLog.Warn("Rückweg nicht gestartet: ungültiger Dateiname „" + (sicherung ?? "") + "“.");
+                UiPost(new { type = "flowError", message = "Der Name der Sicherungsdatei ist ungültig (erlaubt sind Buchstaben, Ziffern, Punkt, Unterstrich und Bindestrich mit der Endung .json); es wurde nichts zurückgespielt." });
+                return;
+            }
+            if (SicherungPfad(name) == null)
+            {
+                AppLog.Warn("Rückweg nicht gestartet: die Sicherung „" + name + "“ liegt nicht mehr unter sicherungen\\massnahmen.");
+                UiPost(new { type = "flowError", message = "Die Sicherung „" + name + "“ liegt nicht mehr im Sicherungsordner; es wurde nichts zurückgespielt. Die Maßnahme lässt sich nach einer neuen Prüfung erneut ausführen." });
+                return;
+            }
+            Massnahme hin = HinMassnahme(name);
+            string hinTitel = hin != null ? hin.Titel : "Sicherung " + name;
+            if (StartAbgelehnt("Rückgängig: " + hinTitel)) return;
+            _flowCancel = false;
+            AppLog.Info("Rückweg gestartet: Sicherung " + name + (hin != null ? " (" + hin.Kennung + ")" : "") + ".");
+            string fname = name; Massnahme fhin = hin;
+            _flowThread = new Thread(delegate () { RueckwegWorker(fname, fhin); }) { IsBackground = true, Name = "rueckweg" };
+            _flowThread.Start();
+        }
+
+        /// <summary>
+        /// Plan rueckweg über den Helfer, Nachmessung, Regeln, Nachweis rueckweg aus dem Kern mit
+        /// rueckweg.kennung, rueckweg.parameter.&lt;name&gt; und neustart aus den Werten (8.9),
+        /// Ergebnis mit Nachweiskarte (hinKennung = rueckweg.kennung). Die Sicherungsdatei bleibt
+        /// liegen; die Karte des Rückwegs trägt deshalb keinen zweiten Knopf.
+        /// </summary>
+        void RueckwegWorker(string name, Massnahme hin)
+        {
+            var uhr = System.Diagnostics.Stopwatch.StartNew();
+            string hinTitel = hin != null ? hin.Titel : "Sicherung " + name;
+            string titel = "Rückgängig: " + hinTitel;
+            string was = "das Rückgängigmachen von „" + hinTitel + "“";
+            try
+            {
+                UiPost(new { type = "flowStart", mode = "rueckweg", total = 3, titel = titel });
+                ErstbefundAbwarten();
+                if (_protokoll == null) _protokoll = new Protokoll(Protokoll.NeueLaufId());
+                _protokoll.Schreibe(Protokoll.Host, Protokoll.Anfang, KennungRueckweg, titel + " gestartet",
+                    new { sicherung = name, hinKennung = hin != null ? hin.Kennung : null });
+
+                bool dialog = !HelferClient.Verbunden && !HelferClient.Abnahmeweg;
+                FlowStep(1, dialog ? "Windows fragt nach Administratorrechten" : titel);
+                IAusfuehrer a = AusfuehrerHolen(was, KennungRueckweg);
+                if (a == null) return;
+                if (_flowCancel) { FlowCancelled(); return; }
+                if (dialog) FlowStep(1, titel);
+
+                PlanErgebnis erg = PlanAusfuehren(a, Plan.Neu(titel).Mit(KennungRueckweg, "sicherung", name), KennungRueckweg);
+                if (!MassnahmeErgebnisPruefen(erg, KennungRueckweg, was, RueckwegFehlerSatz(hinTitel), titel, uhr.Elapsed.TotalSeconds)) return;
+
+                FlowStep(2, "Ihr PC wird erneut gelesen");
+                Messen(false);
+                FlowStep(3, "Das Ergebnis wird zusammengestellt");
+                Bewerten();
+
+                // Die Hin-Maßnahme sagt der Helfer aus der Datei (rueckweg.kennung); der Name der
+                // Datei war nur die Vermutung für den Titel bis hierher.
+                string hinKennung = erg.Wert(WertRueckwegKennung);
+                if (string.IsNullOrEmpty(hinKennung)) hinKennung = hin != null ? hin.Kennung : null;
+                Massnahme hinNachher = Massnahmen.Finde(hinKennung) ?? hin;
+                if (hinNachher != null) { hinTitel = hinNachher.Titel; titel = "Rückgängig: " + hinTitel; }
+
+                var p = new Dictionary<string, string>(StringComparer.Ordinal);
+                p["sicherung"] = name;
+                foreach (var kv in erg.Werte)
+                    if (kv.Key == WertRueckwegKennung || kv.Key.StartsWith(WertRueckwegParameter, StringComparison.Ordinal)) p[kv.Key] = kv.Value;
+                WerteUebernehmen(erg, p, WertNeustart, WertNachweisBestanden, WertNachweisSatz);
+                Massnahme rueckweg = Massnahmen.Finde(KennungRueckweg);
+                Nachweis nw = rueckweg == null
+                    ? Nachweis.Unlesbar("Der Katalog dieser Fassung kennt keinen Nachweis für den Rückweg; ob der frühere Zustand wieder gilt, bleibt offen.")
+                    : NachweisBilden(rueckweg, titel, erg, p);
+                MassnahmeAbschliessen("rueckweg", KennungRueckweg, titel, null, titel, erg, nw, uhr.Elapsed.TotalSeconds, null, false, hinKennung);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("Rückweg " + name + " fehlgeschlagen", ex);
+                FlowFehler(KennungRueckweg, RueckwegFehlerSatz(hinTitel), ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Befehl „massnahmeAnsicht“ (UI → Host, Entwurf 9.2): nur die feste Zuordnung
+        /// update.einstellungen.oeffnen → ms-settings:windowsupdate, geöffnet über die Oberfläche
+        /// des Nutzers (Shell.OeffneImNutzerkontext, nie erhöht, kein Process.Start im Host).
+        /// speicher.aufraeumen öffnet die Oberfläche selbst. Jede andere Kennung: Absage als
+        /// flowError, nie stumm.
+        /// </summary>
+        internal void MassnahmeAnsicht(string kennung)
+        {
+            if (kennung == KennungUpdateEinstellungen)
+            {
+                AppLog.Info("Ansicht „Windows Update“ geöffnet (ms-settings:windowsupdate, im Nutzerkontext).");
+                Shell.OeffneImNutzerkontext("ms-settings:windowsupdate");
+                return;
+            }
+            AppLog.Warn("Ansicht „" + (kennung ?? "") + "“ nicht geöffnet: keine feste Zuordnung im Host.");
+            UiPost(new { type = "flowError", message = "Die Ansicht „" + (kennung ?? "") + "“ kennt dieses Programm nicht; es wurde nichts geöffnet." });
+        }
+
+        /// <summary>
+        /// Nachweis über dem neuen Bild. Bei Exit 1 (Problem im Helfer) ist jeder Nachweis Nein mit
+        /// dem Helfer-Satz (Entwurf 8.10): der Kern sieht „lief mit Fehler“ nicht am Bild, und
+        /// Kennungen ohne messbaren Zustand lieferten sonst Ja. Wirft die Nachweisfunktion oder
+        /// liefert sie nichts, ist der Nachweis nicht messbar (Unlesbar), nie bestanden.
+        /// </summary>
+        Nachweis NachweisBilden(Massnahme m, string titel, PlanErgebnis erg, Dictionary<string, string> p)
+        {
+            if (erg.Exit != PlanErgebnis.Ok || erg.Problem)
+            {
+                string satz = erg.Wert(WertNachweisSatz);
+                if (string.IsNullOrEmpty(satz)) satz = string.IsNullOrEmpty(erg.Grund) ? "der Helfer meldete kein Ergebnis." : erg.Grund;
+                return Nachweis.Nein(titel + " lief mit Fehler; " + satz);
+            }
+            try
+            {
+                Nachweis nw = m.Pruefen(_bild, p);
+                return nw ?? Nachweis.Unlesbar("Der Nachweis zu „" + titel + "“ lieferte kein Ergebnis; ob die Maßnahme gewirkt hat, bleibt offen.");
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Nachweis " + m.Kennung + ": " + ex.Message);
+                return Nachweis.Unlesbar("Der Nachweis zu „" + titel + "“ ließ sich nicht bilden (" + ex.Message + "); ob die Maßnahme gewirkt hat, bleibt offen.");
+            }
+        }
+
+        /// <summary>
+        /// Gemeinsames Ende von Maßnahme und Rückweg: Zeile nachweis im Protokoll, Verlaufseintrag
+        /// (good bei bestanden, warn bei nicht bestanden oder nicht messbar, bad nur bei Exit != 0;
+        /// Entwurf 9.3) mit der Sicherungsdatei, wenn der Rückweg über sie möglich ist, dann das
+        /// Ergebnis mit der Nachweiskarte. schluessel ist der Befund der Karte (null beim
+        /// Rückweg), hinKennung die Hin-Maßnahme (nur beim Rückweg).
+        /// </summary>
+        void MassnahmeAbschliessen(string mode, string kennung, string titel, string schluessel, string verlaufAktion,
+                                   PlanErgebnis erg, Nachweis nw, double sekunden, string sicherung, bool rueckwegMoeglich, string hinKennung)
+        {
+            string satzArt = nw.Unbestimmt ? "Nachweis nicht messbar: " : (nw.Bestanden ? "Nachweis bestanden: " : "Nachweis nicht bestanden: ");
+            string kind = erg.Exit != PlanErgebnis.Ok ? "bad" : (nw.Bestanden ? "good" : "warn");
+            bool neustart = nw.Neustart || erg.Wert(WertNeustart) == "1";
+            if (_protokoll != null)
+                _protokoll.Schreibe(Protokoll.Host, Protokoll.Nachweis, kennung, satzArt + nw.Satz,
+                    new { bestanden = nw.Bestanden, unbestimmt = nw.Unbestimmt, neustart, exit = erg.Exit, sekunden = (int)sekunden, sicherung, rueckwegMoeglich, hinKennung });
+            // Der Verlauf kennt nur „Datei da oder nicht“ und macht daraus den Knopf „Rückgängig“
+            // (Entwurf 8.10: nur mit Sicherung UND rueckweg.moeglich != "0"). Deshalb bekommt er den
+            // Namen nur, wenn der Rückweg möglich ist; Protokollzeile und Nachweiskarte behalten die
+            // Datei als Beleg, die Karte liest rueckwegMoeglich selbst. Sonst führte der Knopf bei
+            // update.dienst.aktivieren über Bestätigung und UAC-Dialog immer in die Absage des Helfers.
+            History.Add(verlaufAktion, kind, satzArt + nw.Satz, sekunden, rueckwegMoeglich ? sicherung : null);
+            AppLog.Info(verlaufAktion + ": " + satzArt + nw.Satz + (sicherung != null ? " (Sicherung " + sicherung + ")" : ""));
+            FlowLog((nw.Bestanden ? "✔  " : "●  ") + satzArt + nw.Satz, nw.Bestanden ? LogKind.Good : LogKind.Warn);
+            if (neustart) FlowLog("●  Die Änderung wirkt vollständig erst nach einem Neustart.", LogKind.Warn);
+            AbbruchNachPruefungMelden();
+            PublishResult(mode, new
+            {
+                kennung = kennung,
+                titel = titel,
+                schluessel = schluessel,
+                bestanden = nw.Bestanden,
+                unbestimmt = nw.Unbestimmt,
+                neustart = neustart,
+                satz = nw.Satz,
+                // fehler = der Helfer hat den Schritt nicht sauber beendet (Exit 1 oder Problem):
+                // die Kopfzeile der Oberfläche sagt dann „mit Fehler beendet“ statt nur „nicht belegt“.
+                fehler = erg.Exit != PlanErgebnis.Ok || erg.Problem,
+                sicherung = sicherung,
+                rueckwegMoeglich = rueckwegMoeglich,
+                hinKennung = hinKennung,
+            }, neustart);
+        }
+
+        /// <summary>
+        /// Ergebnis des Plans einer Maßnahme oder eines Rückwegs übersetzen: wie PlanErgebnisPruefen
+        /// beim Hauptweg, mit zwei Unterschieden, weil hier eine Änderung am PC und womöglich eine
+        /// Sicherungsdatei im Spiel sind. Erstens zählt ein „Abbrechen“, das erst nach dem fertigen
+        /// Schritt ankam (Exit 0 oder 1, nichts Abgebrochenes im Ergebnis), nicht als Abbruch: die
+        /// Änderung ist da, also folgen Nachmessung, Nachweis und Karte, und AbbruchNachPruefungMelden
+        /// nennt den späten Abbruch in der Konsole; bis dahin sagten Protokoll-Ende und Oberfläche
+        /// „Ihrem PC ist nichts passiert“, obwohl Sicherung und Änderung schon da waren. Zweitens
+        /// bekommt der Verlauf einen Eintrag, wenn der Lauf ohne Nachweis endet (Abbruch mitten im
+        /// Schritt, Absage, Fehler), der Helfer aber schon eine Sicherung geschrieben hat: die
+        /// Abbruch-Nachfrage verspricht „eine angelegte Sicherung bleibt liegen“, und ohne Eintrag
+        /// führte kein Knopf mehr zu ihr. Den Dateinamen trägt der Eintrag wie in MassnahmeAbschliessen
+        /// nur, wenn der Rückweg möglich ist. true nur, wenn die Werte ausgewertet werden dürfen.
+        /// </summary>
+        bool MassnahmeErgebnisPruefen(PlanErgebnis erg, string kennung, string was, string fehlerSatz, string verlaufAktion, double sekunden)
+        {
+            bool abgebrochen = erg.Abgebrochen || erg.Exit == PlanErgebnis.AbgebrochenExit;
+            if (!abgebrochen && (erg.Exit == PlanErgebnis.Ok || erg.Exit == PlanErgebnis.MitProblem))
+            {
+                if (_flowCancel) AppLog.Info("Abbruch von " + was + " kam erst nach dem fertigen Schritt (Exit " + erg.Exit + "); Nachmessung und Nachweis laufen.");
+                return true;
+            }
+            string sicherung = SicherungName(erg.Wert(WertSicherungDatei));
+            if (sicherung != null)
+            {
+                bool rueckwegMoeglich = erg.Wert(WertRueckwegMoeglich) != "0";
+                abgebrochen = abgebrochen || _flowCancel;
+                string satz = (abgebrochen ? "Abgebrochen" : "Mit Fehler beendet") + ", bevor der Nachweis lief; die angelegte Sicherung bleibt liegen";
+                History.Add(verlaufAktion, abgebrochen ? "warn" : "bad", satz, sekunden, rueckwegMoeglich ? sicherung : null);
+                AppLog.Info(verlaufAktion + ": " + satz + " (Sicherung " + sicherung + (rueckwegMoeglich ? "" : ", kein Rückweg") + ").");
+                FlowLog("●  Die angelegte Sicherung bleibt liegen" + (rueckwegMoeglich ? "; „Rückgängig“ steht im Verlauf." : "."), LogKind.Warn);
+                if (abgebrochen)
+                {
+                    FlowCancelled("Abgebrochen; die angelegte Sicherung " + sicherung + " bleibt liegen.");
+                    return false;
+                }
+            }
+            return PlanErgebnisPruefen(erg, kennung, was, fehlerSatz);
+        }
+
+        /// <summary>Werte des Helfers unter demselben Namen in das Wörterbuch des Nachweises, nur die vorhandenen.</summary>
+        static void WerteUebernehmen(PlanErgebnis erg, Dictionary<string, string> p, params string[] namen)
+        {
+            foreach (string n in namen)
+            {
+                string v = erg.Wert(n);
+                if (!string.IsNullOrEmpty(v)) p[n] = v;
+            }
+        }
+
+        static string MassnahmeFehlerSatz(string titel)
+        {
+            return "Die Maßnahme „" + titel + "“ konnte nicht abgeschlossen werden; den Grund nennen die Zeilen darüber. Sie können es jederzeit erneut versuchen.";
+        }
+
+        static string RueckwegFehlerSatz(string hinTitel)
+        {
+            return "„" + hinTitel + "“ ließ sich nicht rückgängig machen; den Grund nennen die Zeilen darüber. Die Sicherung bleibt liegen, Sie können es jederzeit erneut versuchen.";
+        }
+
+        /// <summary>Parameter als „a=1; b=2“ für das Protokoll (Werte sind Kennungen des Befunds, keine Geheimnisse).</summary>
+        static string ParameterText(Dictionary<string, string> parameter)
+        {
+            if (parameter == null || parameter.Count == 0) return "";
+            return string.Join("; ", parameter.Select(kv => kv.Key + "=" + kv.Value));
+        }
+
+        /// <summary>
+        /// Nur der Dateiname einer Sicherung nach dem Muster der Kennung rueckweg; null bei leer,
+        /// Pfadzeichen oder fremdem Muster. Ein voller Pfad aus den Werten des Helfers
+        /// (sicherung.datei) wird auf seinen Namen gekürzt: die Oberfläche und der Verlauf kennen
+        /// nur Namen, der Ort ist immer sicherungen\massnahmen.
+        /// </summary>
+        static string SicherungName(string sicherung)
+        {
+            if (string.IsNullOrEmpty(sicherung)) return null;
+            string name;
+            try { name = Path.GetFileName(sicherung); }
+            catch (Exception) { return null; }
+            return !string.IsNullOrEmpty(name) && SicherungNameRx.IsMatch(name) ? name : null;
+        }
+
+        /// <summary>
+        /// Voller Pfad einer Sicherungsdatei unter sicherungen\massnahmen, wenn sie dort liegt,
+        /// sonst null. Zusammengesetzt aus Ablage.Maschinenweit() (Entwurf 8.10), nicht über
+        /// Ablage.Unterordner oder Ablage.Sicherungen: die legten den Ordner an, und der gehört
+        /// dem erhöhten Helfer (eigene DACL). Liegt eine Ebene hinter einer Abzweigung, gilt
+        /// „nicht vorhanden“. Wirft nie.
+        /// </summary>
+        static string SicherungPfad(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return null;
+            try
+            {
+                string pfad = Path.Combine(Ablage.Maschinenweit(), "sicherungen", "massnahmen", name);
+                if (Ablage.IstAbzweigung(pfad)) return null;
+                return File.Exists(pfad) ? pfad : null;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Sicherung „" + name + "“ nicht prüfbar: " + ex.Message);
+                return null;
+            }
+        }
+
+        /// <summary>Die Hin-Maßnahme aus der Kennung im Dateinamen der Sicherung; null, wenn der Name das Muster nicht trägt oder der Katalog die Kennung nicht kennt.</summary>
+        static Massnahme HinMassnahme(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return null;
+            Match t = SicherungKennungRx.Match(name);
+            if (!t.Success) return null;
+            string kennung = t.Groups["k"].Value;
+            return kennung == KennungRueckweg ? null : Massnahmen.Finde(kennung);
+        }
+
         // ---------------------------------------------------------------- Helfer im Hauptweg
 
         /// <summary>
@@ -802,10 +1302,15 @@ namespace WartungsToolbox
             catch (Exception ex) { AppLog.Warn("Konsolenzeile nicht zustellbar: " + ex.Message); }
         }
 
-        void FlowCancelled()
+        /// <summary>
+        /// Abbruch-Ende eines Laufs: Protokoll-Ende, kein Nachlauf, flowCancelled. endeSatz ersetzt
+        /// den Satz der Ende-Zeile, wenn „nichts passiert“ nicht stimmt (Maßnahme mit schon
+        /// geschriebener Sicherung, MassnahmeErgebnisPruefen).
+        /// </summary>
+        void FlowCancelled(string endeSatz = null)
         {
             AppLog.Info("Ablauf abgebrochen.");
-            if (_protokoll != null) _protokoll.Schreibe(Protokoll.Host, Protokoll.Ende, "abgebrochen", "Abgebrochen. Ihrem PC ist nichts passiert.");
+            if (_protokoll != null) _protokoll.Schreibe(Protokoll.Host, Protokoll.Ende, "abgebrochen", endeSatz ?? "Abgebrochen. Ihrem PC ist nichts passiert.");
             // Wer abbricht, will erst recht nicht, dass der PC gleich ausgeht.
             _pendingPost = "none";
             UiPost(new { type = "flowCancelled" });
@@ -1076,8 +1581,14 @@ namespace WartungsToolbox
             };
         }
 
-        /// <summary>Stellt das Ergebnis zusammen und schickt es an die Oberfläche.</summary>
-        void PublishResult(string mode)
+        /// <summary>
+        /// Stellt das Ergebnis zusammen und schickt es an die Oberfläche. nachweis (nur bei mode
+        /// massnahme oder rueckweg, Entwurf 9.1) ist die Nachweiskarte; der Verlaufseintrag dieser
+        /// beiden Wege steht dann schon (MassnahmeAbschliessen: „Maßnahme: …“ mit Sicherungsdatei),
+        /// ein zweiter „Prüfung“-Eintrag wäre eine Lüge. neustart ergänzt das Feld restart, wenn
+        /// der Nachweis erst nach einem Neustart gilt.
+        /// </summary>
+        void PublishResult(string mode, object nachweis = null, bool neustart = false)
         {
             var zeilen = new List<object> { DateiZeile() };
             zeilen.AddRange(_ergebnisse.Select(Bereichszeile));
@@ -1088,15 +1599,18 @@ namespace WartungsToolbox
             int fragen = Alle.OffeneFragen(_ergebnisse).Count();
             bool fixable = _filesState == Zustand.Warn || _filesState == Zustand.Bad;
 
-            // Braucht der PC einen Neustart? Nur aus Befunden, die es ausdrücklich sagen.
+            // Braucht der PC einen Neustart? Nur aus Befunden, die es ausdrücklich sagen, aus
+            // der Reparatur der Windows-Dateien oder aus dem Nachweis einer Maßnahme.
             bool restart = befunde.Any(b => b.IstProblem && b.Schluessel != null && b.Schluessel.StartsWith("update.neustart"))
-                           || _filesNeustart;
+                           || _filesNeustart || neustart;
+            bool massnahme = mode == "massnahme" || mode == "rueckweg";
 
             if (mode != "answer")
             {
-                History.Add(mode == "fix" ? "Wartung" : (mode == "deep" ? "Tiefenprüfung" : (mode == "ergaenzt" ? "Prüfung (ergänzt)" : "Prüfung")),
-                            overall == Zustand.Ok ? "good" : (overall == Zustand.Bad ? "bad" : "warn"),
-                            problems == 0 ? "Ohne Befund" : problems + " Punkt(e) gefunden", 0);
+                if (!massnahme)
+                    History.Add(mode == "fix" ? "Wartung" : (mode == "deep" ? "Tiefenprüfung" : (mode == "ergaenzt" ? "Prüfung (ergänzt)" : "Prüfung")),
+                                overall == Zustand.Ok ? "good" : (overall == Zustand.Bad ? "bad" : "warn"),
+                                problems == 0 ? "Ohne Befund" : problems + " Punkt(e) gefunden", 0);
                 AppLog.Info("Ablauf " + mode + " beendet, Gesamturteil " + overall + ", " + problems + " Befund(e), " + fragen + " Frage(n), " + _adminFehlend + " Quelle(n) ohne Rechte.");
                 if (_protokoll != null)
                     _protokoll.Schreibe(Protokoll.Host, Protokoll.Ende, mode,
@@ -1120,6 +1634,8 @@ namespace WartungsToolbox
                 when = DateTime.Now.ToString("d. MMMM yyyy 'um' HH:mm 'Uhr'", new System.Globalization.CultureInfo("de-DE")),
                 checks = zeilen.ToArray(),
                 befunde = befunde.Select(BefundZeile).ToArray(),
+                // Nachweiskarte (Entwurf 9.1); null bei allen anderen Wegen, die Oberfläche zeigt sie nur bei mode massnahme|rueckweg.
+                nachweis = nachweis,
             });
 
             if (mode != "answer") NachlaufStarten();

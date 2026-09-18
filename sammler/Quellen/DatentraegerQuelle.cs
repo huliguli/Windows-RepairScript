@@ -324,7 +324,9 @@ namespace WartungsToolbox.Sammler.Quellen
                     if (k == null) { Sammler.Fehler(s, "registry.trim", Fehler.Fehlt, "Schlüssel Control\\FileSystem fehlt"); return; }
                     object v = k.GetValue("DisableDeleteNotification");
                     if (v == null) { ergebnis = true; return; }
-                    ergebnis = Convert.ToInt64(v, CultureInfo.InvariantCulture) == 0;
+                    // Nur Bit 0 (NTFS) zaehlt; Bit 1 gilt fuer ReFS. Eine Deutung fuer Sammler,
+                    // Regel und Helfer: Massnahmen.TrimAn (Kern), mit Rohwert 2 in den Kernproben belegt.
+                    ergebnis = Massnahmen.TrimAn(Convert.ToInt64(v, CultureInfo.InvariantCulture));
                 }
             });
             return ergebnis;

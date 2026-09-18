@@ -31,6 +31,44 @@ namespace WartungsToolbox.Kern.Regeln
     {
         public const string QuellePnp = "wmi.pnp";
 
+        // Massnahmen-Kennungen (kern/Massnahmen.cs): geraet.aktivieren ist Stufe 2 und haengt nur
+        // an Code 22 nach der Antwort "reparieren"; geraet.treiber.neu bleibt Rat bis M4.
+        public const string MAktivieren = "geraet.aktivieren";
+        public const string MTreiberNeu = "geraet.treiber.neu";
+
+        /// <summary>
+        /// Planparameter fuer geraet.aktivieren (docs/M3-ENTWURF.md, Abschnitt 1): die Instanz-Id
+        /// (Win32_PnPEntity.PNPDeviceID = DEVPKEY_Device_InstanceId), wie sie im Bild und im
+        /// Schluessel geraet.problem.&lt;instanzId&gt; steht. Der Helfer prueft sie erneut gegen sein
+        /// eigenes Bild; der Host prueft zusaetzlich die Antwort "reparieren".
+        /// </summary>
+        public const string ParamInstanzId = "instanzId";
+
+        /// <summary>
+        /// Instanz-Id, wie sie der Helfer fuer geraet.aktivieren annimmt (docs/M3-ENTWURF.md, Abschnitt
+        /// 8.5; helfer/Massnahmen/Hardware.cs ruft diese Funktion statt einer Kopie): nach dem Abschneiden
+        /// von Leerraum 1 bis 400 Zeichen aus Buchstaben, Ziffern und \ &amp; _ { } . # ( ) + , = @ ~ ! -
+        /// sowie Leerzeichen; kein doppelter, kein fuehrender und kein abschliessender Backslash.
+        /// Deckt PCI\VEN_8086&amp;DEV_...\3&amp;11583659&amp;0&amp;C8, USB\VID_...\5&amp;..., SWD\MMDEVAPI\{...}.{...};
+        /// nicht SWD\WPDBUSENUM\_??_USBSTOR#... (Fragezeichen) und nichts mit Apostroph, Anfuehrungszeichen,
+        /// Semikolon, Prozent oder Dollar. Reine Funktion, kein Windows-Zugriff.
+        /// </summary>
+        public static bool InstanzIdZulaessig(string instanzId)
+        {
+            if (string.IsNullOrEmpty(instanzId)) return false;
+            string t = instanzId.Trim();
+            if (t.Length == 0 || t.Length > 400) return false;
+            if (t.IndexOf("\\\\", StringComparison.Ordinal) >= 0 || t[0] == '\\' || t[t.Length - 1] == '\\') return false;
+            foreach (char c in t)
+            {
+                bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+                          || c == '\\' || c == '&' || c == '_' || c == '{' || c == '}' || c == '.' || c == '#'
+                          || c == '(' || c == ')' || c == '+' || c == ',' || c == '=' || c == '@' || c == '~' || c == '!' || c == '-' || c == ' ';
+                if (!ok) return false;
+            }
+            return true;
+        }
+
         public static BereichErgebnis Pruefen(Kontext ctx)
         {
             var s = ctx.S;
@@ -160,7 +198,7 @@ namespace WartungsToolbox.Kern.Regeln
                     {
                         b.Titel = "Gerät mit Treiberproblem";
                         b.Rat = "Den Treiber neu installieren, am besten die aktuelle Fassung vom Hersteller" + AnbieterZusatz(g) + ".";
-                        b.Massnahmen.Add("geraet.treiber.neu");
+                        b.Massnahmen.Add(MTreiberNeu);
                     }
                     else if (eintrag.Ursache == Problemcodes.Hardware)
                     {
@@ -189,8 +227,17 @@ namespace WartungsToolbox.Kern.Regeln
                         b.Zustand = Zustand.Bad;
                         b.Titel = code == 22 ? "Gerät ist abgeschaltet, soll aber laufen" : "Gerät läuft nicht, soll aber laufen";
                         b.Satz = "„" + name + "“ meldet Code " + code + " (" + eintrag.Bedeutung + "), und Sie haben festgelegt, dass es laufen soll.";
-                        b.Rat = ReparaturRat(code);
-                        if (code == 22) b.Massnahmen.Add("geraet.aktivieren");
+                        // Die Massnahme nur mit einer Instanz-Id, die der Helfer annimmt (InstanzIdZulaessig);
+                        // sonst bleibt der Rat, damit die Karte nichts verspricht, was mit Exit 2 endet.
+                        bool zulaessig = code == 22 && InstanzIdZulaessig(g.InstanzId);
+                        b.Rat = code == 22 && !zulaessig
+                            ? "Das Gerät im Geräte-Manager von Hand wieder aktivieren; seine Kennung enthält Zeichen, die das Programm nicht weitergibt, deshalb gibt es hier keine Maßnahme."
+                            : ReparaturRat(code);
+                        if (zulaessig)
+                        {
+                            b.Massnahmen.Add(MAktivieren);
+                            b.Parameter[ParamInstanzId] = g.InstanzId;
+                        }
                         b.Detail.Add("Ihre Antwort auf die Frage " + frageId + ": wieder einschalten.");
                         return b;
                     }

@@ -338,6 +338,10 @@ namespace WartungsToolbox.Sammler.Quellen
             var a = new Aufgabe();
             a.Pfad = Com.Wert(task, "Path") as string;
             a.Zustand = Convert.ToInt32(Com.Wert(task, "State"), CultureInfo.InvariantCulture);
+            // IRegisteredTask.Enabled: der Schalter selbst. TASK_STATE 1 (Disabled) fehlt, solange
+            // eine Instanz laeuft oder wartet; der Nachweis von leistung.aufgabe.deaktivieren liest
+            // deshalb zuerst Enabled (Systembild.Aufgabe.Aktiv) und erst ohne Wert den Zustand.
+            try { object en = Com.Wert(task, "Enabled"); if (en is bool) a.Aktiv = (bool)en; } catch (Exception) { }
             object lr = Com.Wert(task, "LastRunTime");
             // VT_DATE 0 = 30.12.1899 = nie gelaufen.
             if (lr is DateTime && ((DateTime)lr).Year > 1900) a.LetzterLaufUtc = Zeit.Utc((DateTime)lr);

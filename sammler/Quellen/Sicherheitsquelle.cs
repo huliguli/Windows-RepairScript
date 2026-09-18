@@ -49,6 +49,7 @@ namespace WartungsToolbox.Sammler.Quellen
             Ausschluesse(s, si);
             Funde(s, si);
             DrittAv(s, si);
+            DrittFirewall(s, si);
             Gesundheit(s, si);
             Firewall(s, si);
             Uac(s, si);
@@ -226,6 +227,35 @@ namespace WartungsToolbox.Sammler.Quellen
             });
         }
 
+        /// <summary>
+        /// root\SecurityCenter2 FirewallProduct: nur displayName der Fremdprodukte (die Regel haengt
+        /// sicherheit.firewall.einschalten nur ohne Fremd-Firewall an; die Windows-Firewall selbst
+        /// steht dort unter ihrem eigenen Namen). Fehlender Namespace: "fehlt", keine Fremd-Firewall.
+        /// </summary>
+        static void DrittFirewall(Systembild s, Sicherheit si)
+        {
+            Sammler.Versuch(s, "wmi.securitycenter2.firewall", () =>
+            {
+                List<ManagementObject> rows;
+                try { rows = Wmi.Abfrage(SecurityCenterNs, "SELECT displayName, instanceGuid FROM FirewallProduct"); }
+                catch (ManagementException ex) when (KlasseFehlt(ex))
+                {
+                    Sammler.Fehler(s, "wmi.securitycenter2.firewall", Fehler.Fehlt, "root\\SecurityCenter2 nicht vorhanden (Server-SKU?): " + ex.ErrorCode);
+                    return;
+                }
+                foreach (var mo in rows)
+                {
+                    string name = (Wmi.Str(mo, "displayName") ?? "").Trim();
+                    if (name.Length == 0) continue;
+                    if (name.StartsWith("Windows Defender", StringComparison.OrdinalIgnoreCase)
+                        || name.StartsWith("Microsoft Defender", StringComparison.OrdinalIgnoreCase)
+                        || name.StartsWith("Windows-Firewall", StringComparison.OrdinalIgnoreCase)
+                        || name.StartsWith("Windows Firewall", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!si.DrittFirewall.Contains(name)) si.DrittFirewall.Add(name);
+                }
+            });
+        }
+
         // WscGetSecurityProviderHealth (Doku: wscapi/nf-wscapi-wscgetsecurityproviderhealth):
         // Providers ist WSC_SECURITY_PROVIDER (ANTIVIRUS = 4), pHealth ein
         // WSC_SECURITY_PROVIDER_HEALTH (0 GOOD, 1 NOTMONITORED, 2 POOR, 3 SNOOZE). Rueckgabe S_OK
@@ -367,6 +397,9 @@ namespace WartungsToolbox.Sammler.Quellen
                     int? policy = p == null ? (int?)null : RegInt(p, "EnableSmartScreen");
                     if (policy.HasValue)
                     {
+                        // Herkunft fuer die Regel: eine Richtlinie kann die Massnahme nicht umstellen
+                        // (der Helfer lehnt sie ab), die Karte sagt dann, wer sie gesetzt hat.
+                        si.SmartScreenHerkunft = "richtlinie";
                         if (policy.Value == 0) { si.SmartScreen = "Off"; return; }
                         string stufe = RegStr(p, "ShellSmartScreenLevel");
                         si.SmartScreen = string.Equals(stufe, "Block", StringComparison.OrdinalIgnoreCase) ? "Block" : "Warn";
@@ -377,6 +410,7 @@ namespace WartungsToolbox.Sammler.Quellen
                 {
                     string v = k == null ? null : RegStr(k, "SmartScreenEnabled");
                     if (string.IsNullOrEmpty(v)) { Sammler.Fehler(s, "registry.smartscreen", Fehler.Fehlt, "weder Richtlinie noch Explorer\\SmartScreenEnabled vorhanden"); return; }
+                    si.SmartScreenHerkunft = "lokal";
                     if (v.Equals("Off", StringComparison.OrdinalIgnoreCase)) si.SmartScreen = "Off";
                     else if (v.Equals("Block", StringComparison.OrdinalIgnoreCase) || v.Equals("RequireAdmin", StringComparison.OrdinalIgnoreCase)) si.SmartScreen = "Block";
                     else if (v.Equals("Warn", StringComparison.OrdinalIgnoreCase) || v.Equals("Prompt", StringComparison.OrdinalIgnoreCase)) si.SmartScreen = "Warn";

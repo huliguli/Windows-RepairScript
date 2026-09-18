@@ -16,6 +16,16 @@ namespace WartungsToolbox.Kern.Regeln
     /// </summary>
     public static class Speicherplatz
     {
+        /// <summary>Kennung der Ansicht "Wo steckt der Platz?" (kern/Massnahmen.cs, Art ansicht; Helfer-Kennung fuer das Aufraeumen).</summary>
+        public const string MAufraeumen = "speicher.aufraeumen";
+
+        /// <summary>
+        /// Der Befund handelt von einem Laufwerk: der Buchstabe steht als Parameter dabei (derselbe
+        /// Name wie bei den Volume-Massnahmen, docs/M3-ENTWURF.md, Abschnitt 1), damit die Ansicht
+        /// weiss, welches Laufwerk gemeint war. Die Massnahme selbst braucht keinen Parameter.
+        /// </summary>
+        public const string ParamBuchstabe = Datentraeger.ParamBuchstabe;
+
         public static BereichErgebnis Pruefen(Kontext ctx)
         {
             var s = ctx.S;
@@ -53,7 +63,8 @@ namespace WartungsToolbox.Kern.Regeln
                         "Auf " + lw + " sind nur noch " + zahlen + "; unter " + Text.Pct(Schwellen.PlatzBadPct) + " oder " + Text.Gb((long)(Schwellen.PlatzBadGb * 1073741824)) + " arbeitet Windows unzuverlässig.",
                         "Räumen Sie " + lw + " auf: Papierkorb, Downloads und temporäre Dateien leeren, große Dateien auf ein anderes Laufwerk verschieben.",
                         "Win32_Volume.FreeSpace", Messwert.Von(Math.Round(freiGb, 1), "GB frei", ">= " + Schwellen.PlatzBadGb + " GB und >= " + Text.Pct(Schwellen.PlatzBadPct)));
-                    b.Massnahmen.Add("speicher.aufraeumen");
+                    b.Massnahmen.Add(MAufraeumen);
+                    b.Parameter[ParamBuchstabe] = v.Buchstabe;
                 }
                 else if (freiPct < Schwellen.PlatzWarnPct)
                 {
@@ -61,7 +72,8 @@ namespace WartungsToolbox.Kern.Regeln
                         "Auf " + lw + " sind noch " + zahlen + "; unter " + Text.Pct(Schwellen.PlatzWarnPct) + " wird es knapp.",
                         "Räumen Sie " + lw + " bei Gelegenheit auf, bevor der Platz ernsthaft fehlt.",
                         "Win32_Volume.FreeSpace", Messwert.Von(Math.Round(freiPct, 1), "% frei", ">= " + Text.Pct(Schwellen.PlatzWarnPct)));
-                    b.Massnahmen.Add("speicher.aufraeumen");
+                    b.Massnahmen.Add(MAufraeumen);
+                    b.Parameter[ParamBuchstabe] = v.Buchstabe;
                 }
                 else
                 {

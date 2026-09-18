@@ -130,6 +130,7 @@ try {
     $sources += Get-ChildItem 'host\*.cs' | ForEach-Object { 'host\' + $_.Name }
     $sources += Get-ChildItem 'src\*.cs' | ForEach-Object { 'src\' + $_.Name }
     $sources += Get-ChildItem 'helfer\*.cs' -ErrorAction SilentlyContinue | ForEach-Object { 'helfer\' + $_.Name }
+    $sources += Get-ChildItem 'helfer\Massnahmen\*.cs' -ErrorAction SilentlyContinue | ForEach-Object { 'helfer\Massnahmen\' + $_.Name }
     $sources += Get-ChildItem 'kern\*.cs' | ForEach-Object { 'kern\' + $_.Name }
     $sources += Get-ChildItem 'kern\Regeln\*.cs' | ForEach-Object { 'kern\Regeln\' + $_.Name }
     $sources += Get-ChildItem 'sammler\*.cs' | Where-Object { $_.Name -ne 'AufzeichnenCli.cs' } | ForEach-Object { 'sammler\' + $_.Name }

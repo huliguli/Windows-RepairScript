@@ -15,6 +15,12 @@ namespace WartungsToolbox.Kern.Regeln
     ///   - Ein Fremd-Virenschutz macht einen passiven Defender zur Normalitaet, nicht zum Befund;
     ///     ob das Fremdprodukt wirkt, sagt die Gesundheitszahl des Sicherheitscenters (WSC),
     ///     und ein Defender im Normalmodus ist der Schutz, auch wenn daneben etwas registriert ist.
+    ///   - Dasselbe fuer die Firewall: eine in SecurityCenter2 registrierte Fremd-Firewall macht
+    ///     abgeschaltete Windows-Profile zur Normalitaet; "Firewall einschalten" gibt es dann nicht
+    ///     (die Massnahme stellte die zweite Firewall neben die erste, und als Freigabe wiederholte
+    ///     die geplante Wartung das nach jedem Eingriff der Suite).
+    ///   - Eine Einstellung, die aus einer Richtlinie stammt (RDP, NLA, SmartScreen), bekommt keine
+    ///     Massnahme, die den lokalen Wert setzt: der wirkt dort nicht, der Helfer lehnt ab.
     ///   - Ausschluesse, Konten ohne Kennwortpflicht, RDP: nur melden. Nichts davon wird
     ///     "repariert", weil jede dieser Einstellungen eine Absicht sein kann.
     ///   - Der Laie liest Titel, Satz, Rat; Fachbegriffe stehen in Detail.
@@ -32,8 +38,9 @@ namespace WartungsToolbox.Kern.Regeln
         const int GesundheitNichtUeberwacht = 1; // WSC_SECURITY_PROVIDER_HEALTH_NOTMONITORED (Doku wscapi.h)
         const int GesundheitSchlummert = 3;   // WSC_SECURITY_PROVIDER_HEALTH_SNOOZE
         const string ModusNormal = "Normal";  // MSFT_MpComputerStatus.AMRunningMode: feste englische Marke (Doku: Normal, Passive, EDR Block Mode)
-        const string RdpAusRichtlinie = "richtlinie"; // Sicherheit.RdpHerkunft
+        const string AusRichtlinie = "richtlinie"; // Sicherheit.RdpHerkunft, RdpNlaHerkunft, SmartScreenHerkunft
         const string QuelleWsc = "WscGetSecurityProviderHealth(WSC_SECURITY_PROVIDER_ANTIVIRUS)";
+        const string QuelleWscFirewall = "WscGetSecurityProviderHealth(WSC_SECURITY_PROVIDER_FIREWALL)";
         const string EinheitWsc = "WSC_SECURITY_PROVIDER_HEALTH";
 
         public const string MassnahmeSignaturen = "sicherheit.signaturen.aktualisieren";
@@ -42,12 +49,19 @@ namespace WartungsToolbox.Kern.Regeln
         public const string MassnahmeUac = "sicherheit.uac.standard";
         public const string MassnahmeSmartScreen = "sicherheit.smartscreen.warn";
 
+        /// <summary>
+        /// Planparameter fuer sicherheit.firewall.einschalten (docs/M3-ENTWURF.md, Abschnitt 1): das
+        /// Profil als Zahl wie in NET_FW_PROFILE_TYPE2 (1 Domaene, 2 privat, 4 oeffentlich). Je Profil
+        /// entsteht ein eigener Befund sicherheit.firewall.aus.&lt;profil&gt;, der Wert steht daneben.
+        /// </summary>
+        public const string ParamProfil = "profil";
+
         public static BereichErgebnis Pruefen(Kontext ctx)
         {
             var s = ctx.S;
             var si = s.Sicherheit;
             var e = new BereichErgebnis { Bereich = Bereich.Sicherheit };
-            e.DatenVorhanden = si.Defender != null || si.DrittAv.Count > 0 || si.Firewall.Count > 0 || si.VirenschutzGesundheit.HasValue;
+            e.DatenVorhanden = si.Defender != null || si.DrittAv.Count > 0 || si.Firewall.Count > 0 || si.DrittFirewall.Count > 0 || si.VirenschutzGesundheit.HasValue;
 
             Virenschutz(ctx, si, e);
             Signaturen(ctx, si, e);
@@ -409,15 +423,27 @@ namespace WartungsToolbox.Kern.Regeln
             }
         }
 
+        /// <summary>
+        /// Je ausgeschaltetem Profil ein warn-Befund mit "Firewall einschalten" - aber nur, wenn
+        /// keine Fremd-Firewall in SecurityCenter2 registriert ist. Ist eine registriert, ist das
+        /// abgeschaltete Windows-Profil vorgesehen (die Suite verwaltet), und es gibt einen Befund
+        /// ueber die Fremd-Firewall ohne Kennung (FremdFirewall). Das Gegenstueck zu DrittAv beim
+        /// Virenschutz; bis 18.09.2026 fehlte es, und die Massnahme haette die Windows-Firewall neben
+        /// die Suite gestellt, als Freigabe jede Nacht erneut.
+        /// </summary>
         static void Firewall(Kontext ctx, Kern.Sicherheit si, BereichErgebnis e)
         {
             if (si.Firewall.Count == 0) { e.Fehlend.Add("Firewall-Status"); return; }
-            bool alleAn = true;
+            bool fremd = si.DrittFirewall.Count > 0;
+            var aus = new List<FirewallProfil>();
             foreach (var p in si.Firewall)
             {
                 if (!p.An)
                 {
-                    alleAn = false;
+                    aus.Add(p);
+                    // FremdFirewall() unten: ein Befund fuer alle ausgeschalteten Profile. Die Standardaktion
+                    // eingehend eines Profils, das die Suite abgeschaltet hat, wird nicht bewertet (sie wirkt nicht).
+                    if (fremd) continue;
                     // Eingehend null heisst: der Sammler ist auf MSFT_NetFirewallProfile zurueckgefallen.
                     bool wirksam = p.Eingehend.HasValue;
                     var b = Neu(e, "sicherheit.firewall.aus." + p.Profil, Zustand.Warn,
@@ -427,7 +453,9 @@ namespace WartungsToolbox.Kern.Regeln
                         wirksam ? "INetFwPolicy2.FirewallEnabled[" + p.Profil + "]" : "MSFT_NetFirewallProfile.Enabled",
                         Messwert.Von(0, wirksam ? "FirewallEnabled" : "Enabled", "1"));
                     if (!wirksam) b.Detail.Add("Gespeicherter Zustand aus MSFT_NetFirewallProfile.Enabled (Rückfall), nicht der wirksame.");
+                    b.Detail.Add("SecurityCenter2.FirewallProduct: kein Fremdprodukt registriert (oder von einer älteren Aufzeichnung nicht gelesen).");
                     b.Massnahmen.Add(MassnahmeFirewall);
+                    b.Parameter[ParamProfil] = p.Profil.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 }
                 if (p.Eingehend.HasValue && p.Eingehend.Value == EingehendErlauben)
                 {
@@ -439,7 +467,8 @@ namespace WartungsToolbox.Kern.Regeln
                     b.Detail.Add("NET_FW_ACTION: 0 Block, 1 Allow (Doku INetFwPolicy2).");
                 }
             }
-            if (alleAn)
+            if (aus.Count > 0 && fremd) { FremdFirewall(ctx, si, aus, e); return; }
+            if (aus.Count == 0)
             {
                 bool eingehendBekannt = si.Firewall.All(p => p.Eingehend.HasValue);
                 var b = Neu(e, "sicherheit.firewall.an", Zustand.Ok,
@@ -448,7 +477,70 @@ namespace WartungsToolbox.Kern.Regeln
                     null, eingehendBekannt ? "INetFwPolicy2.FirewallEnabled" : "MSFT_NetFirewallProfile.Enabled",
                     Messwert.Von(si.Firewall.Count, "Profile an", si.Firewall.Count.ToString()));
                 if (!eingehendBekannt) b.Detail.Add("Standardaktion eingehend nicht gelesen (Rückfall auf den gespeicherten Zustand, nicht den wirksamen).");
+                if (fremd) b.Detail.Add("SecurityCenter2.FirewallProduct: zusätzlich registriert " + FirewallNamen(si) + "; die Windows-Firewall ist trotzdem in allen Profilen an, beide filtern.");
             }
+        }
+
+        static string FirewallNamen(Kern.Sicherheit si)
+        {
+            return string.Join(", ", si.DrittFirewall.Select(n => "„" + n + "“"));
+        }
+
+        /// <summary>
+        /// Eine Fremd-Firewall ist in SecurityCenter2 registriert (FirewallProduct) und mindestens ein
+        /// Windows-Profil ist aus: Suiten wie Norton, ESET, Bitdefender oder Kaspersky uebernehmen die
+        /// Verwaltung und schalten die Windows-Firewall in allen Profilen ab (die Systemsteuerung zeigt
+        /// dann "wird von der Herstelleranwendung verwaltet"). Deshalb ein Befund fuer alle
+        /// ausgeschalteten Profile zusammen, ohne Kennung und ohne Parameter. Ob die Fremd-Firewall
+        /// wirkt, sagt wie beim Virenschutz die WSC-Gesundheit, hier des Providers FIREWALL (1):
+        /// GOOD ok, POOR warn mit Rat, SNOOZE warn, sonst nicht messbar (unknown plus Fehlend).
+        /// productState wird nie gedeutet. POOR ist warn und nicht bad, weil auch ein ausgeschaltetes
+        /// Windows-Profil ohne Fremdprodukt nur warn ist.
+        /// </summary>
+        static void FremdFirewall(Kontext ctx, Kern.Sicherheit si, List<FirewallProfil> aus, BereichErgebnis e)
+        {
+            int? g = si.FirewallGesundheit;
+            string namen = FirewallNamen(si);
+            string wer = si.DrittFirewall.Count == 1 ? namen : si.DrittFirewall.Count + " Firewall-Programme (" + namen + ")";
+            string zaehlung = aus.Count + " von " + si.Firewall.Count + " Netzwerkprofilen (" + string.Join(", ", aus.Select(p => "„" + ProfilName(p.Profil) + "“")) + ")";
+            Befund b;
+            if (g == Schwellen.VirenschutzGesundheitSchlecht)
+            {
+                b = Neu(e, "sicherheit.firewall.fremd.aus", Zustand.Warn,
+                    "Die Firewall ist abgeschaltet oder abgelaufen",
+                    wer + " ist als Firewall registriert, aber das Sicherheitscenter von Windows stuft die Firewall als unzureichend ein; das Programm ist abgeschaltet oder die Lizenz abgelaufen, und die Windows-Firewall ist in " + zaehlung + " aus, in diesen Netzen ist der PC ohne Firewall erreichbar.",
+                    "Das Firewall-Programm einschalten oder verlängern; wird es nicht mehr gebraucht, deinstallieren und danach die Windows-Firewall in „Windows-Sicherheit“ wieder einschalten.",
+                    QuelleWscFirewall, Messwert.Von(g.Value, EinheitWsc, "0 = GOOD"));
+            }
+            else if (g == GesundheitSchlummert)
+            {
+                b = Neu(e, "sicherheit.firewall.fremd.pausiert", Zustand.Warn,
+                    "Die Firewall ist vorübergehend ausgeschaltet",
+                    wer + " ist als Firewall registriert, aber im Sicherheitscenter von Windows auf „Schlummern“ gestellt; die Windows-Firewall ist in " + zaehlung + " aus, bis das Programm wieder eingeschaltet wird, läuft der PC in diesen Netzen ohne Firewall.",
+                    "Das Firewall-Programm wieder einschalten, wenn die Pause nicht mehr gebraucht wird.",
+                    QuelleWscFirewall, Messwert.Von(g.Value, EinheitWsc, "0 = GOOD"));
+            }
+            else if (g == Schwellen.VirenschutzGesundheitGut)
+            {
+                b = Neu(e, "sicherheit.firewall.fremd", Zustand.Ok,
+                    "Firewall eines anderen Herstellers",
+                    wer + " ist als Firewall registriert und laut Sicherheitscenter in Ordnung; die Windows-Firewall ist deshalb in " + zaehlung + " aus, das ist bei einer Firewall eines anderen Herstellers vorgesehen.",
+                    null, QuelleWscFirewall, Messwert.Von(g.Value, EinheitWsc, "0 = GOOD"));
+            }
+            else
+            {
+                // Gesundheit nicht gemessen (kein wscsvc, Zeit, aeltere Aufzeichnung) oder NOTMONITORED:
+                // die Fremd-Firewall bleibt sichtbar, aber ohne Urteil - ok waere erfunden, warn auch.
+                b = Neu(e, "sicherheit.firewall.fremd", Zustand.Unknown,
+                    "Firewall eines anderen Herstellers",
+                    wer + " ist als Firewall registriert, die Windows-Firewall ist deshalb in " + zaehlung + " aus; ob das Programm aktiv und aktuell ist, ließ sich nicht messen.",
+                    "Öffnen Sie „Windows-Sicherheit“ und prüfen Sie, ob die Firewall dort grün ist.",
+                    "SecurityCenter2.FirewallProduct.displayName", Messwert.Von(si.DrittFirewall.Count, "Produkte", null));
+                e.Fehlend.Add("Zustand der Fremd-Firewall (" + (g == GesundheitNichtUeberwacht ? "vom Sicherheitscenter nicht überwacht" : Grund(ctx.S, "api.wsc.firewall")) + ")");
+            }
+            b.Detail.Add("FirewallEnabled je Profil: " + string.Join(", ", si.Firewall.Select(p => ProfilName(p.Profil) + " " + (p.An ? "1" : "0"))) + " (INetFwPolicy2, im Rückfall MSFT_NetFirewallProfile).");
+            b.Detail.Add("Sicherheitscenter (WSC, Provider FIREWALL): " + (g.HasValue ? GesundheitText(g.Value) : "nicht gemessen") + "; der Zustand des Fremdprodukts (productState) ist nicht dokumentiert und wird nicht gedeutet.");
+            b.Detail.Add("Keine Maßnahme „Firewall einschalten“: sie stellte die Windows-Firewall neben die registrierte, und die Suite schaltet sie danach meist wieder ab.");
         }
 
         // ------------------------------------------------------------------ UAC, SmartScreen, Secure Boot
@@ -472,16 +564,36 @@ namespace WartungsToolbox.Kern.Regeln
             b.Massnahmen.Add(MassnahmeUac);
         }
 
+        /// <summary>
+        /// "Off" aus der Richtlinie (EnableSmartScreen = 0) bekommt keine Kennung: der Helfer setzt
+        /// nur Explorer\SmartScreenEnabled, und den ueberstimmt die Richtlinie; er lehnt deshalb vor
+        /// dem Eingriff ab. Ein Knopf, der immer in UAC-Dialog und "Nachweis nicht bestanden" muendet,
+        /// ist keiner. Quelle und Rat nennen die Richtlinie, wie bei RDP. Herkunft "lokal" oder nicht
+        /// gelesen (aeltere Aufzeichnung): wie bisher, mit Kennung.
+        /// </summary>
         static void SmartScreen(Kontext ctx, Kern.Sicherheit si, BereichErgebnis e)
         {
             if (si.SmartScreen == null) { e.Fehlend.Add("SmartScreen"); return; }
             if (si.SmartScreen != "Off") return;
+            bool verwaltet = si.SmartScreenHerkunft == AusRichtlinie;
+            if (verwaltet)
+            {
+                var v = Neu(e, "sicherheit.smartscreen.aus", Zustand.Warn,
+                    "SmartScreen ist per Richtlinie ausgeschaltet",
+                    "Der Download- und App-Filter SmartScreen ist über eine Richtlinie abgeschaltet; unbekannte Programme starten ohne Warnung, und ein lokal gesetzter Wert wirkt nicht.",
+                    "Die Richtlinie EnableSmartScreen zurücknehmen: in einer Domäne der Administrator über die Gruppenrichtlinie, auf einem Einzelplatz-PC meist das Datenschutz- oder Optimierungsprogramm, das sie gesetzt hat; erst danach lässt sich SmartScreen wieder auf „Warnen“ stellen.",
+                    "Policies\\System.EnableSmartScreen", Messwert.Von(0, "EnableSmartScreen", "1"));
+                v.Detail.Add("Herkunft: Richtlinie (SOFTWARE\\Policies\\Microsoft\\Windows\\System, EnableSmartScreen = 0); Explorer\\SmartScreenEnabled wurde deshalb nicht gelesen und wirkt nicht.");
+                v.Detail.Add("Keine Maßnahme: der Helfer setzt nur Explorer\\SmartScreenEnabled und lehnt das unter dieser Richtlinie vor dem Eingriff ab.");
+                return;
+            }
             var b = Neu(e, "sicherheit.smartscreen.aus", Zustand.Warn,
                 "SmartScreen ist ausgeschaltet",
                 "Der Download- und App-Filter SmartScreen ist aus; unbekannte Programme starten ohne Warnung.",
                 "SmartScreen wieder auf „Warnen“ stellen.",
                 "Explorer.SmartScreenEnabled", Messwert.Von(si.SmartScreen, null, "Warn"));
             b.Detail.Add("Feste Marken: Warn, Block, Off (Registry Explorer\\SmartScreenEnabled bzw. Richtlinie EnableSmartScreen).");
+            b.Detail.Add("Herkunft: " + (si.SmartScreenHerkunft == null ? "nicht gelesen (ältere Aufzeichnung); eine Richtlinie EnableSmartScreen = 0 wiese der Helfer vor dem Eingriff ab" : "lokal (Explorer\\SmartScreenEnabled), keine Richtlinie EnableSmartScreen gesetzt") + ".");
             b.Massnahmen.Add(MassnahmeSmartScreen);
         }
 
@@ -545,14 +657,14 @@ namespace WartungsToolbox.Kern.Regeln
             if (si.RdpAn.Value == false) return;
             // Stammt der Schalter aus der Richtlinie, ist die Einstellung verwaltet: der Rat
             // "unter Einstellungen ausschalten" waere dann falsch.
-            bool verwaltet = si.RdpHerkunft == RdpAusRichtlinie;
+            bool verwaltet = si.RdpHerkunft == AusRichtlinie;
             string quelle = verwaltet ? "Policies\\Terminal Services.fDenyTSConnections" : "Terminal Server.fDenyTSConnections";
             string herkunft = verwaltet ? "Richtlinie (SOFTWARE\\Policies\\Microsoft\\Windows NT\\Terminal Services)" : si.RdpHerkunft == null ? "nicht gelesen" : "lokal (Control\\Terminal Server)";
             if (si.RdpNla == false)
             {
                 // Auch die NLA-Einstellung kann verwaltet sein (eigene Herkunft): dann hilft kein
                 // Klick unter "Einstellungen", nur die Richtlinie.
-                bool nlaVerwaltet = si.RdpNlaHerkunft == RdpAusRichtlinie;
+                bool nlaVerwaltet = si.RdpNlaHerkunft == AusRichtlinie;
                 string rat = nlaVerwaltet
                     ? "Die Authentifizierung auf Netzwerkebene ist per Richtlinie abgeschaltet; das lässt sich nur dort ändern (Administrator der Domäne oder Gruppenrichtlinie)."
                     : verwaltet

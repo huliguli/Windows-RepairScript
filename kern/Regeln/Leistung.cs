@@ -22,6 +22,15 @@ namespace WartungsToolbox.Kern.Regeln
     /// und Ordner, eigene Aufgaben des Programms nie). Ein Eintrag, dessen Datei fehlt, startet
     /// nichts und zaehlt nicht. Fehlt eine Quelle laut fehlerliste, ist die Zahl nur eine Unter-
     /// oder Obergrenze, und das Urteil sagt das, statt ok oder warn zu behaupten.
+    /// Seit M3 (v8.2): ist die Sammelkarte warn, bekommt jeder gezaehlte Eintrag eine eigene
+    /// ok-Karte leistung.autostart.eintrag.&lt;hash&gt; mit der Massnahme und ihren Parametern
+    /// (StartupApproved-Schalter, schtasks /DISABLE, Startart Manual), damit der Nutzer einzeln
+    /// entscheidet und nicht "alle 20 auf einmal". Die Sammelkarte selbst traegt keine Kennung.
+    /// Eine Karte bekommt die Massnahme nur, wenn der Helfer den Parameter annimmt (Wertname,
+    /// Dienstname, Aufgabenpfad: die Pruefungen stehen hier, der Helfer ruft dieselben auf) und
+    /// der Dienst keine Schutzsoftware ist (Netz.IstAvHersteller ueber Signierer oder Anzeigename,
+    /// dazu NenntSchutzprodukt ueber die im Sicherheitscenter registrierten Namen aus
+    /// Sicherheit.DrittAv): ein Virenschutz, der nur noch auf Anforderung startet, ist keiner mehr.
     /// </summary>
     public static class Leistung
     {
@@ -211,6 +220,28 @@ namespace WartungsToolbox.Kern.Regeln
 
         // ---------------------------------------------------------------- Autostart
 
+        // Kennungen aus kern/Massnahmen.cs (docs/M3-ENTWURF.md, Abschnitt 1 und 8.5). Die Sammelkarte
+        // leistung.autostart.anzahl traegt keine Kennung (ihre Detailzeile verweist auf die
+        // Einzelkarten); ausfuehrbar sind nur die drei Kennungen unten, je Eintrag eine eigene Karte.
+        // leistung.winlogon.zuruecksetzen ist Rat (Stufe 3) an den Winlogon-Befunden.
+        public const string MAutostartDeaktivieren = "leistung.autostart.deaktivieren";
+        public const string MAufgabeDeaktivieren = "leistung.aufgabe.deaktivieren";
+        public const string MDienstStartart = "leistung.dienst.startart";
+        public const string MWinlogonZuruecksetzen = "leistung.winlogon.zuruecksetzen";
+
+        /// <summary>
+        /// Planparameter der drei Autostart-Massnahmen (docs/M3-ENTWURF.md, Abschnitt 1):
+        /// Startprogramm hive (HKCU|HKLM), ort (Run|Run32|StartupFolder), name (Wertname im
+        /// StartupApproved-Schluessel = Registry-Wertname bzw. Dateiname im Autostart-Ordner);
+        /// Aufgabe pfad (Aufgabenplanung, z. B. \Fremd\Update); Dienst name (Win32_Service.Name)
+        /// und startart (Zielwert, hier immer Manual).
+        /// </summary>
+        public const string ParamHive = "hive", ParamOrt = "ort", ParamName = "name", ParamPfad = "pfad", ParamStartart = "startart";
+        public const string StartartManuell = "Manual";
+
+        /// <summary>Schluessel-Praefix der Einzelkarten: leistung.autostart.eintrag.&lt;12 Hex aus Quelle und Name&gt;.</summary>
+        public const string SchluesselEintrag = "leistung.autostart.eintrag.";
+
         static void Autostarts(Kontext ctx, BereichErgebnis e)
         {
             var s = ctx.S;
@@ -218,6 +249,10 @@ namespace WartungsToolbox.Kern.Regeln
             var liste = new List<string>();
             var verwaist = new List<string>();
             var eigene = new List<string>();
+            // Dieselben Eintraege noch einmal als Objekte: aus ihnen entstehen bei warn die Einzelkarten.
+            var fremdEintraege = new List<AutostartEintrag>();
+            var fremdAufgaben = new List<Aufgabe>();
+            var fremdDienste = new List<Dienst>();
 
             // Startprogramme: Aktiviert != false (null = kein StartupApproved-Eintrag = aktiv), mit Befehl (ein
             // leerer Run-Wert, gemessen "GalaxyClient" = "", startet nichts), Datei vorhanden, nicht von Microsoft.
@@ -225,19 +260,22 @@ namespace WartungsToolbox.Kern.Regeln
             {
                 string zeile = x.Quelle + ": " + x.Name + " = " + x.Befehl;
                 if (x.DateiVorhanden == false) { verwaist.Add(zeile); continue; }
-                if (EintragFremd(x)) liste.Add(zeile + " (" + (x.Microsoft == null && string.IsNullOrEmpty(x.Signierer) ? "Signatur nicht prüfbar" : Herausgeber(x.Signierer)) + ")");
+                if (EintragFremd(x)) { liste.Add(zeile + " (" + Herkunft(x) + ")"); fremdEintraege.Add(x); }
             }
 
-            // Aufgaben mit Anmelde- oder Start-Ausloeser, nicht deaktiviert (TASK_STATE 1), nicht von Microsoft, nicht die eigenen.
-            foreach (var t in A.Aufgaben.Where(t => (t.Logon || t.Boot) && t.Zustand != 1))
+            // Aufgaben mit Anmelde- oder Start-Ausloeser, nicht deaktiviert, nicht von Microsoft, nicht die eigenen.
+            foreach (var t in A.Aufgaben.Where(t => (t.Logon || t.Boot) && AufgabeAktiv(t)))
             {
                 if (t.Eigen) { eigene.Add(t.Pfad); continue; }
-                if (!AufgabeMicrosoft(t)) liste.Add("Aufgabe " + t.Pfad + " (" + (t.Autor ?? "ohne Autor") + ", " + (t.Logon ? "bei Anmeldung" : "beim Start") + ")");
+                if (!AufgabeMicrosoft(t)) { liste.Add("Aufgabe " + t.Pfad + " (" + (t.Autor ?? "ohne Autor") + ", " + (t.Logon ? "bei Anmeldung" : "beim Start") + ")"); fremdAufgaben.Add(t); }
             }
 
             // Dienste mit Startart Auto, deren Binaerdatei nicht von Microsoft signiert ist (null = nicht pruefbar, zaehlt nicht).
             foreach (var d in A.Dienste.Where(d => string.Equals(d.Startart, "Auto", StringComparison.OrdinalIgnoreCase) && d.Microsoft == false))
+            {
                 liste.Add("Dienst " + d.Name + " (" + Herausgeber(d.Signierer) + (d.Verzoegert ? ", verzögert" : "") + ")");
+                fremdDienste.Add(d);
+            }
 
             int n = liste.Count;
             bool warn = n > Schwellen.AutostartsWarn;
@@ -255,6 +293,12 @@ namespace WartungsToolbox.Kern.Regeln
             }
             string zustand = warn ? (obergrenze ? Zustand.Unknown : Zustand.Warn) : (untergrenze ? Zustand.Unknown : Zustand.Ok);
 
+            // Einzelkarten nur bei warn: ohne Urteil (unknown) gibt es nichts abzuschalten, und bei ok
+            // stuende neben einem "unauffaellig" ein Dutzend Schalter. Die im Sicherheitscenter
+            // registrierten Schutzprogramme entscheiden mit, welcher Dienst keinen Schalter bekommt.
+            var drittAv = s.Sicherheit == null ? new List<string>() : s.Sicherheit.DrittAv;
+            var einzel = zustand == Zustand.Warn ? Einzelbefunde(fremdEintraege, fremdAufgaben, fremdDienste, drittAv) : new List<Befund>();
+
             var detail = new List<string>(liste);
             if (luecken.Count > 0) detail.Add("Nicht lesbar: " + string.Join(", ", luecken) + " (die Zahl ist deshalb " + (obergrenze && untergrenze ? "weder Unter- noch Obergrenze" : obergrenze ? "eine Obergrenze" : "eine Untergrenze") + ")");
             if (!A.AufgabenVollstaendig) detail.Add("Aufgaben ohne Administratorrechte gelesen: rund ein Viertel ist dann nicht sichtbar.");
@@ -262,6 +306,13 @@ namespace WartungsToolbox.Kern.Regeln
             if (deaktiviert > 0) detail.Add("Bereits deaktivierte Startprogramme (Task-Manager): " + deaktiviert);
             if (verwaist.Count > 0) detail.Add("Einträge, deren Datei nicht gefunden wurde (starten nichts, Rest einer Deinstallation; nicht gezählt): " + string.Join("; ", verwaist));
             if (eigene.Count > 0) detail.Add("Eigene Aufgaben dieses Programms (nicht gezählt): " + string.Join(", ", eigene));
+            if (einzel.Count > 0)
+            {
+                int mitSchalter = einzel.Count(k => k.Massnahmen.Count > 0);
+                detail.Add("Je Eintrag folgt eine eigene Karte (" + einzel.Count + " von " + n + "), davon " + mitSchalter + " mit dem Schalter zum Abschalten"
+                           + (mitSchalter < einzel.Count ? " und " + (einzel.Count - mitSchalter) + " nur mit Rat (Schutzsoftware oder ein Name, den das Programm nicht weitergibt)" : "")
+                           + "; Einträge unter RunOnce laufen nur einmal und haben keinen Schalter.");
+            }
 
             string was = " Programme, Aufgaben und Dienste von Fremdherstellern starten automatisch mit Windows";
             string nichtLesbar = "nicht lesbar: " + string.Join(", ", luecken);
@@ -286,8 +337,331 @@ namespace WartungsToolbox.Kern.Regeln
                 Satz = satz,
                 Rat = zustand == Zustand.Warn ? "Startprogramme, die nicht täglich gebraucht werden, deaktivieren (im Task-Manager unter Autostart oder hier nach Vorschau); sie lassen sich jederzeit wieder einschalten." : null,
                 Detail = detail,
-                Massnahmen = zustand == Zustand.Warn ? new List<string> { "autostart.deaktivieren" } : new List<string>(),
+                // Keine Kennung an der Sammelkarte: der Schalter haengt an den Einzelkarten (M3-Entwurf 8.5).
+                Massnahmen = new List<string>(),
             });
+            e.Befunde.AddRange(einzel);
+        }
+
+        /// <summary>
+        /// Je gezaehltem Eintrag eine eigene Karte (Zustand ok: der Eintrag ist kein Fehler, nur ein
+        /// Kandidat) mit der passenden Massnahme und ihren Parametern. Startprogramme bekommen den
+        /// Task-Manager-Schalter (StartupApproved), Aufgaben schtasks /DISABLE, Dienste die Startart
+        /// Manual. RunOnce-Eintraege haben keinen Schalter und bekommen keine Karte; ein Eintrag, dessen
+        /// Name, Pfad oder Dienstname der Helfer ablehnen wuerde (WertnameZulaessig, AufgabenpfadZulaessig,
+        /// DienstNameZulaessig), und ein Dienst einer Schutzsoftware (Herstellerliste oder ein im
+        /// Sicherheitscenter registriertes Produkt, drittAv) bekommen die Karte ohne Massnahme,
+        /// mit dem Rat, was stattdessen gilt.
+        /// </summary>
+        static List<Befund> Einzelbefunde(List<AutostartEintrag> eintraege, List<Aufgabe> aufgaben, List<Dienst> dienste, IList<string> drittAv)
+        {
+            var l = new List<Befund>();
+            foreach (var x in eintraege)
+            {
+                var b = EintragBefund(x);
+                if (b != null) l.Add(b);
+            }
+            foreach (var t in aufgaben)
+            {
+                var b = AufgabeBefund(t);
+                if (b != null) l.Add(b);
+            }
+            foreach (var d in dienste)
+            {
+                var b = DienstBefund(d, drittAv);
+                if (b != null) l.Add(b);
+            }
+            return l;
+        }
+
+        static Befund EintragBefund(AutostartEintrag x)
+        {
+            string hive, ort;
+            if (string.IsNullOrEmpty(x.Name) || !StartupApprovedOrt(x.Quelle, out hive, out ort)) return null;
+            string herkunft = Herkunft(x);
+            // Der Wertname geht als Parameter in den Plan; was der Helfer ablehnt (WertnameZulaessig),
+            // bekommt keine Massnahme, damit die Karte nichts verspricht, was mit Exit 2 endet.
+            bool zulaessig = WertnameZulaessig(x.Name);
+            var b = new Befund
+            {
+                Bereich = Bereich.Leistung,
+                Schluessel = SchluesselEintrag + Hash12("eintrag|" + x.Quelle + "|" + x.Name),
+                Zustand = Zustand.Ok,
+                Messwert = Messwert.Von("aktiv", "Zustand im Task-Manager (Autostart)", null),
+                Quelle = "StartupApproved\\" + ort + " (" + x.Quelle + ")",
+                Titel = "Startprogramm „" + x.Name + "“",
+                Satz = "„" + x.Name + "“ (" + herkunft + ") startet bei jeder Anmeldung aus " + OrtSatz(x.Quelle) + " mit; wird es nicht täglich gebraucht, lässt es sich "
+                       + (zulaessig ? "hier abschalten und im Task-Manager jederzeit wieder einschalten." : "nur im Task-Manager unter Autostart von Hand abschalten."),
+                Rat = zulaessig ? null : "Der Name des Eintrags ist länger als 255 Zeichen oder enthält ein Semikolon oder Steuerzeichen, die das Programm nicht weitergibt; im Task-Manager unter Autostart von Hand abschalten.",
+            };
+            b.Detail.Add("Befehl: " + x.Befehl);
+            b.Detail.Add("Herausgeber: " + herkunft + (string.IsNullOrEmpty(x.Signierer) ? "" : " (" + x.Signierer + ")"));
+            b.Detail.Add("Schalter: " + hive + "\\...\\Explorer\\StartupApproved\\" + ort + ", Wert „" + x.Name + "“ (Byte 0: 2 aktiv, 3 deaktiviert); der Eintrag selbst bleibt stehen.");
+            if (hive == "HKCU") b.Detail.Add("Der Schalter liegt im Profil des angemeldeten Kontos (HKCU): im Dialog von Windows muss Ihr eigenes Konto stehen.");
+            if (!zulaessig) return b;
+            b.Massnahmen.Add(MAutostartDeaktivieren);
+            b.Parameter[ParamHive] = hive;
+            b.Parameter[ParamOrt] = ort;
+            b.Parameter[ParamName] = x.Name;
+            return b;
+        }
+
+        static Befund AufgabeBefund(Aufgabe t)
+        {
+            if (string.IsNullOrWhiteSpace(t.Pfad)) return null;
+            string name = t.Pfad.TrimEnd('\\');
+            int i = name.LastIndexOf('\\');
+            if (i >= 0) name = name.Substring(i + 1);
+            bool zulaessig = AufgabenpfadZulaessig(t.Pfad);
+            string ausloeser = t.Logon && t.Boot ? "bei jeder Anmeldung und bei jedem Start" : t.Logon ? "bei jeder Anmeldung" : "bei jedem Start";
+            var b = new Befund
+            {
+                Bereich = Bereich.Leistung,
+                Schluessel = SchluesselEintrag + Hash12("aufgabe|" + t.Pfad),
+                Zustand = Zustand.Ok,
+                Messwert = Messwert.Von(t.Zustand, "TASK_STATE (1 deaktiviert, 3 bereit, 4 läuft)", null),
+                Quelle = "Schedule.Service " + t.Pfad,
+                Titel = "Aufgabe „" + name + "“",
+                Satz = "Die geplante Aufgabe „" + t.Pfad + "“ (" + (t.Autor ?? "ohne Autor") + ") läuft " + ausloeser + "; wird sie nicht gebraucht, lässt sie sich "
+                       + (zulaessig ? "hier deaktivieren und in der Aufgabenplanung wieder einschalten." : "nur in der Aufgabenplanung von Hand deaktivieren."),
+                Rat = zulaessig ? null : "Der Aufgabenname enthält Zeichen, die das Programm nicht an die Aufgabenplanung weitergibt; dort von Hand deaktivieren.",
+            };
+            b.Detail.Add("Pfad in der Aufgabenplanung: " + t.Pfad);
+            b.Detail.Add("Auslöser: " + (t.Logon ? "Anmeldung" : "") + (t.Logon && t.Boot ? ", " : "") + (t.Boot ? "Systemstart" : "") + "; Zustand " + t.Zustand + (t.Aktiv.HasValue ? ", Enabled " + (t.Aktiv.Value ? "true" : "false") : ""));
+            if (t.AktionPfad != null) b.Detail.Add("Aktion: " + t.AktionPfad + (t.Microsoft == true ? " (Microsoft-signiert)" : t.Microsoft == false ? " (nicht von Microsoft signiert)" : ""));
+            if (t.LetzterLaufUtc != null) b.Detail.Add("Letzter Lauf: " + t.LetzterLaufUtc + (t.LetztesErgebnis.HasValue ? ", Ergebnis 0x" + t.LetztesErgebnis.Value.ToString("X", CultureInfo.InvariantCulture) : ""));
+            if (zulaessig)
+            {
+                b.Detail.Add("Schalter: schtasks /Change /DISABLE; der Rückweg ist /ENABLE über die Sicherung.");
+                b.Massnahmen.Add(MAufgabeDeaktivieren);
+                b.Parameter[ParamPfad] = t.Pfad;
+            }
+            else b.Detail.Add("Erlaubt sind Buchstaben, Ziffern, Leerzeichen und die Zeichen _ . - \\ ( ) { } im Pfad; dieser Pfad enthält andere.");
+            return b;
+        }
+
+        static Befund DienstBefund(Dienst d, IList<string> drittAv)
+        {
+            if (string.IsNullOrWhiteSpace(d.Name)) return null;
+            string anzeige = string.IsNullOrWhiteSpace(d.Anzeige) ? d.Name : d.Anzeige.Trim();
+            // Zwei Gruende gegen die Massnahme: der Helfer nimmt den Namen nicht an (DienstNameZulaessig,
+            // dieselbe Pruefung dort), oder der Dienst gehoert zu einer Schutzsoftware. Die erkennt die
+            // Regel zweifach: am Signierer oder Anzeigenamen mit einem bekannten Hersteller
+            // (Netz.IstAvHersteller) und an einem Wort eines im Sicherheitscenter registrierten
+            // Schutzprogramms (NenntSchutzprodukt ueber Sicherheit.DrittAv, faengt Hersteller ab, die
+            // in der Liste fehlen). Ein Virenschutz, der nur noch auf Anforderung startet, schuetzt
+            // nicht; der bekommt nur den Rat, das Programm zu deinstallieren.
+            bool zulaessig = DienstNameZulaessig(d.Name);
+            string erkannt = null;
+            string wort, produkt;
+            if (Netz.IstAvHersteller(d.Signierer)) erkannt = "an Signierer „" + d.Signierer + "“";
+            else if (Netz.IstAvHersteller(anzeige)) erkannt = "an Anzeigename „" + anzeige + "“";
+            else if (NenntSchutzprodukt(d.Signierer, drittAv, out wort, out produkt)) erkannt = "am Wort „" + wort + "“ des im Sicherheitscenter registrierten Schutzprogramms „" + produkt + "“ im Signierer „" + d.Signierer + "“";
+            else if (NenntSchutzprodukt(anzeige, drittAv, out wort, out produkt)) erkannt = "am Wort „" + wort + "“ des im Sicherheitscenter registrierten Schutzprogramms „" + produkt + "“ im Anzeigenamen „" + anzeige + "“";
+            bool schutz = erkannt != null;
+            bool massnahme = zulaessig && !schutz;
+            var b = new Befund
+            {
+                Bereich = Bereich.Leistung,
+                Schluessel = SchluesselEintrag + Hash12("dienst|" + d.Name),
+                Zustand = Zustand.Ok,
+                Messwert = Messwert.Von(d.Startart + (d.Verzoegert ? " (verzögert)" : ""), "Win32_Service.StartMode", null),
+                Quelle = "Win32_Service " + d.Name,
+                Titel = "Dienst „" + anzeige + "“",
+                Satz = "Der Dienst „" + anzeige + "“ (" + Herausgeber(d.Signierer) + ") startet automatisch mit Windows" + (d.Verzoegert ? ", verzögert" : "")
+                       + (massnahme ? "; wird das zugehörige Programm nicht dauernd gebraucht, lässt sich die Startart hier auf „Manuell“ stellen, dann startet er nur auf Anforderung."
+                          : schutz ? "; er gehört zu einer Schutzsoftware, die beim Start mitlaufen muss, deshalb bietet das Programm hier keinen Schalter an."
+                          : "; sein Dienstname enthält Zeichen, die das Programm nicht an die Dienststeuerung weitergibt, deshalb gibt es hier keinen Schalter."),
+                Rat = massnahme ? null
+                    : schutz ? "Den Dienst nicht abschalten, solange die Schutzsoftware gebraucht wird; wer sie nicht mehr braucht, deinstalliert das Programm über die Windows-Einstellungen."
+                    : "Die Startart nur in der Diensteverwaltung (services.msc) von Hand ändern; der Name enthält einen Backslash, Schrägstrich, ein Anführungszeichen, ein Semikolon oder Steuerzeichen oder ist länger als 256 Zeichen.",
+            };
+            b.Detail.Add("Dienstname: " + d.Name + (string.IsNullOrEmpty(d.Pfad) ? "" : ", Datei: " + d.Pfad));
+            b.Detail.Add("Startart: " + d.Startart + (d.Verzoegert ? " (verzögerter Start)" : "") + ", Zustand: " + (d.Zustand ?? "unbekannt"));
+            if (schutz) b.Detail.Add("Schutzsoftware erkannt " + erkannt + "; keine Maßnahme, die Startart bleibt Automatisch.");
+            if (!massnahme) return b;
+            b.Detail.Add("Schalter: Win32_Service.ChangeStartMode(Manual); der Rückweg stellt die alte Startart aus der Sicherung wieder her.");
+            b.Massnahmen.Add(MDienstStartart);
+            b.Parameter[ParamName] = d.Name;
+            b.Parameter[ParamStartart] = StartartManuell;
+            return b;
+        }
+
+        /// <summary>
+        /// Quelle des Sammlers (Autostartquelle.cs) -> Hive und Ort des StartupApproved-Schluessels,
+        /// in dem der Task-Manager den Schalter fuehrt. RunOnce hat dort keinen Schluessel (laeuft
+        /// einmal und loescht sich), eine unbekannte Quelle ebenso wenig: dann false.
+        /// </summary>
+        public static bool StartupApprovedOrt(string quelle, out string hive, out string ort)
+        {
+            hive = null; ort = null;
+            if (string.IsNullOrEmpty(quelle)) return false;
+            switch (quelle.ToUpperInvariant())
+            {
+                case "HKLM\\RUN": hive = "HKLM"; ort = "Run"; return true;
+                case "HKLM\\RUN32": hive = "HKLM"; ort = "Run32"; return true;
+                case "HKCU\\RUN": hive = "HKCU"; ort = "Run"; return true;
+                case "HKCU\\RUN32": hive = "HKCU"; ort = "Run32"; return true;
+                case "STARTUP": hive = "HKCU"; ort = "StartupFolder"; return true;
+                case "COMMONSTARTUP": hive = "HKLM"; ort = "StartupFolder"; return true;
+                default: return false;
+            }
+        }
+
+        /// <summary>
+        /// Dienstname (Win32_Service.Name), wie ihn der Helfer fuer leistung.dienst.startart annimmt
+        /// (docs/M3-ENTWURF.md, Abschnitt 8.5; der Helfer ruft diese Funktion, nicht eine Kopie):
+        /// 1 bis 256 Zeichen, verboten sind nur Backslash, Schraegstrich, Apostroph, Anfuehrungszeichen,
+        /// Semikolon und Steuerzeichen. Das Dollarzeichen ist erlaubt (MSSQL$SQLEXPRESS); die WQL-
+        /// Bedingung maskiert der Helfer selbst. Reine Funktion, kein Windows-Zugriff.
+        /// </summary>
+        public static bool DienstNameZulaessig(string name)
+        {
+            if (string.IsNullOrEmpty(name) || name.Length > 256) return false;
+            foreach (char c in name)
+                if (char.IsControl(c) || c == '\\' || c == '/' || c == '\'' || c == '"' || c == ';') return false;
+            return true;
+        }
+
+        /// <summary>
+        /// Wertname im StartupApproved-Schluessel (Registry-Wertname des Run-Eintrags bzw. Dateiname im
+        /// Autostart-Ordner), wie ihn der Helfer fuer leistung.autostart.deaktivieren annimmt
+        /// (docs/M3-ENTWURF.md, Abschnitt 8.5): 1 bis 255 Zeichen, kein Semikolon (Listentrenner des
+        /// Plans), keine Steuerzeichen. Reine Funktion, kein Windows-Zugriff.
+        /// </summary>
+        public static bool WertnameZulaessig(string name)
+        {
+            if (string.IsNullOrEmpty(name) || name.Length > 255) return false;
+            foreach (char c in name)
+                if (char.IsControl(c) || c == ';') return false;
+            return true;
+        }
+
+        /// <summary>
+        /// Gattungswoerter in Produktnamen des Sicherheitscenters ("Avira Antivirus", "Kaspersky
+        /// Internet Security"), die keinen Hersteller bezeichnen und deshalb bei NenntSchutzprodukt
+        /// nicht zaehlen: sonst hiesse jeder Dienst mit "Service" im Anzeigenamen Schutzsoftware.
+        /// </summary>
+        static readonly HashSet<string> SchutzGattungswoerter = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "antivirus", "antimalware", "anti", "virus", "malware", "security", "secure", "service", "services",
+            "protection", "protect", "internet", "total", "free", "premium", "plus", "home", "suite", "edition",
+            "essential", "essentials", "business", "cloud", "endpoint", "client", "agent", "windows", "microsoft",
+        };
+
+        /// <summary>
+        /// Ob ein Text (Signierer-Subject oder Anzeigename eines Dienstes) ein Wort eines im
+        /// Sicherheitscenter registrierten Schutzprogramms traegt (Sicherheit.DrittAv, z. B. "Avira
+        /// Antivirus", "Malwarebytes"). Gezaehlt wird nur ein Wort aus mindestens vier Buchstaben, das
+        /// kein Gattungswort ist (SchutzGattungswoerter), und es muss im Text als ganzes Wort stehen
+        /// (Buchstaben und Ziffern bilden ein Wort, alles andere trennt; "Avira" in "CN=Avira
+        /// Operations GmbH &amp; Co. KG", nicht in "Aviram"). Ergaenzt Netz.IstAvHersteller um die
+        /// Hersteller, die dort fehlen; ein Treffer entzieht nur die Massnahme, er erzeugt keinen
+        /// Befund (fail closed). Reine Funktion; null oder leer ist kein Treffer. wort und produkt
+        /// nennen den ersten Treffer fuer die Detailzeile, in der Schreibweise des Produktnamens.
+        /// </summary>
+        public static bool NenntSchutzprodukt(string text, IEnumerable<string> produkte, out string wort, out string produkt)
+        {
+            wort = null; produkt = null;
+            if (string.IsNullOrEmpty(text) || produkte == null) return false;
+            var imText = new HashSet<string>(Woerter(text).Select(w => w.ToLowerInvariant()), StringComparer.Ordinal);
+            if (imText.Count == 0) return false;
+            foreach (string p in produkte)
+            {
+                foreach (string w in Woerter(p))
+                {
+                    if (w.Length < 4 || !w.All(char.IsLetter)) continue;
+                    string klein = w.ToLowerInvariant();
+                    if (SchutzGattungswoerter.Contains(klein) || !imText.Contains(klein)) continue;
+                    wort = w; produkt = p;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        public static bool NenntSchutzprodukt(string text, IEnumerable<string> produkte)
+        {
+            string wort, produkt;
+            return NenntSchutzprodukt(text, produkte, out wort, out produkt);
+        }
+
+        /// <summary>Woerter eines Texts: Folgen aus Buchstaben und Ziffern, alles andere trennt (wie Netz.IstAvHersteller).</summary>
+        static List<string> Woerter(string text)
+        {
+            var woerter = new List<string>();
+            if (string.IsNullOrEmpty(text)) return woerter;
+            var aktuell = new System.Text.StringBuilder();
+            foreach (char c in text)
+            {
+                if (char.IsLetterOrDigit(c)) { aktuell.Append(c); continue; }
+                if (aktuell.Length > 0) { woerter.Add(aktuell.ToString()); aktuell.Length = 0; }
+            }
+            if (aktuell.Length > 0) woerter.Add(aktuell.ToString());
+            return woerter;
+        }
+
+        /// <summary>
+        /// Aufgabenpfad, wie ihn der Helfer an schtasks.exe /TN weitergibt (docs/M3-ENTWURF.md,
+        /// Abschnitt 1): nur Buchstaben, Ziffern, Leerzeichen, _ . - \ ( ) { }. Die geschweiften
+        /// Klammern brauchen die Updater-Aufgaben der Fremdhersteller (GoogleUpdaterTaskSystem…{GUID},
+        /// MicrosoftEdgeUpdateTaskMachineCore{GUID}); in einem ueber Process.Start (nicht cmd.exe)
+        /// uebergebenen, in Anfuehrungszeichen stehenden Argument haben sie keine Sonderbedeutung.
+        /// </summary>
+        public static bool AufgabenpfadZulaessig(string pfad)
+        {
+            if (string.IsNullOrEmpty(pfad) || pfad.Length > 260) return false;
+            foreach (char c in pfad)
+            {
+                bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+                          || c == ' ' || c == '_' || c == '.' || c == '-' || c == '\\' || c == '(' || c == ')'
+                          || c == '{' || c == '}';
+                if (!ok) return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Stabiler Kurzschluessel: FNV-1a (64 Bit) ueber den kleingeschriebenen Text, danach die
+        /// Durchmischung aus MurmurHash3 (sonst unterscheiden sich "Fremd01" und "Fremd02" nur in
+        /// zwei Stellen), die ersten 12 Hex-Zeichen. Ohne Kryptografie, weil SHA256Managed unter der
+        /// FIPS-Richtlinie wirft und der Schluessel nur Wiedererkennung braucht (Antworten, Verlauf),
+        /// keine Faelschungssicherheit. Gross-/Kleinschreibung zaehlt nicht: Registry-Wertnamen und
+        /// Dateinamen sind es auch nicht.
+        /// </summary>
+        public static string Hash12(string text)
+        {
+            const ulong Basis = 14695981039346656037UL, Prim = 1099511628211UL;
+            ulong h = Basis;
+            unchecked
+            {
+                foreach (byte b in System.Text.Encoding.UTF8.GetBytes((text ?? "").ToLowerInvariant()))
+                {
+                    h ^= b;
+                    h *= Prim;
+                }
+                h ^= h >> 33; h *= 0xff51afd7ed558ccdUL;
+                h ^= h >> 33; h *= 0xc4ceb9fe1a85ec53UL;
+                h ^= h >> 33;
+            }
+            return h.ToString("x16", CultureInfo.InvariantCulture).Substring(0, 12);
+        }
+
+        /// <summary>Herausgeber-Text eines Startprogramms: geprueftes Urteil oder "nicht pruefbar" (rundll32 mit fremdem Ziel, .lnk ohne Aufloesung).</summary>
+        static string Herkunft(AutostartEintrag x)
+        {
+            return x.Microsoft == null && string.IsNullOrEmpty(x.Signierer) ? "Signatur nicht prüfbar" : Herausgeber(x.Signierer);
+        }
+
+        /// <summary>Ort eines Startprogramms in Alltagssprache, mit dem Fachnamen in Klammern.</summary>
+        static string OrtSatz(string quelle)
+        {
+            switch ((quelle ?? "").ToUpperInvariant())
+            {
+                case "STARTUP": return "dem Autostart-Ordner Ihres Kontos";
+                case "COMMONSTARTUP": return "dem Autostart-Ordner aller Benutzer";
+                default: return "der Registrierung (" + quelle + ")";
+            }
         }
 
         /// <summary>
@@ -326,12 +700,41 @@ namespace WartungsToolbox.Kern.Regeln
         }
 
         /// <summary>
-        /// Microsoft-Aufgaben liegen unter \Microsoft\ oder tragen als Autor einen Ressourcenverweis
-        /// "$(@%SystemRoot%\...dll,-N)"; Fremdhersteller schreiben Klartext. Heuristik, kein Beweis.
+        /// Namensanfang der Edge-Updater-Aufgaben in der Wurzel der Aufgabenplanung
+        /// (\MicrosoftEdgeUpdateTaskMachineCore{GUID}, ...TaskMachineUA{GUID}, ...TaskUser&lt;SID&gt;...):
+        /// sie tragen keinen Autor, ihre Aktion ist MicrosoftEdgeUpdate.exe (CN=Microsoft Corporation).
+        /// Bis 18.09.2026 zaehlte die Heuristik sie als Fremdhersteller und bot den Abschalt-Knopf an.
         /// </summary>
+        const string EdgeUpdaterAufgabe = "\\MicrosoftEdgeUpdateTask";
+
+        /// <summary>
+        /// Das gepruefte Urteil des Sammlers (Aufgabe.Microsoft: Signatur der Aktionsdatei, wie bei
+        /// Startprogrammen) hat Vorrang. Fehlt es (aeltere Aufzeichnung, COM-Handler ohne Pfad),
+        /// entscheidet die Heuristik: Microsoft-Aufgaben liegen unter \Microsoft\, heissen wie die
+        /// Edge-Updater-Aufgaben oder tragen als Autor einen Ressourcenverweis
+        /// "$(@%SystemRoot%\...dll,-N)"; Fremdhersteller schreiben Klartext. Heuristik, kein Beweis:
+        /// ein Schaedling, der sich so nennt, bleibt in der Sammelkarte unsichtbar, bis der Sammler
+        /// die Signatur liefert (Microsoft = false wiegt hier nicht schwerer als der Ordner, weil
+        /// Skript-Aufgaben unter \Microsoft\ einen fremden Zielpfad haben koennen).
+        /// </summary>
+        /// <summary>
+        /// Deaktiviert ist eine Aufgabe, deren Schalter umgelegt ist (IRegisteredTask.Enabled false,
+        /// Feld Aktiv), nicht eine mit TASK_STATE 1: eine Anmelde-Aufgabe, die ein residentes Programm
+        /// startet, meldet nach schtasks /DISABLE weiter 4 (Doku TASK_STATE: RUNNING = "one or more
+        /// instances running"), und mit Zustand als Massstab bliebe die Einzelkarte samt Knopf stehen.
+        /// Ohne das Feld (aeltere Aufzeichnung) zaehlt der Zustand wie bis 18.09.2026.
+        /// </summary>
+        static bool AufgabeAktiv(Aufgabe t)
+        {
+            if (t.Aktiv.HasValue) return t.Aktiv.Value;
+            return t.Zustand != 1;
+        }
+
         static bool AufgabeMicrosoft(Aufgabe t)
         {
+            if (t.Microsoft == true) return true;
             if (t.Pfad != null && t.Pfad.StartsWith("\\Microsoft\\", StringComparison.OrdinalIgnoreCase)) return true;
+            if (t.Pfad != null && t.Pfad.StartsWith(EdgeUpdaterAufgabe, StringComparison.OrdinalIgnoreCase)) return true;
             if (t.Autor == null) return false;
             if (t.Autor.StartsWith("$(@", StringComparison.Ordinal)) return true;
             return t.Autor.IndexOf("Microsoft", StringComparison.OrdinalIgnoreCase) >= 0;
@@ -363,7 +766,7 @@ namespace WartungsToolbox.Kern.Regeln
                     Satz = "Beim Anmelden startet „" + A.Shell + "“ statt „explorer.exe“; das ist nicht die normale Windows-Oberfläche.",
                     Rat = "Das kann Absicht sein (Kiosk-PC), sonst ein Zeichen für Schadsoftware: mit einem aktuellen Virenscanner prüfen und den Wert auf „explorer.exe“ zurücksetzen.",
                     Detail = new List<string> { "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\Shell = " + A.Shell },
-                    Massnahmen = new List<string> { "autostart.winlogon.zuruecksetzen" },
+                    Massnahmen = new List<string> { MWinlogonZuruecksetzen },
                 });
             }
             if (A.Userinit != null)
@@ -390,7 +793,7 @@ namespace WartungsToolbox.Kern.Regeln
                         "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\Userinit = " + A.Userinit,
                         "Erlaubt ist genau ein Teil, der auf " + UserinitEnde + " endet; " + (ergaenzt ? "zusätzliche Teile: " + string.Join(", ", weitere) : "kein Teil erfüllt das"),
                     },
-                    Massnahmen = new List<string> { "autostart.winlogon.zuruecksetzen" },
+                    Massnahmen = new List<string> { MWinlogonZuruecksetzen },
                 });
             }
         }

@@ -69,5 +69,11 @@ namespace WartungsToolbox.Kern.Regeln
 
         // Hardware
         public const int KernelPnp219Warn = 3;    // Wahl: dasselbe Geraet dreimal in 30 Tagen
+
+        // Nachweise der Massnahmen (kern/Massnahmen.Katalog.cs, Meilenstein 3): was nach dem Eingriff
+        // im neuen Systembild als "bestanden" zaehlt. Wer einen Nachweis verschaerft, aendert ihn hier.
+        public const int NachweisSignaturTage = 1;     // M3-Entwurf 1: AntivirusSignatureAge <= 1 nach dem Update (Defender zaehlt volle Tage)
+        public const int NachweisSchnellscanTage = 0;  // M3-Entwurf 1: QuickScanAge 0 = der Scan war heute
+        public const int NachweisPunktMinuten = 60;    // Wahl: ein Wiederherstellungspunkt, der hoechstens 60 min vor der Nachmessung liegt, gilt als der neue
     }
 }

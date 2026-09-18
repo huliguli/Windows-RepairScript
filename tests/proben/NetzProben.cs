@@ -30,6 +30,7 @@ namespace WartungsToolbox.Proben
             Fec0(h, alle);
             DnsNxdomainStatisch(h, alle);
             DnsTimeoutDhcp(h, alle);
+            DnsZuruecksetzenGrenzen(h, alle);
             NcsiPortal(h, alle);
             Gesund(h, alle);
             GatewayTot(h, alle);
@@ -69,6 +70,8 @@ namespace WartungsToolbox.Proben
                 h.Ist("Massnahme netz.dhcp.erneuern", apipa[0].Massnahmen.Contains(NetzRegel.MDhcpErneuern));
                 h.Ist("Satz nennt die Notadresse", apipa[0].Satz.Contains("169.254.34.9"), apipa[0].Satz);
                 h.Ist("Schluessel traegt den Adapterindex", apipa[0].Schluessel == "netz.apipa.8", apipa[0].Schluessel);
+                // M3: der Plan braucht den Index als Parameter (docs/M3-ENTWURF.md, Abschnitt 1).
+                h.Ist("Befund traegt Parameter adapter = 8", apipa[0].Parameter.ContainsKey(NetzRegel.ParamAdapter) && apipa[0].Parameter[NetzRegel.ParamAdapter] == "8", string.Join(",", apipa[0].Parameter.Select(kv => kv.Key + "=" + kv.Value)));
             }
             h.Ist("Folgestufen schweigen: kein netz.gateway.fehlt", Harness.Einer(erg, "netz.gateway.fehlt") == null);
             h.Ist("Folgestufen schweigen: kein netz.sonde.dns", Harness.Einer(erg, "netz.sonde.dns") == null);
@@ -104,6 +107,7 @@ namespace WartungsToolbox.Proben
             var apipaNull = Harness.Einer(erg, "netz.apipa.8");
             h.Ist("Gegenprobe: Dhcp=null mit APIPA => netz.apipa.8 bad", apipaNull != null && apipaNull.Zustand == Zustand.Bad);
             h.Ist("Gegenprobe: Dhcp=null => Massnahme netz.dhcp.erneuern bleibt (Vorbedingung prueft DHCPEnabled)", apipaNull != null && apipaNull.Massnahmen.Contains(NetzRegel.MDhcpErneuern));
+            h.Ist("Gegenprobe: Dhcp=null => Parameter adapter bleibt 8", apipaNull != null && apipaNull.Parameter.ContainsKey(NetzRegel.ParamAdapter) && apipaNull.Parameter[NetzRegel.ParamAdapter] == "8");
             h.Ist("Gegenprobe: Dhcp=null => Detail behauptet nicht „DHCP aktiv“", apipaNull != null && !apipaNull.Detail.Any(d => d.Contains("DHCP aktiv")), apipaNull == null ? "null" : string.Join(" | ", apipaNull.Detail));
             h.Ist("Gegenprobe: Dhcp=null => Fehlend nennt „DHCP-Status (fehlt)“", Harness.Bereich(erg, Bereich.Netz).Fehlend.Any(f => f.Contains("DHCP-Status") && f.Contains("fehlt")), string.Join("; ", Harness.Bereich(erg, Bereich.Netz).Fehlend));
         }
@@ -150,6 +154,13 @@ namespace WartungsToolbox.Proben
                 var b = treffer[0];
                 h.Ist("Zustand bad", b.Zustand == Zustand.Bad, b.Zustand);
                 h.Ist("Massnahme netz.hosts.pruefen", b.Massnahmen.Contains(NetzRegel.MHostsPruefen));
+                // Befund des Gegenlesens M3 (18.09.2026): die Detailzeile versprach eine Sicherung
+                // hosts.<datum>.bak "durch die Massnahme"; netz.hosts.pruefen ist Rat (Stufe 3), und im
+                // Helfer schreibt nichts eine hosts-Kopie. Die Zeile darf keine Sicherung durch das
+                // Programm zusagen; die Kopie legt der Nutzer selbst an (wie der Rat derselben Karte sagt).
+                h.Ist("Detail verspricht keine Sicherung durch die Massnahme (kein 'legt vorher ... an')", !b.Detail.Any(d => d.Contains("legt vorher") || d.Contains("die Maßnahme zeigt")), string.Join(" | ", b.Detail));
+                h.Ist("Detail sagt, dass der Nutzer die Kopie selbst anlegt und das Programm keine schreibt", b.Detail.Any(d => d.Contains("selbst an") && d.Contains("schreibt keine")), string.Join(" | ", b.Detail));
+                h.Ist("Rat verlangt die Kopie vom Nutzer ('vorher eine Kopie sichern')", (b.Rat ?? "").Contains("vorher eine Kopie sichern"), b.Rat);
                 h.Ist("Detail nennt windowsupdate.microsoft.com", b.Detail.Any(d => d.Contains("windowsupdate.microsoft.com")));
                 h.Ist("Detail nennt download.eset.com (AV-Hersteller)", b.Detail.Any(d => d.Contains("download.eset.com")));
                 h.Ist("Detail nennt KEINE Docker-Zeile", !b.Detail.Any(d => d.Contains("docker.internal")));
@@ -278,6 +289,8 @@ namespace WartungsToolbox.Proben
                 h.Ist("Zustand bad", dns[0].Zustand == Zustand.Bad, dns[0].Zustand);
                 h.Ist("Massnahme netz.dnscache.leeren", dns[0].Massnahmen.Contains(NetzRegel.MDnsCacheLeeren));
                 h.Ist("Massnahme netz.dns.zuruecksetzen (fester Server vorhanden)", dns[0].Massnahmen.Contains(NetzRegel.MDnsZuruecksetzen));
+                // M3: netz.dns.zuruecksetzen braucht den Adapter mit dem festen Eintrag (hier Index 8, siehe netz.dns.statisch.8).
+                h.Ist("Befund traegt Parameter adapter = 8 (der Anschluss mit festem Namensserver)", dns[0].Parameter.ContainsKey(NetzRegel.ParamAdapter) && dns[0].Parameter[NetzRegel.ParamAdapter] == "8", string.Join(",", dns[0].Parameter.Select(kv => kv.Key + "=" + kv.Value)));
                 h.Ist("Satz sagt 'unbekannt' (nxdomain)", dns[0].Satz.Contains("unbekannt"), dns[0].Satz);
             }
             var fest = Harness.Einer(erg, "netz.dns.statisch.8");
@@ -326,10 +339,63 @@ namespace WartungsToolbox.Proben
                 h.Ist("Zustand bad", dns[0].Zustand == Zustand.Bad);
                 h.Ist("Massnahme netz.dnscache.leeren", dns[0].Massnahmen.Contains(NetzRegel.MDnsCacheLeeren));
                 h.Ist("KEINE Massnahme netz.dns.zuruecksetzen (nichts fest eingetragen)", !dns[0].Massnahmen.Contains(NetzRegel.MDnsZuruecksetzen));
+                h.Ist("Gegenprobe: ohne festen Server kein Parameter adapter", !dns[0].Parameter.ContainsKey(NetzRegel.ParamAdapter), string.Join(",", dns[0].Parameter.Keys));
                 h.Ist("Satz sagt 'nicht geantwortet' (timeout)", dns[0].Satz.Contains("nicht geantwortet"), dns[0].Satz);
             }
             h.Ist("kein netz.dns.statisch", Harness.Einer(erg, "netz.dns.statisch") == null);
             alle.AddRange(Harness.Befunde(erg, Bereich.Netz));
+        }
+
+        /// <summary>
+        /// M3-Entwurf 8.5: netz.dns.zuruecksetzen nur fuer einen festen IPv4-Eintrag (Familie 2) auf einem
+        /// verbundenen physischen DHCP-Anschluss. Nur IPv6 fest, feste Adresse (Dhcp false) oder ein
+        /// nicht verbundener Adapter: Karte ohne diese Massnahme, der Rat nennt den festen Eintrag weiter.
+        /// Dasselbe Bild wie (d), im Speicher gedreht.
+        /// </summary>
+        static void DnsZuruecksetzenGrenzen(Harness h, List<Befund> alle)
+        {
+            h.Gruppe("Netz (d) Grenzen: nur IPv6 fest, feste Adresse, Adapter ohne Verbindung => kein netz.dns.zuruecksetzen");
+            var s = h.Bild("gepflanzt-netz-dns-nxdomain.json"); if (s == null) return;
+            var fest = s.Netz.Dns.FirstOrDefault(d => d.Statisch == true && d.Familie == 2);
+            var a = s.Netz.Adapter.FirstOrDefault(x => fest != null && x.Index == fest.AdapterIndex);
+            h.Ist("Grundmenge: fester IPv4-Eintrag auf Adapter 8, der physisch, Up und DHCP ist", fest != null && a != null && a.Index == 8 && a.Physisch && a.OpStatus == 1 && a.Dhcp == true);
+            if (fest == null || a == null) return;
+            var physischUp = s.Netz.Adapter.Where(x => x.Physisch && x.OpStatus == 1).ToList();
+            h.Ist("Grundmenge: StatischerDnsAdapter liefert 8", NetzRegel.StatischerDnsAdapter(s.Netz, physischUp) == 8, NetzRegel.StatischerDnsAdapter(s.Netz, physischUp).ToString());
+
+            // Nur IPv6 fest: die Massnahme setzt nur IPv4 zurueck, der Nachweis liest nur Familie 2.
+            fest.Familie = 23;
+            fest.Server.Clear(); fest.Server.Add("2001:db8::53");
+            var erg = h.Pruefen(s);
+            var dns = Harness.Befunde(erg, Bereich.Netz).FirstOrDefault(b => b.Schluessel == "netz.sonde.dns");
+            h.Ist("nur IPv6 fest: netz.sonde.dns bleibt bad mit netz.dnscache.leeren", dns != null && dns.Zustand == Zustand.Bad && dns.Massnahmen.Contains(NetzRegel.MDnsCacheLeeren));
+            h.Ist("nur IPv6 fest: KEIN netz.dns.zuruecksetzen, kein Parameter adapter", dns != null && !dns.Massnahmen.Contains(NetzRegel.MDnsZuruecksetzen) && !dns.Parameter.ContainsKey(NetzRegel.ParamAdapter), dns == null ? "null" : string.Join(",", dns.Massnahmen));
+            h.Ist("nur IPv6 fest: Rat nennt die festen Namensserver weiter (von Hand)", dns != null && dns.Rat.Contains("fest eingetragenen Namensserver") && dns.Rat.Contains("von Hand"), dns == null ? null : dns.Rat);
+            h.Ist("nur IPv6 fest: StatischerDnsAdapter liefert null", NetzRegel.StatischerDnsAdapter(s.Netz, physischUp) == null);
+            h.Ist("nur IPv6 fest: Info netz.dns.statisch.8 bleibt (Familie egal)", Harness.Einer(erg, "netz.dns.statisch.8") != null);
+            alle.AddRange(Harness.Befunde(erg, Bereich.Netz));
+
+            // Feste Adresse: der Helfer lehnt einen Adapter ohne DHCP ab, die Karte verspricht es nicht.
+            fest.Familie = 2;
+            fest.Server.Clear(); fest.Server.Add("8.8.8.8");
+            a.Dhcp = false;
+            erg = h.Pruefen(s);
+            dns = Harness.Befunde(erg, Bereich.Netz).FirstOrDefault(b => b.Schluessel == "netz.sonde.dns");
+            h.Ist("feste Adresse (Dhcp false): KEIN netz.dns.zuruecksetzen, kein Parameter adapter", dns != null && !dns.Massnahmen.Contains(NetzRegel.MDnsZuruecksetzen) && !dns.Parameter.ContainsKey(NetzRegel.ParamAdapter), dns == null ? "null" : string.Join(",", dns.Massnahmen));
+            h.Ist("feste Adresse: StatischerDnsAdapter liefert null", NetzRegel.StatischerDnsAdapter(s.Netz, physischUp) == null);
+            a.Dhcp = null;
+            h.Ist("DHCP-Status unbekannt (null): StatischerDnsAdapter liefert null (nicht eindeutig = keine Massnahme)", NetzRegel.StatischerDnsAdapter(s.Netz, physischUp) == null);
+
+            // Zurueck auf DHCP, dann der Anschluss selbst getrennt: sein Namensserver erklaert die Sonde nicht.
+            a.Dhcp = true;
+            h.Ist("Gegenprobe: wieder DHCP => StatischerDnsAdapter liefert 8", NetzRegel.StatischerDnsAdapter(s.Netz, physischUp) == 8);
+            h.Ist("Adapter nicht in physischUp: StatischerDnsAdapter liefert null", NetzRegel.StatischerDnsAdapter(s.Netz, new List<Adapter>()) == null);
+            // Ein zweiter, fester IPv4-Eintrag auf einem fremden Index (nicht verbunden) zaehlt nicht, der verbundene gewinnt.
+            s.Netz.Dns.Insert(0, new DnsKonfig { AdapterIndex = 99, Familie = 2, Statisch = true, Server = new List<string> { "1.1.1.1" } });
+            h.Ist("fremder fester Eintrag (Index 99, nicht verbunden) vor dem echten: StatischerDnsAdapter liefert weiter 8", NetzRegel.StatischerDnsAdapter(s.Netz, physischUp) == 8, NetzRegel.StatischerDnsAdapter(s.Netz, physischUp).ToString());
+            erg = h.Pruefen(s);
+            dns = Harness.Befunde(erg, Bereich.Netz).FirstOrDefault(b => b.Schluessel == "netz.sonde.dns");
+            h.Ist("Gegenprobe: mit DHCP und IPv4 fest => netz.dns.zuruecksetzen mit adapter = 8", dns != null && dns.Massnahmen.Contains(NetzRegel.MDnsZuruecksetzen) && dns.Parameter.ContainsKey(NetzRegel.ParamAdapter) && dns.Parameter[NetzRegel.ParamAdapter] == "8", dns == null ? "null" : string.Join(",", dns.Parameter.Select(kv => kv.Key + "=" + kv.Value)));
         }
 
         // ------------------------------------------------------------ (e) NCSI-Inhalt
@@ -614,6 +680,8 @@ namespace WartungsToolbox.Proben
             var fehlt = Harness.Einer(erg, "netz.gateway.fehlt");
             h.Ist("Gegenprobe: dann greift Stufe 2b: netz.gateway.fehlt (keine Route)", fehlt != null);
             h.Ist("Gegenprobe: Dhcp=true => Rat nennt DHCP und Massnahme netz.dhcp.erneuern", fehlt != null && fehlt.Rat.Contains("DHCP") && fehlt.Massnahmen.Contains(NetzRegel.MDhcpErneuern), fehlt == null ? "null" : fehlt.Rat);
+            h.Ist("Gegenprobe: netz.gateway.fehlt traegt Parameter adapter = Index des Ethernet-Adapters", fehlt != null && fehlt.Parameter.ContainsKey(NetzRegel.ParamAdapter) && fehlt.Parameter[NetzRegel.ParamAdapter] == s.Netz.Adapter[0].Index.ToString(System.Globalization.CultureInfo.InvariantCulture), fehlt == null ? "null" : string.Join(",", fehlt.Parameter.Select(kv => kv.Key + "=" + kv.Value)));
+            h.Ist("Gegenprobe: netz.verbindung.keine (kein Anschluss) traegt keinen Parameter adapter", k != null && !k.Parameter.ContainsKey(NetzRegel.ParamAdapter));
 
             // Dreiwertiger Rat in Stufe 2b: feste Adresse => Feld Standardgateway; Status unbekannt
             // => neutraler Rat, der keine feste Konfiguration erfindet, und Fehlend nennt den DHCP-Status.

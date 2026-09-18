@@ -62,6 +62,7 @@ namespace WartungsToolbox.Proben
         {
             Code22OhneAntwort(h);
             Code22MitAntwort(h);
+            InstanzIdGrenzen(h);
             Code43UndCode10(h);
             Code14(h);
             Harmlos(h);
@@ -125,6 +126,7 @@ namespace WartungsToolbox.Proben
                 h.Ist("Frage-Text: abgeschaltet, so eingerichtet?", b.Frage != null && b.Frage.Text.Contains("abgeschaltet") && b.Frage.Text.Contains("eingerichtet"));
                 h.Ist("Antworten: Ja, so lassen / Nein, wieder einschalten", b.Frage != null && b.Frage.Ja == "Ja, so lassen" && b.Frage.Nein == "Nein, wieder einschalten");
                 h.Ist("keine Massnahme ohne Antwort", b.Massnahmen.Count == 0);
+                h.Ist("Gegenprobe M3: ohne Antwort auch kein Parameter instanzId", !b.Parameter.ContainsKey(WartungsToolbox.Kern.Regeln.Hardware.ParamInstanzId));
                 h.Ist("Detail: Eltern aus DEVPKEY, nicht aus dem Pfad", b.Detail.Any(d => d == "Übergeordnetes Gerät: " + IGpuParent), string.Join(" | ", b.Detail));
                 h.Ist("Detail: Code-Name CM_PROB_DISABLED", b.Detail.Any(d => d.Contains("CM_PROB_DISABLED")));
                 h.Ist("Detail: Treiberversion, -datum, -anbieter", b.Detail.Any(d => d.Contains("32.0.21043.5001") && d.Contains("03.03.2026") && d.Contains("Advanced Micro Devices")));
@@ -174,8 +176,58 @@ namespace WartungsToolbox.Proben
             var b3 = Harness.Einer(erg3, "geraet.problem." + IGpu);
             h.Ist("Antwort reparieren: Zustand bad", b3 != null && b3.Zustand == Zustand.Bad, b3 == null ? null : b3.Zustand);
             h.Ist("Antwort reparieren: Massnahme geraet.aktivieren", b3 != null && b3.Massnahmen.Contains("geraet.aktivieren"));
+            // M3: geraet.aktivieren braucht die Instanz-Id (Win32_PnPEntity.PNPDeviceID) als Parameter.
+            h.Ist("Antwort reparieren: Parameter instanzId = Instanz der iGPU", b3 != null && b3.Parameter.ContainsKey(WartungsToolbox.Kern.Regeln.Hardware.ParamInstanzId) && b3.Parameter[WartungsToolbox.Kern.Regeln.Hardware.ParamInstanzId] == IGpu, b3 == null ? null : string.Join(",", b3.Parameter.Select(kv => kv.Key + "=" + kv.Value)));
             h.Ist("Antwort reparieren: keine Frage", b3 != null && b3.Frage == null);
             h.Ist("Antwort reparieren: Bereich bad", Harness.Bereich(erg3, Bereich.Hardware).Zustand == Zustand.Bad);
+        }
+
+        // ---------------------------------------------------------------- (b2) Instanz-Id, die der Helfer ablehnt
+
+        /// <summary>
+        /// M3-Entwurf 8.5: geraet.aktivieren nur mit einer Instanz-Id aus der Zeichenmenge des Helfers
+        /// (InstanzIdZulaessig = helfer/Massnahmen/Hardware.cs InstanzIdNorm); sonst bleibt nach der
+        /// Antwort reparieren der Befund bad mit Rat, ohne Massnahme und ohne Parameter.
+        /// </summary>
+        static void InstanzIdGrenzen(Harness h)
+        {
+            h.Gruppe("Hardware (b2): InstanzIdZulaessig und Code 22 mit unzulaessiger Instanz-Id -> Rat statt Massnahme");
+            foreach (string gut in new[] { IGpu, IGpuParent, UsbGeraet, NetzGeraet, ZukunftGeraet, @"SWD\MMDEVAPI\{0.0.0.00000000}.{a1b2c3d4-0000-1111-2222-333333333333}", @"ACPI\PNP0A08\0", @"HID\VID_046D&PID_C52B&MI_01&COL02\8&1A2B3C4D&0&0001", "ROOT\\NET\\0000", "a", @"X (1) ~!#+,=@-_", new string('a', 400) })
+                h.Ist("InstanzIdZulaessig: " + Kurz(gut) + " = zulaessig", WartungsToolbox.Kern.Regeln.Hardware.InstanzIdZulaessig(gut));
+            foreach (string schlecht in new[] { null, "", "   ", @"SWD\WPDBUSENUM\_??_USBSTOR#DISK&VEN_X#7&1&0#{53f56307-b6bf-11d0-94f2-00a0c91efb8b}", @"PCI\VEN_8086'", "PCI\"X", "PCI;X", "PCI$X", "PCI%X", @"\PCI\VEN_8086", @"PCI\VEN_8086\", @"PCI\\VEN_8086", "PCI\\VENä", "PCI\tX", new string('a', 401) })
+                h.Ist("InstanzIdZulaessig: " + Kurz(schlecht) + " = nicht zulaessig", !WartungsToolbox.Kern.Regeln.Hardware.InstanzIdZulaessig(schlecht));
+
+            var s = h.Bild("gepflanzt-hardware-code22.json");
+            if (s == null) return;
+            var g = s.Geraete.FirstOrDefault(x => x.InstanzId == IGpu && x.ProblemCode == 22);
+            h.Ist("Grundmenge: die iGPU mit Code 22 ist im Bild", g != null);
+            if (g == null) return;
+            const string Fragwuerdig = @"SWD\WPDBUSENUM\_??_USBSTOR#DISK&VEN_FREMD#7&1A2B3C4D&0&#{53f56307-b6bf-11d0-94f2-00a0c91efb8b}";
+            g.InstanzId = Fragwuerdig;
+            h.Ist("Grundmenge: die gedrehte Id ist unzulaessig (Fragezeichen)", !WartungsToolbox.Kern.Regeln.Hardware.InstanzIdZulaessig(Fragwuerdig));
+            var e = new Entscheidungen();
+            e.Setze("geraet:" + Fragwuerdig + ":22", Entscheidungen.Reparieren, "2026-09-11T15:00:00Z");
+            var erg = Laufen(h, s, e);
+            var b = Harness.Einer(erg, "geraet.problem." + Fragwuerdig);
+            h.Ist("unzulaessige Id, Antwort reparieren: Befund bad", b != null && b.Zustand == Zustand.Bad, b == null ? null : b.Zustand);
+            h.Ist("unzulaessige Id: KEINE Massnahme geraet.aktivieren, kein Parameter instanzId", b != null && b.Massnahmen.Count == 0 && !b.Parameter.ContainsKey(WartungsToolbox.Kern.Regeln.Hardware.ParamInstanzId), b == null ? null : string.Join(",", b.Massnahmen));
+            h.Ist("unzulaessige Id: Rat nennt den Geraete-Manager von Hand und die Kennung als Grund", b != null && b.Rat.Contains("Geräte-Manager") && b.Rat.Contains("von Hand") && b.Rat.Contains("Kennung"), b == null ? null : b.Rat);
+            h.Ist("unzulaessige Id: keine Frage (die Antwort gilt)", b != null && b.Frage == null);
+            // Gegenprobe: dieselbe Id ohne das Fragezeichen ist zulaessig und bekommt die Massnahme.
+            const string Sauber = @"SWD\WPDBUSENUM\_USBSTOR#DISK&VEN_FREMD#7&1A2B3C4D&0&#{53f56307-b6bf-11d0-94f2-00a0c91efb8b}";
+            g.InstanzId = Sauber;
+            var e2 = new Entscheidungen();
+            e2.Setze("geraet:" + Sauber + ":22", Entscheidungen.Reparieren, "2026-09-11T15:00:00Z");
+            var b2 = Harness.Einer(Laufen(h, s, e2), "geraet.problem." + Sauber);
+            h.Ist("Gegenprobe: zulaessige Id => Massnahme geraet.aktivieren mit instanzId", b2 != null && b2.Massnahmen.Contains(WartungsToolbox.Kern.Regeln.Hardware.MAktivieren) && b2.Parameter.ContainsKey(WartungsToolbox.Kern.Regeln.Hardware.ParamInstanzId) && b2.Parameter[WartungsToolbox.Kern.Regeln.Hardware.ParamInstanzId] == Sauber, b2 == null ? "null" : string.Join(",", b2.Massnahmen));
+            h.Ist("Gegenprobe: Rat nennt die Massnahme", b2 != null && b2.Rat.Contains("Maßnahme"), b2 == null ? null : b2.Rat);
+        }
+
+        static string Kurz(string s)
+        {
+            if (s == null) return "null";
+            string t = s.Replace("\t", "\\t");
+            return t.Length > 40 ? t.Substring(0, 20) + "…(" + s.Length + " Zeichen)" : "„" + t + "“";
         }
 
         // ---------------------------------------------------------------- (c) Code 43 und Code 10

@@ -173,7 +173,15 @@ namespace WartungsToolbox
                 // Der Helfer prueft jede Kennung selbst (Katalog.AutoCatalog) und lehnt eine
                 // unbekannte ab, bevor irgendetwas laeuft: das Ergebnis ist dann Exit 2.
                 string schluessel = string.Join(";", Scheduler.ReadActions() ?? new string[0]);
-                Plan plan = Plan.Neu(Titel).Mit("wartung.auto", "schluessel", schluessel);
+                // Freigaben (Meilenstein 3): nur wenn der Nutzer welche gesetzt hat, kommt VOR den
+                // Werkzeugsaetzen der Schritt wartung.massnahmen dazu (misst, wertet die Regeln aus,
+                // fuehrt die freigegebenen Stufe-1-Massnahmen aus, die ein Befund vorschlaegt, und
+                // weist sie ueber eine zweite Messung nach). Die Liste geht zusaetzlich an
+                // wartung.auto, damit das Protokoll des Werkzeugsatzes sie nennt; ausgewertet wird
+                // sie nur in wartung.massnahmen. host\ShellForm.cs (RunScheduledJobsNow) baut denselben
+                // Plan ueber PlanBauen.
+                string[] freigaben = Scheduler.ReadFreigaben();
+                Plan plan = PlanBauen(schluessel, freigaben);
 
                 // Zeilen des Helfers landen im app.log, aber nur die tragenden Arten: normal
                 // und dim sind die Werkzeugausgabe (Tausende Zeilen bei sfc /scannow), die
@@ -199,9 +207,11 @@ namespace WartungsToolbox
                 // die Zeilen der Schicht host sagen dem Leser des Protokolls, WER den Lauf
                 // bestellt hat und wie er fuer den Besteller ausging.
                 k.Protokoll.Schreibe(Protokoll.Host, Protokoll.Anfang, "wartung.auto", "Geplante Wartung gestartet (Aufgabenplanung)",
-                    new { planId = plan.Id, schluessel = schluessel.Length == 0 ? "(Standardsatz)" : schluessel });
+                    new { planId = plan.Id, schluessel = schluessel.Length == 0 ? "(Standardsatz)" : schluessel,
+                          freigaben = freigaben.Length == 0 ? "(keine)" : string.Join(";", freigaben), schritte = plan.Schritte.Count });
                 AppLog.Info("Geplante Wartung gestartet (Aufgabenplanung), Plan " + plan.Id
                             + ", Aufgaben: " + (schluessel.Length == 0 ? "Standardsatz" : schluessel)
+                            + ", Freigaben: " + (freigaben.Length == 0 ? "keine" : string.Join(", ", freigaben))
                             + ", Protokoll " + (k.Protokoll.Pfad ?? "(nur im Speicher)"));
 
                 PlanErgebnis erg = new LokalAusfuehrer().Plan(plan, k);
@@ -221,6 +231,11 @@ namespace WartungsToolbox
                 else if (erg.Abgebrochen || erg.Exit == PlanErgebnis.AbgebrochenExit) { kind = "bad"; msg = "Abgebrochen"; exit = PlanErgebnis.AbgebrochenExit; }
                 else if (erg.Problem || erg.Exit != PlanErgebnis.Ok) { kind = "warn"; msg = "Mit Hinweisen abgeschlossen"; }
                 else { kind = "good"; msg = "Erfolgreich abgeschlossen"; }
+                // Was der Schritt wartung.massnahmen getan hat, gehoert in den Verlaufssatz: der
+                // Nutzer hat die Massnahmen freigegeben und soll sehen, ob und wie oft das griff.
+                // Nur wenn der Schritt lief (Werte gesetzt); abgelehnt oder ohne Freigaben fehlt er.
+                string massnahmenSatz = MassnahmenSatz(erg);
+                if (massnahmenSatz != null) msg += ", " + massnahmenSatz;
                 if (erg.Wert("neustart") == "1") msg += ", ein Neustart steht noch aus";
 
                 k.Protokoll.Schreibe(Protokoll.Host, Protokoll.Ende, "wartung.auto", "Geplante Wartung beendet: " + msg,
@@ -244,6 +259,85 @@ namespace WartungsToolbox
                         new { kind, exit, sekunden = (int)sekunden, typ = ex.GetType().Name });
             }
             return exit;
+        }
+
+        /// <summary>
+        /// Der Plan der geplanten Wartung, fuer --auto und fuer den Lauf in der offenen App
+        /// (host\ShellForm.cs, RunScheduledJobsNow) derselbe: erst wartung.massnahmen mit den
+        /// Freigaben (nur wenn welche gesetzt sind), dann wartung.auto mit dem Werkzeugsatz.
+        /// schluessel = ';'-Liste aus Scheduler.ReadActions (leer = Standardsatz), freigaben =
+        /// Scheduler.ReadFreigaben (nie null). Beide Schritte tragen "freigaben", ausgewertet
+        /// wird es in wartung.massnahmen (helfer\Massnahmen\Auto.cs).
+        /// </summary>
+        internal static Plan PlanBauen(string schluessel, string[] freigaben)
+        {
+            if (freigaben == null) freigaben = new string[0];
+            string freigabenText = string.Join(";", freigaben);
+            Plan plan = Plan.Neu(Titel);
+            if (freigaben.Length > 0) plan.Mit("wartung.massnahmen", "freigaben", freigabenText);
+            plan.Mit("wartung.auto", "schluessel", schluessel ?? "", "freigaben", freigabenText);
+            return plan;
+        }
+
+        /// <summary>
+        /// Satz fuer den Verlauf aus den Werten des Schritts wartung.massnahmen (helfer\Massnahmen\Auto.cs):
+        /// auto.massnahmen = Anzahl ausgefuehrt, auto.nachweise = "bestanden/geprueft",
+        /// auto.nichtausfuehrbar = Vorschlaege, die nicht liefen (Pflichtparameter fehlte am Befund,
+        /// oder die Pruefung der Teilmassnahme lehnte den Auftrag ab), sicherung.dateien = ';'-Liste
+        /// der Sicherungsdateien. null, wenn der Schritt nicht bis zur Auswahl kam (Messung
+        /// gescheitert, abgebrochen, abgelehnt, keine Freigaben): dann nennt der Verlauf keine Zahl.
+        /// Beispiele: "2 Maßnahmen, 2 von 2 Nachweisen bestanden, 1 Sicherung angelegt",
+        /// "keine freigegebene Maßnahme war fällig",
+        /// "keine Maßnahme lief, 1 Vorschlag nicht ausführbar (Parameter fehlt oder ungültig)".
+        /// </summary>
+        internal static string MassnahmenSatz(PlanErgebnis erg)
+        {
+            if (erg == null) return null;
+            int anzahl;
+            if (!Zahl(erg.Wert("auto.massnahmen"), out anzahl)) return null;
+            int nichtAusfuehrbar;
+            Zahl(erg.Wert("auto.nichtausfuehrbar"), out nichtAusfuehrbar);
+            int sicherungen = ListenLaenge(erg.Wert("sicherung.dateien"));
+
+            var teile = new System.Collections.Generic.List<string>();
+            if (anzahl <= 0)
+                teile.Add(nichtAusfuehrbar > 0 ? "keine Maßnahme lief" : "keine freigegebene Maßnahme war fällig");
+            else
+            {
+                int bestanden = 0, geprueft = 0;
+                string[] nachweise = (erg.Wert("auto.nachweise") ?? "").Split('/');
+                if (nachweise.Length == 2) { Zahl(nachweise[0], out bestanden); Zahl(nachweise[1], out geprueft); }
+                string satz = Zahlwort(anzahl, "Maßnahme", "Maßnahmen");
+                if (geprueft <= 0) satz += ", kein Nachweis geprüft";
+                else satz += ", " + bestanden + " von " + Zahlwort(geprueft, "Nachweis", "Nachweisen") + " bestanden";
+                teile.Add(satz);
+            }
+            if (nichtAusfuehrbar > 0) teile.Add(Zahlwort(nichtAusfuehrbar, "Vorschlag", "Vorschläge") + " nicht ausführbar (Parameter fehlt oder ungültig)");
+            if (sicherungen > 0) teile.Add(Zahlwort(sicherungen, "Sicherung", "Sicherungen") + " angelegt");
+            return string.Join(", ", teile);
+        }
+
+        /// <summary>Ganze Zahl aus einem Wert; false (und 0) bei leer oder nicht lesbar.</summary>
+        static bool Zahl(string text, out int wert)
+        {
+            wert = 0;
+            return !string.IsNullOrEmpty(text)
+                   && int.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out wert);
+        }
+
+        /// <summary>Anzahl der nicht leeren Eintraege einer ';'-Liste.</summary>
+        static int ListenLaenge(string liste)
+        {
+            if (string.IsNullOrEmpty(liste)) return 0;
+            int n = 0;
+            foreach (string t in liste.Split(';')) if (t.Trim().Length > 0) n++;
+            return n;
+        }
+
+        /// <summary>"1 Maßnahme", "2 Maßnahmen": Zahl mit dem passenden Wort.</summary>
+        internal static string Zahlwort(int n, string einzahl, string mehrzahl)
+        {
+            return n.ToString(System.Globalization.CultureInfo.InvariantCulture) + " " + (n == 1 ? einzahl : mehrzahl);
         }
 
         static IntPtr FindInteractiveWindow()

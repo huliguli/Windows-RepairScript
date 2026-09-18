@@ -440,6 +440,20 @@ namespace WartungsToolbox
         /// Schickt den Aktionskatalog an die Oberflaeche. Er ist damit nur noch an EINER
         /// Stelle gepflegt; frueher stand eine zweite Fassung in ui/app.js, und 18 von 28
         /// Beschreibungen waren bereits auseinandergelaufen.
+        ///
+        /// Seit 8.2 fehlen Eintraege mit ErsetztDurch (eine Massnahme des Kern-Katalogs
+        /// erledigt die Aufgabe an der Befund-Karte, mit Nachweis; leer zaehlt wie null, ein
+        /// leerer Text versteckte sonst still). Die id bleibt der Listenindex aus
+        /// Catalog.All(): die Oberflaeche sucht Eintraege ueber das Feld id
+        /// (find(x => x.id === id)), nie ueber die Position im Array, deshalb darf die Liste
+        /// Luecken haben. "run" mit einer ersetzten Nummer laeuft weiter (Schritte.Aktion),
+        /// nur die Karte dafuer gibt es nicht mehr.
+        ///
+        /// massnahmen (docs/M3-ENTWURF.md, Abschnitt 9.1): der Kern-Katalog je Kennung mit den
+        /// Marken, wie der Kern sie fuehrt (art ausfuehren|ansicht|rat, sicherung keine|
+        /// werte-merken|wiederherstellungspunkt|reg-export, rueckweg von selbst|sicherung|keiner);
+        /// die Oberflaeche beschriftet damit den Knopf je Karte, die Texte der Vorschau kommen
+        /// erst mit massnahmeVorschau.
         /// </summary>
         void SendCatalog()
         {
@@ -454,7 +468,19 @@ namespace WartungsToolbox
                     shot = _shotPath != null,
                     categories = Catalog.Categories,
                     notes = Catalog.CategoryNotes,
-                    actions = _actions.Select(a => new
+                    massnahmen = Kern.Massnahmen.Alle().Select(k => new
+                    {
+                        kennung = k.Kennung,
+                        titel = k.Titel,
+                        art = k.Art,
+                        stufe = k.Stufe,
+                        sicherung = k.Sicherung,
+                        rueckweg = k.Rueckweg,
+                        neustart = k.Neustart,
+                        dauer = k.DauerSekunden,
+                        freischaltbar = k.Freischaltbar,
+                    }).ToArray(),
+                    actions = _actions.Where(a => string.IsNullOrEmpty(a.ErsetztDurch)).Select(a => new
                     {
                         id = a.Id,
                         title = a.Title,
@@ -1213,6 +1239,13 @@ namespace WartungsToolbox
                     // unabhaengig) Aenderungsrecht auf den ganzen Baum, wie Ablage.RechteSichern.
                     // Ein Fehler hier (Ordner fehlt) bricht das Update nicht ab.
                     "icacls \"%ProgramData%\\WindowsWartung\" /grant *S-1-5-32-545:(OI)(CI)M /T >nul 2>&1\r\n" +
+                    // Die Zeile davor gibt BUILTIN\Users Aenderungsrecht auf den ganzen Baum, also
+                    // auch auf sicherungen\massnahmen. Dort liegen die Sicherungsdateien der
+                    // Massnahmen (Rueckweg): der Helfer nimmt nur Dateien mit seiner eigenen,
+                    // nicht vererbenden DACL an (docs/M3-ENTWURF.md 8.2). Deshalb bekommt der
+                    // Ordner sie hier sofort zurueck: Vererbung aus, Administratoren und SYSTEM
+                    // Vollzugriff, Benutzer nur Lesen und Ausfuehren. Nur, wenn es ihn schon gibt.
+                    "if exist \"%ProgramData%\\WindowsWartung\\sicherungen\\massnahmen\" icacls \"%ProgramData%\\WindowsWartung\\sicherungen\\massnahmen\" /inheritance:r /grant:r *S-1-5-32-544:(OI)(CI)F *S-1-5-18:(OI)(CI)F *S-1-5-32-545:(OI)(CI)RX /T >nul 2>&1\r\n" +
                     // Erst die bisherige Fassung zur Seite legen. Ohne diesen Schritt gab es
                     // keinen Rueckweg: Bricht das Kopieren mittendrin ab, blieb eine halb
                     // ueberschriebene Installation stehen - neue Oberflaeche, alte Programmdatei
@@ -1427,6 +1460,7 @@ namespace WartungsToolbox
                     Abgewiesen(a.Title, "„" + a.Title + "“ braucht eine Eingabe und läuft über seinen eigenen Befehl, nicht über „run“.", "Falscher Befehl");
                     return;
                 }
+                ErsetztMelden(a);
                 if (StartAbgelehnt(a.Title)) return;
                 bool restore = ToBool(m, "restore");
                 ReadPost(m);
@@ -1448,6 +1482,7 @@ namespace WartungsToolbox
                         try { id = Convert.ToInt32(o); } catch { continue; }
                         MaintenanceAction a = Schritte.Aktion(id);
                         if (a == null || a.Special != null) continue;   // unbekannt oder Sonderaktion, nicht sammelbar
+                        ErsetztMelden(a);
                         gewaehlt.Add(a);
                     }
                 }
@@ -1483,6 +1518,17 @@ namespace WartungsToolbox
             else if (type == "ergaenzen") Ergaenzen();
             // Antwort auf eine Frage des Systems ("so lassen" oder "reparieren"), Grundsatz 1.
             else if (type == "antwort") Antwort(Str(m, "id"), Str(m, "wert"));
+            // --- Massnahmen des Kern-Katalogs (Meilenstein 3, docs/M3-ENTWURF.md 9.2) --------
+            // Die Oberflaeche schickt nur Kennung und Befund-Schluessel; Parameter kommen aus
+            // dem Befund im Host, nie aus der Nachricht (CheckFlow.MassnahmePruefen).
+            else if (type == "massnahmeVorschau") MassnahmeVorschau(Str(m, "kennung"), Str(m, "schluessel"));
+            else if (type == "massnahmeAusfuehren") MassnahmeAusfuehren(Str(m, "kennung"), Str(m, "schluessel"));
+            // Rueckweg nur mit einem Dateinamen (kein Pfad); der Helfer prueft Ort und Herkunft.
+            else if (type == "massnahmeRueckweg") MassnahmeRueckweg(Str(m, "sicherung"));
+            // Feste Zuordnung (update.einstellungen.oeffnen), nichts Freies.
+            else if (type == "massnahmeAnsicht") MassnahmeAnsicht(Str(m, "kennung"));
+            // Freigaben fuer die geplante Wartung (lokal, keine Rechte); Antwort ist freigaben.
+            else if (type == "freigabenSetzen") FreigabenSetzen(m);
             // Ein Editor mit Administratorrechten koennte jede Datei des Systems
             // ueberschreiben - deshalb ueber die Oberflaeche des Nutzers oeffnen.
             else if (type == "openLog") Shell.OeffneImNutzerkontext(AppLog.PfadZumOeffnen());
@@ -1527,8 +1573,8 @@ namespace WartungsToolbox
                 bool ok = Autostart.SetEnabled(Str(m, "loc"), Str(m, "key"), ToBool(m, "enable"));
                 if (!ok) Post(new { type = "autostart", items = Autostart.List(), fehlgeschlagen = true });
             }
-            else if (type == "historyList") Post(new { type = "history", items = History.List() });
-            else if (type == "historyClear") { History.Clear(); Post(new { type = "history", items = History.List() }); }
+            else if (type == "historyList") Post(new { type = "history", items = VerlaufFuerOberflaeche() });
+            else if (type == "historyClear") { History.Clear(); Post(new { type = "history", items = VerlaufFuerOberflaeche() }); }
             else if (type == "restoreList") StartRestoreList();
             else if (type == "restoreCreate") RestoreCreate(Str(m, "desc"));
             else if (type == "restoreRevert") RestoreRevert(ToInt(m, "seq"));
@@ -1725,6 +1771,14 @@ namespace WartungsToolbox
         // bis Done gelaufen ist, und Done schliesst dann selbst (_schliessenNachDone).
         void Done(string title, LogKind k, string message, double seconds)
         {
+            // Die geplante Wartung in der offenen App: Zahl der Massnahmen, Nachweise und
+            // Sicherungen gehoeren in Verlauf und Fertigmeldung, nicht nur in die Konsole
+            // (Entwurf M3, Abschnitt 9.1). Ohne Ergebnis (Helfer kam nicht zustande) bleibt es beim Satz.
+            if (title == "Geplante Wartung")
+            {
+                string satz = AutoRunner.MassnahmenSatz(_runner.LetztesErgebnis);
+                if (!string.IsNullOrEmpty(satz)) message = message + ", " + satz;
+            }
             History.Add(title, KindStr(k), message, seconds);
             Post(new { type = "done", title = title, kind = KindStr(k), message = message });
 
@@ -1878,16 +1932,23 @@ namespace WartungsToolbox
             string[] keys = Scheduler.ReadActions();
             string schluessel = keys == null ? "" : string.Join(";", keys);
             const string titel = "Geplante Wartung";
-            Kern.Plan plan = Kern.Plan.Neu(titel).Mit("wartung.auto", "schluessel", schluessel);
+            // Derselbe Plan wie im --auto-Prozess (AutoRunner.PlanBauen, docs/M3-ENTWURF.md 9.3):
+            // erst wartung.massnahmen mit den freigegebenen Kennungen (nur, wenn welche gesetzt
+            // sind), dann wartung.auto mit dem Werkzeugsatz. Zwei Bauweisen liefen sonst auseinander.
+            string[] freigaben = Scheduler.ReadFreigaben();
+            Kern.Plan plan = AutoRunner.PlanBauen(schluessel, freigaben);
             // Ins Protokoll, nicht nur ins Fenster: Bei der Fehlersuche am 22.08.2026 war
             // genau diese Luecke die teuerste. Die geplante Wartung war zehn Minuten lang
             // mit DISM und SFC ueber das System gelaufen, ohne in app.log eine einzige
             // Zeile zu hinterlassen - im Protokoll sah es aus, als sei nichts geschehen.
-            AppLog.Info("Geplante Wartung gestartet (Zeitplan, in der offenen App" + (keys == null ? ", Standardsatz" : ", " + keys.Length + " Aufgaben") + ").");
+            AppLog.Info("Geplante Wartung gestartet (Zeitplan, in der offenen App" + (keys == null ? ", Standardsatz" : ", " + keys.Length + " Aufgaben")
+                        + ", " + freigaben.Length + " freigegebene Maßnahme(n)" + (freigaben.Length > 0 ? ": " + string.Join(", ", freigaben) : "") + ").");
             // Der Lauf kommt ohne Klick: die Oberflaeche richtet den Ablaufbildschirm dafuer her
-            // (Titel, ein Schritt, Balken zurueck, "Abbrechen" statt "Zurück"; Entwurf, Abschnitt
+            // (Titel, Schrittzahl, Balken zurueck, "Abbrechen" statt "Zurück"; Entwurf, Abschnitt
             // 14, B29). Ohne diese Nachricht lief der Balken unter dem Titel des vorigen Werkzeugs.
-            Post(new { type = "flowStart", mode = "action", total = 1, titel = titel });
+            // total ist die Schrittzahl des Plans (1 ohne Freigaben, 2 mit): der Helfer meldet bei
+            // mehr als einem Schritt (i, n), und mit total = 1 stand dann "Schritt 2 von 1".
+            Post(new { type = "flowStart", mode = "action", total = plan.Schritte.Count, titel = titel });
             Log("●  Geplante Wartung wird jetzt automatisch ausgeführt (Zeitplan).", LogKind.Warn);
             _runner.RunPlan(titel, plan);
         }
@@ -1903,6 +1964,92 @@ namespace WartungsToolbox
             AppLog.Warn(titel + " nicht gestartet: " + grund);
             Post(new { type = "log", text = "✖  " + grund, kind = "bad" });
             Post(new { type = "done", title = titel, kind = "bad", message = kurz });
+        }
+
+        /// <summary>
+        /// run/runQueue mit einer Nummer, die eine Massnahme des Kern-Katalogs ersetzt hat
+        /// (ErsetztDurch, docs/M3-ENTWURF.md 0.6 und 9.3): der Lauf bleibt erlaubt (die Schritte
+        /// existieren, AutoSet und werkzeug-Plaene brauchen sie), aber die Karte gibt es in der
+        /// Oberflaeche nicht mehr. Die Zeile erklaert einen Verlaufseintrag, den die Oberflaeche
+        /// nicht mehr ausloesen kann (Belegaufnahme, alte Warteschlange, fremde Nachricht).
+        /// </summary>
+        static void ErsetztMelden(MaintenanceAction a)
+        {
+            if (a == null || string.IsNullOrEmpty(a.ErsetztDurch)) return;
+            AppLog.Warn("Werkzeug Nr. " + a.Id + " („" + a.Title + "“) ist durch " + a.ErsetztDurch + " ersetzt; der Lauf bleibt erlaubt, die Karte gibt es nicht mehr.");
+        }
+
+        /// <summary>
+        /// Verlauf fuer die Oberflaeche (Nachricht history, docs/M3-ENTWURF.md 9.1): ein Eintrag
+        /// mit Sicherungsdatei bekommt sicherung nur, wenn die Datei noch unter
+        /// sicherungen\massnahmen liegt (CheckFlow.SicherungPfad: File.Exists auf dem aus
+        /// Ablage.Maschinenweit() zusammengesetzten Pfad, davor Ablage.IstAbzweigung, der Ordner
+        /// wird nie angelegt; Entwurf 8.10), dazu sicherungTitel = Titel der Hin-Massnahme aus
+        /// der Kennung im Dateinamen. Ist die Datei weg, sind beide Felder null: der Eintrag
+        /// bleibt, nur der Knopf „Rückgängig“ fehlt. Eintraege ohne das Feld (bis 8.1) kommen
+        /// unveraendert durch. Die Liste ist eine Kopie; History.List selbst bleibt unangetastet.
+        /// </summary>
+        object[] VerlaufFuerOberflaeche()
+        {
+            List<object> items = History.List();
+            var erg = new List<object>(items.Count);
+            foreach (object o in items)
+            {
+                var d = o as Dictionary<string, object>;
+                object s;
+                if (d == null || !d.TryGetValue("sicherung", out s) || !(s is string)) { erg.Add(o); continue; }
+                var kopie = new Dictionary<string, object>(d);
+                string name = SicherungName((string)s);
+                if (name == null || SicherungPfad(name) == null)
+                {
+                    kopie["sicherung"] = null;
+                    kopie["sicherungTitel"] = null;
+                }
+                else
+                {
+                    Kern.Massnahme hin = HinMassnahme(name);
+                    object aktion;
+                    string titel = hin != null ? hin.Titel
+                        : (d.TryGetValue("action", out aktion) && aktion is string ? ((string)aktion).Replace("Maßnahme: ", "") : name);
+                    kopie["sicherung"] = name;
+                    kopie["sicherungTitel"] = titel;
+                }
+                erg.Add(kopie);
+            }
+            return erg.ToArray();
+        }
+
+        /// <summary>
+        /// Befehl freigabenSetzen (docs/M3-ENTWURF.md 9.2): die volle Liste der Kennungen, die
+        /// die geplante Wartung von selbst ausfuehren darf. Lokal und ohne Rechte in zeitplan.json;
+        /// Scheduler.WriteFreigaben filtert gegen Kern.Massnahmen.Freischaltbare() und nennt
+        /// Weggelassenes im app.log. Die Antwort freigaben traegt immer den Stand, der jetzt in
+        /// der Datei steht (ok = false: nicht gespeichert, die Schalter der Oberflaeche springen
+        /// zurueck). Dateizugriff im Hintergrund, nie stumm.
+        /// </summary>
+        void FreigabenSetzen(Dictionary<string, object> m)
+        {
+            var kennungen = new List<string>();
+            object v;
+            if (m.TryGetValue("freigaben", out v) && v is object[])
+            {
+                foreach (object o in (object[])v)
+                {
+                    string k = o as string;
+                    // Nur Kennungen in der Form des Katalogs (a-z, Ziffern, Punkt); alles andere ist
+                    // kein Tippfehler der Oberflaeche, sondern eine fremde Nachricht.
+                    if (string.IsNullOrEmpty(k) || k.Length > 64 || !System.Text.RegularExpressions.Regex.IsMatch(k, "^[a-z0-9.]+$")) continue;
+                    if (!kennungen.Contains(k)) kennungen.Add(k);
+                }
+            }
+            Thread t = new Thread(delegate ()
+            {
+                bool ok = Scheduler.WriteFreigaben(kennungen.ToArray());
+                if (!ok) AppLog.Warn("Freigaben der geplanten Wartung nicht gespeichert; die Oberfläche bekommt den alten Stand.");
+                UiPost(new { type = "freigaben", ok = ok, freigaben = Scheduler.ReadFreigaben() });
+            });
+            t.IsBackground = true;
+            t.Start();
         }
 
         // Grenzen der Wartezeit: 5 Sekunden bis 24 Stunden. Die Oberflaeche bietet 1 Minute
@@ -2222,21 +2369,43 @@ namespace WartungsToolbox
         // ---------- Geplante Wartung ----------
         // justCreated (nur nach zeitplan.anlegen) und fehler (Eingabe abgewiesen, nichts lief)
         // sind Zusatzfelder; ohne beide ist es die reine Statusabfrage.
+        // freigaben (Kennungen aus zeitplan.json) und freischaltbar (die Stufe-1-Massnahmen aus
+        // Kern.Massnahmen.Freischaltbare(), sechs) kommen seit 8.2 immer mit (docs/M3-ENTWURF.md
+        // 9.1): die Einstellungen zeigen je Eintrag einen Schalter, Vorgabe aus freigaben.
         void SendScheduleStatus(bool? justCreated = null, string fehler = null)
         {
             Thread t = new Thread(delegate ()
             {
                 bool exists = Scheduler.Exists();
                 object cfg = Scheduler.Read();
+                string[] freigaben = Scheduler.ReadFreigaben();
+                object[] freischaltbar = Freischaltbare();
                 if (justCreated.HasValue)
-                    UiPost(new { type = "schedule", exists = exists, config = cfg, justCreated = justCreated.Value });
+                    UiPost(new { type = "schedule", exists = exists, config = cfg, freigaben = freigaben, freischaltbar = freischaltbar, justCreated = justCreated.Value });
                 else if (fehler != null)
-                    UiPost(new { type = "schedule", exists = exists, config = cfg, fehler = fehler });
+                    UiPost(new { type = "schedule", exists = exists, config = cfg, freigaben = freigaben, freischaltbar = freischaltbar, fehler = fehler });
                 else
-                    UiPost(new { type = "schedule", exists = exists, config = cfg });
+                    UiPost(new { type = "schedule", exists = exists, config = cfg, freigaben = freigaben, freischaltbar = freischaltbar });
             });
             t.IsBackground = true;
             t.Start();
+        }
+
+        /// <summary>Die freischaltbaren Massnahmen fuer die Einstellungen: Kennung, Titel, Was passiert, Dauer in Sekunden.</summary>
+        static object[] Freischaltbare()
+        {
+            try
+            {
+                return Kern.Massnahmen.Freischaltbare().Select(k => (object)new
+                {
+                    kennung = k.Kennung, titel = k.Titel, wasPassiert = k.WasPassiert, dauer = k.DauerSekunden,
+                }).ToArray();
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Freischaltbare Maßnahmen nicht lesbar: " + ex.Message);
+                return new object[0];
+            }
         }
 
         /// <summary>

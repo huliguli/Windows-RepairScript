@@ -6,8 +6,9 @@ using WartungsToolbox.Kern;
 
 namespace WartungsToolbox
 {
-    // Reparatur-Verlauf: jede Ausfuehrung (Zeit, Aktion, Ergebnis, Dauer) wird nach
-    // %ProgramData%\WindowsWartung\verlauf\history.json geschrieben (neueste zuerst, begrenzt).
+    // Reparatur-Verlauf: jede Ausfuehrung (Zeit, Aktion, Ergebnis, Dauer, seit 8.2 optional die
+    // Sicherungsdatei einer Massnahme) wird nach %ProgramData%\WindowsWartung\verlauf\history.json
+    // geschrieben (neueste zuerst, begrenzt).
     //
     // Maschinenweit seit 8.1 (Rechte-Modell B): die Oberflaeche laeuft ohne Rechte, der
     // Helfer und die geplante Wartung (--auto) laufen erhoeht - alle drei schreiben denselben
@@ -168,6 +169,20 @@ namespace WartungsToolbox
         // Einen Lauf protokollieren. kind ist der UI-Kind-String ("good"/"bad"/"warn"/"norm").
         public static void Add(string action, string kind, string message, double seconds)
         {
+            Add(action, kind, message, seconds, null);
+        }
+
+        /// <summary>
+        /// Wie oben, mit der Sicherungsdatei einer Massnahme (Meilenstein 3, docs/M3-ENTWURF.md
+        /// Abschnitt 9.1): sicherung ist NUR der Dateiname unter sicherungen\massnahmen, nie ein
+        /// Pfad; null oder leer heisst "kein Rueckweg", dann fehlt das Feld im Eintrag wie bei
+        /// allen Eintraegen bis 8.1. Ob die Datei noch liegt, prueft der Host beim Lesen
+        /// (ShellForm, Nachricht history), nicht der Verlauf: der wird auch vom erhoehten Helfer
+        /// und der geplanten Wartung geschrieben und soll keinen Ordner anfassen. Ein Pfadanteil
+        /// wird hier abgeschnitten, damit nie ein fremder Ort in der Datei landet.
+        /// </summary>
+        public static void Add(string action, string kind, string message, double seconds, string sicherung)
+        {
             lock (_lock)
             {
                 try
@@ -187,6 +202,11 @@ namespace WartungsToolbox
                     entry["kind"] = string.IsNullOrEmpty(kind) ? "norm" : kind;
                     entry["message"] = message == null ? "" : message;
                     entry["seconds"] = Math.Round(seconds, 1);
+                    // Optional (8.2): nur der Dateiname, alte Eintraege ohne das Feld bleiben lesbar,
+                    // weil jeder Eintrag ein freies Woerterbuch ist und die Oberflaeche fehlende
+                    // Felder als "kein Rueckweg" liest.
+                    string sicherungName = SicherungName(sicherung);
+                    if (sicherungName != null) entry["sicherung"] = sicherungName;
 
                     list.Insert(0, entry);
                     while (list.Count > Max) list.RemoveAt(list.Count - 1);
@@ -196,6 +216,28 @@ namespace WartungsToolbox
                 }
                 catch (Exception ex) { AppLog.Warn("Verlauf konnte nicht geschrieben werden: " + ex.Message); }
             }
+        }
+
+        /// <summary>
+        /// Dateiname der Sicherung, wie ihn die Kennung rueckweg annimmt (Buchstaben, Ziffern,
+        /// Punkt, Unterstrich, Bindestrich, Endung .json, hoechstens 200 Zeichen); null bei
+        /// leer oder ungueltig. Ein Pfad wird vorher auf seinen Dateinamen gekuerzt.
+        /// </summary>
+        static string SicherungName(string sicherung)
+        {
+            if (string.IsNullOrEmpty(sicherung)) return null;
+            string name;
+            try { name = Path.GetFileName(sicherung); }
+            catch (Exception) { return null; }
+            if (string.IsNullOrEmpty(name) || name.Length > 200) return null;
+            if (!name.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) return null;
+            foreach (char c in name)
+            {
+                bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+                          || c == '.' || c == '_' || c == '-';
+                if (!ok) return null;
+            }
+            return name;
         }
 
         /// <summary>

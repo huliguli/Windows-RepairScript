@@ -295,6 +295,12 @@ namespace WartungsToolbox.Helfer
                 Ausfuehren = RegistrierungEntfernen,
             });
 
+            // Meilenstein 3: die Massnahmen der Stufen 1 und 2 liegen je Bereich unter helfer/Massnahmen/
+            // (Netz, Sicherheit, Datentraeger, Leistung, Updates, Hardware, Rueckweg, Auto) und melden
+            // sich hier an; Stufe und Texte kommen aus dem Kern-Katalog (kern\Massnahmen.cs) unter
+            // derselben Kennung.
+            foreach (Massnahme m in MassnahmenM3.Alle()) l.Add(m);
+
             return l;
         }
 
@@ -417,11 +423,27 @@ namespace WartungsToolbox.Helfer
             }
 
             int? nachher = LetzteSicherungsnummer();
+            // Windows meldet CreateRestorePoint mit 0, traegt den Punkt aber erst Sekunden spaeter in
+            // die Aufzaehlung ein (gemessen 18.09.2026 auf Windows 11 26200: 7 s nach der Rueckgabe
+            // noch 0 Punkte, Minuten spaeter Nr. 271 vorhanden). Ohne Warten waere jeder echte Punkt
+            // ein "nicht bestanden". Deshalb bis 30 s in Schritten von 2 s nachlesen, solange die
+            // Nummer nicht gestiegen ist; ein Abbruch beendet das Warten.
+            int gewartet = 0;
+            if (rueckgabe == 0 && vorher.HasValue && (!nachher.HasValue || nachher.Value <= vorher.Value))
+            {
+                for (int i = 0; i < 15 && !k.IstAbgebrochen; i++)
+                {
+                    System.Threading.Thread.Sleep(2000);
+                    gewartet += 2;
+                    nachher = LetzteSicherungsnummer();
+                    if (nachher.HasValue && nachher.Value > vorher.Value) break;
+                }
+            }
             bool punktAngelegt = vorher.HasValue && nachher.HasValue && nachher.Value > vorher.Value;
             bool einerVorhanden = nachher.HasValue && nachher.Value > 0;
             string satz;
             if (punktAngelegt)
-                satz = "Wiederherstellungspunkt Nr. " + nachher + " angelegt";
+                satz = "Wiederherstellungspunkt Nr. " + nachher + " angelegt" + (gewartet > 0 ? " (nach " + gewartet + " Sekunden in der Liste)" : "");
             else if (einerVorhanden)
                 satz = drosselAufheben
                     ? "Kein neuer Wiederherstellungspunkt, obwohl die 24-Stunden-Drossel aufgehoben war; der vorhandene Nr. " + nachher + " gilt"
@@ -435,7 +457,7 @@ namespace WartungsToolbox.Helfer
             k.Werte["sicherung.satz"] = satz;
             if (k.Protokoll != null)
                 k.Protokoll.Schreibe(Protokoll.Helfer, Protokoll.Sicherung, "wiederherstellungspunkt", satz,
-                    new { vorher, nachher, rueckgabe, fehler, beschreibung });
+                    new { vorher, nachher, rueckgabe, fehler, beschreibung, gewartet });
             k.Schreibe(satz + ".", punktAngelegt ? "good" : "warn");
             return punktAngelegt;
         }
