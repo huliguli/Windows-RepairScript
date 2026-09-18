@@ -90,7 +90,7 @@ Roslyn-Compiler im SDK und die net48-Referenzassemblies.
 `tests\run-tests.ps1` läuft lokal und in der CI (Windows PowerShell 5.1). Dazu gehören:
 
 - **Kernproben** (`tools\lauf-proben.ps1`): die Regeln gegen aufgezeichnete Systembilder in
-  `tests\aufzeichnungen\gepflanzt-*.json` (146 handgeschriebene Bilder, über 7.600 Zusicherungen
+  `tests\aufzeichnungen\gepflanzt-*.json` (146 handgeschriebene Bilder, über 7.900 Zusicherungen
   in neun Probenklassen), darunter die Fehlerfälle, die ein Reparaturwerkzeug falsch behandeln
   könnte (absichtlich deaktiviertes Gerät, SMART-Warnung, englisches System). Seit 8.2 dazu
   `MassnahmenProben`: jede Kennung, die eine Regel anhängt, steht im Katalog; jeder Eintrag hat
