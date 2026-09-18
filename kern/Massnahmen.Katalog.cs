@@ -481,9 +481,15 @@ namespace WartungsToolbox.Kern
             if (e == null) return Nachweis.Unlesbar(wer + " ist im neuen Systembild nicht zu finden; ob er deaktiviert ist, lässt sich so nicht belegen.");
             if (e.Aktiviert == false) return Nachweis.Ja(wer + " ist jetzt deaktiviert und startet nicht mehr mit Windows.");
             if (e.Aktiviert == true) return Nachweis.Nein(wer + " ist weiterhin aktiv; der Task-Manager-Status wurde nicht übernommen.");
-            // Ohne StartupApproved-Wert startet der Eintrag (Windows zaehlt ihn als aktiv): der Helfer
-            // haette den Wert mit Byte 3 angelegt, er fehlt also nachweislich noch.
-            return Nachweis.Nein(wer + " hat keinen Task-Manager-Status; ohne ihn gilt er als aktiv, der Schalter wurde nicht geschrieben.");
+            // null hat drei Ursachen: die Quelle StartupApproved scheiterte (dann steht sie in der
+            // Fehlerliste, und nichts ist nachweislich), Byte 0 traegt einen ungedeuteten Wert, oder
+            // es gibt keinen Wert. Nur die letzten beiden sind ein Nein: Windows zaehlt den Eintrag
+            // dann als aktiv, und der Helfer haette Byte 3 angelegt (Gegenlesen 18.09.2026, wie
+            // UacStandard und UpdateVerborgen ihre Quelle pruefen).
+            var fehler = bild.FehlerVon("registry.autostart.startupapproved").FirstOrDefault();
+            if (fehler != null)
+                return Nachweis.Unlesbar(wer + ": der Task-Manager-Status (StartupApproved) ließ sich im neuen Systembild nicht lesen (" + fehler.Art + "); kein Nachweis.");
+            return Nachweis.Nein(wer + " hat keinen deutbaren Task-Manager-Status (Byte 0 nicht 2 oder 3); ohne ihn gilt er als aktiv, der Schalter wurde nicht geschrieben.");
         }
 
         // TASK_STATE (taskschd.h): 0 unbekannt, 1 deaktiviert, 2 in der Warteschlange, 3 bereit, 4 läuft.

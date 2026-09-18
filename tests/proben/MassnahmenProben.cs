@@ -30,7 +30,10 @@ namespace WartungsToolbox.Proben
     ///       (Signaturalter 0 -> bestanden, 10 -> nicht, und so weiter, mindestens 10 Nachweise),
     ///       mit den drei Ergebnisarten: Ja, Nein (Objekt gefunden, Zustand nachweislich alt) und
     ///       Unlesbar (Parameter fehlt, Objekt nicht im Bild, Wert nicht lesbar: Unbestimmt = true,
-    ///       nie bestanden); je Kennung mit Unlesbar-Zweig mindestens eine Unbestimmt-Probe; die 14
+    ///       nie bestanden); je Kennung mit Unlesbar-Zweig mindestens eine Unbestimmt-Probe, und
+    ///       zwar ausschliesslich ueber committete gepflanzt-*.json (die CI hat nichts anderes); die
+    ///       echte Aufzeichnung dieses PCs (dieser-pc-de.json, nur lokal) laeuft als Zusatzgruppe
+    ///       nach der Deckungspruefung und wird ohne Datei gemeldet uebersprungen, nie rot; die 14
     ///       Nachweise ohne messbaren Zustand (13 Ja plus wiederherstellungspunkt.zurueck) sind Nein,
     ///       sobald der Helfer nachweis.bestanden = 0 (oder einen anderen Wert als 1) meldet;
     ///   (c, TRIM) eine Deutung des Rohwerts DisableDeleteNotification (Massnahmen.TrimAn, Bit 0 =
@@ -62,6 +65,11 @@ namespace WartungsToolbox.Proben
     /// gedreht -> "Stufe 2 ohne Rueckweg 'sicherung' sind genau: update.dienst.aktivieren" und
     /// "update.dienst.aktivieren: Rueckweg keiner, Sicherung werte-merken" rot (2 von 7669);
     /// zurueckgebaut, Hash identisch.
+    /// 18.09.2026 (CI): Nachweise Netz, Leistung und Updates von dieser-pc-de.json auf die Paare
+    /// gepflanzt-massnahmen-*-vorher/-nachher umgezogen (Adapter 8, Fremd01/Fremd02/Fremd03/OneDrive,
+    /// \FremdUpdater, FremdManuell, HP-USB-Update); die drei lokalen Dateien weggelegt -> 7122 bestanden,
+    /// 0 rot (davor 9 rot: dreimal "Aufzeichnung vorhanden", sechs Deckungsluecken), zurueckgelegt ->
+    /// 7930 bestanden, 0 rot; verschwunden sind nur Zusicherungen ueber die lokale Datei.
     /// </summary>
     public static class MassnahmenProben
     {
@@ -193,6 +201,10 @@ namespace WartungsToolbox.Proben
             h.Ist("Grundmenge: mindestens 15 Kennungen mit Unlesbar-Zweig gelistet", MitUnlesbarZweig.Length >= 15, MitUnlesbarZweig.Length.ToString());
             foreach (string k in MitUnlesbarZweig)
                 h.Ist(k + ": mindestens ein Nachweis war Unbestimmt (nicht bestanden)", UnbestimmtGesehen.Contains(k));
+
+            // Erst nach der Deckungspruefung: die echte Aufzeichnung dieses PCs liegt nur lokal, in
+            // der CI fehlt sie, und die Deckung darf nicht an ihr haengen.
+            NachweiseDieserPc(h, saetze);
 
             h.Gruppe("Massnahmen: Saetze tragen Zahl, Bedingung oder Absage");
             h.Ist("Grundmenge: mindestens 150 Saetze gesammelt", saetze.Count >= 150, saetze.Count.ToString());
@@ -490,22 +502,35 @@ namespace WartungsToolbox.Proben
             s.Netz.IpAdressen.Clear();
             N(h, saetze, "Adressliste im Bild leer (nicht gelesen)", "netz.dhcp.erneuern", s, p, false, null, true);
 
-            // DNS zuruecksetzen: gesundes Bild mit fest eingetragenen Servern auf Adapter 10.
-            var d = h.Bild("dieser-pc-de.json"); if (d == null) return;
-            var fest = d.Netz.Dns.FirstOrDefault(x => x.AdapterIndex == 10 && x.Familie == 2);
-            h.Ist("Grundmenge: Adapter 10 mit fest eingetragenen IPv4-Namensservern", fest != null && fest.Statisch == true && fest.Server.Count >= 1);
+            // DNS zuruecksetzen: das Vorher-Bild des Paars (Adapter 8, Namensserver 10.0.0.53 fest
+            // eingetragen), im Speicher zum Nachher gedreht. Die echte Aufzeichnung dieses PCs
+            // (Adapter 10) laeuft nur noch als Zusatz in NachweiseDieserPc, wenn sie da ist.
+            const string Dns = "netz.dns.zuruecksetzen";
+            var d = h.Bild("gepflanzt-massnahmen-" + Dns + "-vorher.json"); if (d == null) return;
+            var fest = d.Netz.Dns.FirstOrDefault(x => x.AdapterIndex == 8 && x.Familie == 2);
+            h.Ist("Grundmenge: Adapter 8 im Bild, mit fest eingetragenen IPv4-Namensservern", d.Netz.Adapter.Any(a => a.Index == 8) && fest != null && fest.Statisch == true && fest.Server.Count >= 1);
             if (fest == null) return;
-            var p10 = P("adapter", "10");
-            n = N(h, saetze, "vorher: Namensserver fest eingetragen", "netz.dns.zuruecksetzen", d, p10, false, null, false);
+            var p8 = P("adapter", "8");
+            n = N(h, saetze, "vorher: Namensserver fest eingetragen", Dns, d, p8, false, null, false);
             h.Ist("Satz nennt den festen Server", n != null && n.Satz.Contains(fest.Server[0]), n == null ? "" : n.Satz);
             fest.Statisch = false;
-            N(h, saetze, "nachher: Namensserver automatisch (Statisch false)", "netz.dns.zuruecksetzen", d, p10, true);
+            n = N(h, saetze, "nachher: Namensserver automatisch (Statisch false)", Dns, d, p8, true);
+            h.Ist("Satz sagt automatisch", n != null && n.Satz.Contains("automatisch"), n == null ? "" : n.Satz);
             fest.Statisch = null;
-            N(h, saetze, "nachher: Statisch nicht lesbar (null)", "netz.dns.zuruecksetzen", d, p10, false, null, true);
-            d.Netz.Dns.RemoveAll(x => x.AdapterIndex == 10);
-            N(h, saetze, "nachher: keine DNS-Angaben fuer Adapter 10", "netz.dns.zuruecksetzen", d, p10, false, null, true);
-            N(h, saetze, "Adapter 99 nicht im Bild", "netz.dns.zuruecksetzen", d, P("adapter", "99"), false, null, true);
-            N(h, saetze, "Parameter adapter fehlt", "netz.dns.zuruecksetzen", d, P(), false, null, true);
+            N(h, saetze, "nachher: Statisch nicht lesbar (null)", Dns, d, p8, false, null, true);
+            // Ein zweiter Eintrag fuer denselben Anschluss, der noch fest ist, zaehlt: Nein, nicht Ja.
+            fest.Statisch = false;
+            d.Netz.Dns.Add(new DnsKonfig { AdapterIndex = 8, Familie = 2, Server = new List<string> { "10.0.0.54" }, Statisch = true });
+            n = N(h, saetze, "nachher: ein Eintrag automatisch, ein zweiter noch fest (10.0.0.54)", Dns, d, p8, false, null, false);
+            h.Ist("Satz nennt den noch festen Server", n != null && n.Satz.Contains("10.0.0.54"), n == null ? "" : n.Satz);
+            d.Netz.Dns.RemoveAll(x => x.AdapterIndex == 8);
+            n = N(h, saetze, "nachher: keine DNS-Angaben fuer Adapter 8", Dns, d, p8, false, null, true);
+            h.Ist("Satz nennt 0 Eintraege", n != null && n.Satz.Contains("0 Einträge"), n == null ? "" : n.Satz);
+            N(h, saetze, "Adapter 99 nicht im Bild", Dns, d, P("adapter", "99"), false, null, true);
+            N(h, saetze, "Parameter adapter = x", Dns, d, P("adapter", "x"), false, null, true);
+            N(h, saetze, "Parameter adapter fehlt", Dns, d, P(), false, null, true);
+            d.Netz.Adapter.Clear();
+            N(h, saetze, "Adapterliste im Bild leer (nicht gelesen)", Dns, d, p8, false, null, true);
 
             // DNS-Cache: kein messbarer Zustand, Satz sagt das.
             n = N(h, saetze, "DNS-Cache geleert (kein messbarer Zustand)", "netz.dnscache.leeren", d, P(), true);
@@ -787,35 +812,46 @@ namespace WartungsToolbox.Proben
 
         // ------------------------------------------------------------ (c) Nachweise: Leistung
 
+        // Das Nachher-Bild des Autostart-Paars traegt alle vier Zustaende, die der Nachweis liest:
+        // Fremd01 (HKLM\Run) deaktiviert, Fremd02 aktiv, Fremd03 (HKLM\Run32) ohne StartupApproved-
+        // Wert, OneDrive (HKCU\Run) deaktiviert, dazu die Aufgabe \FremdUpdater (bereit, ohne Feld
+        // aktiv), die Dienste FremdManuell (Manual) und FremdDienst1 (Auto). Die Aufgabenliste ist
+        // dort ohne Rechte gelesen (AufgabenVollstaendig false); wo der Nachweis das unterscheidet,
+        // dreht die Probe das Kennzeichen im Speicher. Die echte Aufzeichnung dieses PCs laeuft nur
+        // noch als Zusatz in NachweiseDieserPc.
         static void NachweiseLeistung(Harness h, List<KeyValuePair<string, string>> saetze)
         {
             h.Gruppe("Massnahmen (c): Nachweise Leistung (Autostart, Aufgabe, Dienst-Startart, Zeitplan)");
-            var s = h.Bild("dieser-pc-de.json"); if (s == null) return;
-            var rtk = s.Autostart.Eintraege.FirstOrDefault(e => e.Quelle == "HKLM\\Run" && e.Name == "RtkAudUService");
-            var razer = s.Autostart.Eintraege.FirstOrDefault(e => e.Quelle == "HKLM\\Run" && e.Name == "RazerCortex");
-            var opera = s.Autostart.Eintraege.FirstOrDefault(e => e.Quelle == "HKCU\\Run" && e.Name == "Opera GX Stable");
-            var maus = s.Autostart.Eintraege.FirstOrDefault(e => e.Quelle == "HKLM\\Run32");
-            h.Ist("Grundmenge: RtkAudUService deaktiviert, RazerCortex aktiv, Opera (HKCU) deaktiviert, ein Run32-Eintrag, Aufgaben vollstaendig, >= 50 Dienste",
-                  rtk != null && rtk.Aktiviert == false && razer != null && razer.Aktiviert == true && opera != null && opera.Aktiviert == false && maus != null
-                  && s.Autostart.AufgabenVollstaendig && s.Autostart.Dienste.Count >= 50);
-            if (rtk == null || razer == null || opera == null || maus == null) return;
+            var s = h.Bild("gepflanzt-massnahmen-leistung.autostart.deaktivieren-nachher.json"); if (s == null) return;
+            var aus = s.Autostart.Eintraege.FirstOrDefault(e => e.Quelle == "HKLM\\Run" && e.Name == "Fremd01");
+            var an = s.Autostart.Eintraege.FirstOrDefault(e => e.Quelle == "HKLM\\Run" && e.Name == "Fremd02");
+            var hkcu = s.Autostart.Eintraege.FirstOrDefault(e => e.Quelle == "HKCU\\Run" && e.Name == "OneDrive");
+            var run32 = s.Autostart.Eintraege.FirstOrDefault(e => e.Quelle == "HKLM\\Run32");
+            h.Ist("Grundmenge: Fremd01 deaktiviert, Fremd02 aktiv, OneDrive (HKCU) deaktiviert, ein Run32-Eintrag ohne Status, Aufgabenliste unvollstaendig, >= 5 Dienste",
+                  aus != null && aus.Aktiviert == false && an != null && an.Aktiviert == true && hkcu != null && hkcu.Aktiviert == false && run32 != null && !run32.Aktiviert.HasValue
+                  && !s.Autostart.AufgabenVollstaendig && s.Autostart.Dienste.Count >= 5);
+            if (aus == null || an == null || hkcu == null || run32 == null) return;
 
             const string Auto = "leistung.autostart.deaktivieren";
-            var n = N(h, saetze, "nachher: HKLM/Run RtkAudUService deaktiviert", Auto, s, P("hive", "HKLM", "ort", "Run", "name", "RtkAudUService"), true);
-            h.Ist("Satz nennt den Eintrag und den Ort", n != null && n.Satz.Contains("RtkAudUService") && n.Satz.Contains("HKLM\\Run"), n == null ? "" : n.Satz);
-            N(h, saetze, "Name ohne Ruecksicht auf Gross-/Kleinschreibung", Auto, s, P("hive", "hklm", "ort", "run", "name", "rtkaudUservice"), true);
-            N(h, saetze, "vorher: HKLM/Run RazerCortex aktiv", Auto, s, P("hive", "HKLM", "ort", "Run", "name", "RazerCortex"), false, null, false);
-            razer.Aktiviert = false;
-            N(h, saetze, "nachher: RazerCortex deaktiviert", Auto, s, P("hive", "HKLM", "ort", "Run", "name", "RazerCortex"), true);
-            razer.Aktiviert = null;
-            N(h, saetze, "RazerCortex ohne StartupApproved-Status (gilt als aktiv, Schalter nicht geschrieben)", Auto, s, P("hive", "HKLM", "ort", "Run", "name", "RazerCortex"), false, null, false);
-            N(h, saetze, "nachher: HKCU/Run Opera deaktiviert", Auto, s, P("hive", "HKCU", "ort", "Run", "name", "Opera GX Stable"), true);
-            N(h, saetze, "HKLM/Run32 " + maus.Name + " (aktiv)", Auto, s, P("hive", "HKLM", "ort", "Run32", "name", maus.Name), maus.Aktiviert == false);
-            N(h, saetze, "Eintrag am falschen Ort gesucht (HKCU statt HKLM)", Auto, s, P("hive", "HKCU", "ort", "Run", "name", "RtkAudUService"), false, null, true);
+            var n = N(h, saetze, "nachher: HKLM/Run Fremd01 deaktiviert", Auto, s, P("hive", "HKLM", "ort", "Run", "name", "Fremd01"), true);
+            h.Ist("Satz nennt den Eintrag und den Ort", n != null && n.Satz.Contains("Fremd01") && n.Satz.Contains("HKLM\\Run"), n == null ? "" : n.Satz);
+            N(h, saetze, "Name ohne Ruecksicht auf Gross-/Kleinschreibung", Auto, s, P("hive", "hklm", "ort", "run", "name", "fremd01"), true);
+            N(h, saetze, "vorher: HKLM/Run Fremd02 aktiv", Auto, s, P("hive", "HKLM", "ort", "Run", "name", "Fremd02"), false, null, false);
+            an.Aktiviert = false;
+            N(h, saetze, "nachher: Fremd02 deaktiviert", Auto, s, P("hive", "HKLM", "ort", "Run", "name", "Fremd02"), true);
+            an.Aktiviert = null;
+            N(h, saetze, "Fremd02 ohne StartupApproved-Status (gilt als aktiv, Schalter nicht geschrieben)", Auto, s, P("hive", "HKLM", "ort", "Run", "name", "Fremd02"), false, null, false);
+            N(h, saetze, "nachher: HKCU/Run OneDrive deaktiviert", Auto, s, P("hive", "HKCU", "ort", "Run", "name", "OneDrive"), true);
+            n = N(h, saetze, "HKLM/Run32 " + run32.Name + " ohne StartupApproved-Status (gilt als aktiv)", Auto, s, P("hive", "HKLM", "ort", "Run32", "name", run32.Name), false, null, false);
+            h.Ist("Satz sagt, dass der Schalter nicht geschrieben wurde", n != null && n.Satz.Contains("nicht geschrieben"), n == null ? "" : n.Satz);
+            // Unlesbar: Eintrag nicht im Bild (falscher Ort, unbekannter Name) oder Parameter ohne Sinn.
+            N(h, saetze, "Eintrag am falschen Ort gesucht (HKCU statt HKLM)", Auto, s, P("hive", "HKCU", "ort", "Run", "name", "Fremd01"), false, null, true);
             N(h, saetze, "unbekannter Name", Auto, s, P("hive", "HKLM", "ort", "Run", "name", "GibtEsNicht"), false, null, true);
             N(h, saetze, "ort = Startup (nicht StartupFolder)", Auto, s, P("hive", "HKCU", "ort", "Startup", "name", "x"), false, null, true);
             N(h, saetze, "hive = HKU (ungueltig)", Auto, s, P("hive", "HKU", "ort", "Run", "name", "x"), false, null, true);
             N(h, saetze, "name fehlt", Auto, s, P("hive", "HKLM", "ort", "Run"), false, null, true);
+            s.Autostart.Eintraege.Clear();
+            N(h, saetze, "Eintragsliste im Bild leer (nicht gelesen)", Auto, s, P("hive", "HKLM", "ort", "Run", "name", "Fremd01"), false, null, true);
             // StartupFolder: HKCU -> "Startup", HKLM -> "CommonStartup".
             s.Autostart.Eintraege.Add(new AutostartEintrag { Quelle = "Startup", Name = "probe.lnk", Aktiviert = false });
             s.Autostart.Eintraege.Add(new AutostartEintrag { Quelle = "CommonStartup", Name = "alle.lnk", Aktiviert = true });
@@ -826,87 +862,102 @@ namespace WartungsToolbox.Proben
             // deaktivierte Aufgabe mit noch laufender Instanz meldet Zustand 4, nicht 1 (Microsoft-Doku
             // TASK_STATE_DISABLED = "no instances queued or running"). Erst ohne das Feld (Aktiv null,
             // Bild einer aelteren Fassung) zaehlt der Zustand allein.
-            const string Aufg = "leistung.aufgabe.deaktivieren";
-            var hid = s.Autostart.Aufgaben.FirstOrDefault(a => a.Pfad == "\\HidHide_Updater");
-            h.Ist("Grundmenge: Aufgabe \\HidHide_Updater bereit (3)", hid != null && hid.Zustand == 3);
+            const string Aufg = "leistung.aufgabe.deaktivieren", Pfad = "\\FremdUpdater";
+            var hid = s.Autostart.Aufgaben.FirstOrDefault(a => a.Pfad == Pfad);
+            h.Ist("Grundmenge: Aufgabe " + Pfad + " bereit (3), ohne Feld aktiv", hid != null && hid.Zustand == 3 && !hid.Aktiv.HasValue);
             if (hid == null) return;
-            hid.Aktiv = null;
-            N(h, saetze, "vorher: HidHide_Updater bereit (3), ohne Enabled im Bild", Aufg, s, P("pfad", "\\HidHide_Updater"), false, null, false);
+            // Die Liste gilt fuer diese Faelle als vollstaendig gelesen; der Unterschied wird unten gemessen.
+            s.Autostart.AufgabenVollstaendig = true;
+            N(h, saetze, "vorher: " + Pfad + " bereit (3), ohne Enabled im Bild", Aufg, s, P("pfad", Pfad), false, null, false);
             hid.Zustand = 1;
-            n = N(h, saetze, "nachher: HidHide_Updater deaktiviert (1), ohne Enabled im Bild", Aufg, s, P("pfad", "\\HidHide_Updater"), true);
+            n = N(h, saetze, "nachher: " + Pfad + " deaktiviert (1), ohne Enabled im Bild", Aufg, s, P("pfad", Pfad), true);
             h.Ist("Satz sagt, dass das Bild Enabled nicht fuehrt", n != null && n.Satz.Contains("Enabled"), n == null ? "" : n.Satz);
-            N(h, saetze, "Pfad ohne fuehrenden Backslash", Aufg, s, P("pfad", "HidHide_Updater"), true);
-            N(h, saetze, "Pfad in anderer Schreibung", Aufg, s, P("pfad", "\\hidhide_updater"), true);
+            N(h, saetze, "Pfad ohne fuehrenden Backslash", Aufg, s, P("pfad", "FremdUpdater"), true);
+            N(h, saetze, "Pfad in anderer Schreibung", Aufg, s, P("pfad", "\\fremdupdater"), true);
             hid.Zustand = 0;
-            N(h, saetze, "Zustand 0 (unbekannt), ohne Enabled", Aufg, s, P("pfad", "\\HidHide_Updater"), false, null, true);
+            N(h, saetze, "Zustand 0 (unbekannt), ohne Enabled", Aufg, s, P("pfad", Pfad), false, null, true);
             // Ohne Enabled belegt Zustand 4 weder alt noch neu (deaktiviert mit laufender Instanz sieht
             // genauso aus): Unlesbar, nie Nein. Dasselbe fuer 2 (Warteschlange).
             hid.Zustand = 4;
-            n = N(h, saetze, "Zustand 4 (laeuft), ohne Enabled: nicht belegbar", Aufg, s, P("pfad", "\\HidHide_Updater"), false, null, true);
+            n = N(h, saetze, "Zustand 4 (laeuft), ohne Enabled: nicht belegbar", Aufg, s, P("pfad", Pfad), false, null, true);
             h.Ist("Satz nennt die laufende Instanz und das fehlende Enabled", n != null && n.Satz.Contains("läuft noch") && n.Satz.Contains("Enabled"), n == null ? "" : n.Satz);
             hid.Zustand = 2;
-            N(h, saetze, "Zustand 2 (Warteschlange), ohne Enabled: nicht belegbar", Aufg, s, P("pfad", "\\HidHide_Updater"), false, null, true);
+            N(h, saetze, "Zustand 2 (Warteschlange), ohne Enabled: nicht belegbar", Aufg, s, P("pfad", Pfad), false, null, true);
             // Mit Enabled entscheidet Enabled: false ist Ja bei jedem Zustand, true ist Nein bei jedem Zustand.
             hid.Aktiv = false;
             hid.Zustand = 4;
-            n = N(h, saetze, "nachher: Enabled false, Instanz laeuft noch (Zustand 4)", Aufg, s, P("pfad", "\\HidHide_Updater"), true);
+            n = N(h, saetze, "nachher: Enabled false, Instanz laeuft noch (Zustand 4)", Aufg, s, P("pfad", Pfad), true);
             h.Ist("Satz nennt Enabled = false und die Instanz, die von selbst endet", n != null && n.Satz.Contains("Enabled = false") && n.Satz.Contains("endet von selbst"), n == null ? "" : n.Satz);
             hid.Zustand = 2;
-            N(h, saetze, "nachher: Enabled false, Instanz in der Warteschlange (Zustand 2)", Aufg, s, P("pfad", "\\HidHide_Updater"), true);
+            N(h, saetze, "nachher: Enabled false, Instanz in der Warteschlange (Zustand 2)", Aufg, s, P("pfad", Pfad), true);
             hid.Zustand = 1;
-            n = N(h, saetze, "nachher: Enabled false, Zustand 1", Aufg, s, P("pfad", "\\HidHide_Updater"), true);
+            n = N(h, saetze, "nachher: Enabled false, Zustand 1", Aufg, s, P("pfad", Pfad), true);
             h.Ist("Satz nennt Enabled = false und Zustand 1", n != null && n.Satz.Contains("Enabled = false") && n.Satz.Contains("Zustand 1"), n == null ? "" : n.Satz);
             hid.Zustand = 0;
-            N(h, saetze, "nachher: Enabled false, Zustand 0 (Enabled zaehlt, nicht der Zustand)", Aufg, s, P("pfad", "\\HidHide_Updater"), true);
+            N(h, saetze, "nachher: Enabled false, Zustand 0 (Enabled zaehlt, nicht der Zustand)", Aufg, s, P("pfad", Pfad), true);
             hid.Aktiv = true;
             hid.Zustand = 3;
-            n = N(h, saetze, "vorher: Enabled true, bereit (3)", Aufg, s, P("pfad", "\\HidHide_Updater"), false, null, false);
+            n = N(h, saetze, "vorher: Enabled true, bereit (3)", Aufg, s, P("pfad", Pfad), false, null, false);
             h.Ist("Satz nennt Enabled = true", n != null && n.Satz.Contains("Enabled = true"), n == null ? "" : n.Satz);
             hid.Zustand = 4;
-            N(h, saetze, "vorher: Enabled true, laeuft (4): nachweislich alt, nicht Unlesbar", Aufg, s, P("pfad", "\\HidHide_Updater"), false, null, false);
+            N(h, saetze, "vorher: Enabled true, laeuft (4): nachweislich alt, nicht Unlesbar", Aufg, s, P("pfad", Pfad), false, null, false);
             hid.Zustand = 1;
-            N(h, saetze, "Enabled true, Zustand 1 (Widerspruch): Enabled zaehlt, Nein", Aufg, s, P("pfad", "\\HidHide_Updater"), false, null, false);
+            N(h, saetze, "Enabled true, Zustand 1 (Widerspruch): Enabled zaehlt, Nein", Aufg, s, P("pfad", Pfad), false, null, false);
             hid.Aktiv = null;
             hid.Zustand = 1;
-            N(h, saetze, "unbekannte Aufgabe", Aufg, s, P("pfad", "\\GibtEsNicht"), false, null, true);
+            n = N(h, saetze, "unbekannte Aufgabe", Aufg, s, P("pfad", "\\GibtEsNicht"), false, null, true);
+            h.Ist("Satz nennt bei vollstaendiger Liste keine Luecke", n != null && !n.Satz.Contains("nicht vollständig"), n == null ? "" : n.Satz);
             s.Autostart.AufgabenVollstaendig = false;
-            n = N(h, saetze, "unbekannte Aufgabe bei unvollstaendiger Liste", Aufg, s, P("pfad", "\\GibtEsNicht"), false, null, true);
+            n = N(h, saetze, "unbekannte Aufgabe bei unvollstaendiger Liste (wie im Bild aufgezeichnet)", Aufg, s, P("pfad", "\\GibtEsNicht"), false, null, true);
             h.Ist("Satz nennt die unvollstaendige Liste", n != null && n.Satz.Contains("nicht vollständig"), n == null ? "" : n.Satz);
             s.Autostart.AufgabenVollstaendig = true;
             N(h, saetze, "pfad fehlt", Aufg, s, P(), false, null, true);
 
             // Dienst-Startart.
             const string St = "leistung.dienst.startart";
-            var alg = s.Autostart.Dienste.FirstOrDefault(d => d.Name == "ALG");
+            var man = s.Autostart.Dienste.FirstOrDefault(d => d.Name == "FremdManuell");
             var amd = s.Autostart.Dienste.FirstOrDefault(d => d.Startart == "Auto");
-            h.Ist("Grundmenge: Dienst ALG Manual, ein Dienst mit Startart Auto", alg != null && alg.Startart == "Manual" && amd != null);
-            if (alg == null || amd == null) return;
-            N(h, saetze, "ALG: Ziel Manual, ist Manual", St, s, P("name", "ALG", "startart", "Manual"), true);
-            N(h, saetze, "ALG: Ziel Disabled, ist Manual", St, s, P("name", "ALG", "startart", "Disabled"), false, null, false);
-            alg.Startart = "Disabled";
-            N(h, saetze, "nachher: ALG Disabled", St, s, P("name", "alg", "startart", "Disabled"), true);
-            alg.Startart = "";
-            N(h, saetze, "ALG: Startart im Bild leer", St, s, P("name", "ALG", "startart", "Disabled"), false, null, true);
-            alg.Startart = "?";
-            N(h, saetze, "ALG: Startart im Bild ?", St, s, P("name", "ALG", "startart", "Disabled"), false, null, true);
-            alg.Startart = "Disabled";
+            h.Ist("Grundmenge: Dienst FremdManuell Manual, ein Dienst mit Startart Auto", man != null && man.Startart == "Manual" && amd != null);
+            if (man == null || amd == null) return;
+            N(h, saetze, "FremdManuell: Ziel Manual, ist Manual", St, s, P("name", "FremdManuell", "startart", "Manual"), true);
+            N(h, saetze, "FremdManuell: Ziel Disabled, ist Manual", St, s, P("name", "FremdManuell", "startart", "Disabled"), false, null, false);
+            man.Startart = "Disabled";
+            N(h, saetze, "nachher: FremdManuell Disabled", St, s, P("name", "fremdmanuell", "startart", "Disabled"), true);
+            man.Startart = "";
+            N(h, saetze, "FremdManuell: Startart im Bild leer", St, s, P("name", "FremdManuell", "startart", "Disabled"), false, null, true);
+            man.Startart = "?";
+            N(h, saetze, "FremdManuell: Startart im Bild ?", St, s, P("name", "FremdManuell", "startart", "Disabled"), false, null, true);
+            man.Startart = "fehlt";
+            N(h, saetze, "FremdManuell: Startart im Bild fehlt (Marke des Sammlers)", St, s, P("name", "FremdManuell", "startart", "Disabled"), false, null, true);
+            man.Startart = "Disabled";
             N(h, saetze, amd.Name + ": Ziel Automatic, ist Auto (Marke des Bildes)", St, s, P("name", amd.Name, "startart", "Automatic"), true);
-            N(h, saetze, "Ziel Boot (ungueltig)", St, s, P("name", "ALG", "startart", "Boot"), false, null, true);
+            N(h, saetze, "Ziel Boot (ungueltig)", St, s, P("name", "FremdManuell", "startart", "Boot"), false, null, true);
             N(h, saetze, "unbekannter Dienst", St, s, P("name", "GibtEsNicht", "startart", "Manual"), false, null, true);
             N(h, saetze, "name fehlt", St, s, P("startart", "Manual"), false, null, true);
 
-            // Zeitplan anlegen/loeschen ueber die eigene Aufgabe.
-            var wartung = s.Autostart.Aufgaben.FirstOrDefault(a => a.Eigen && a.Pfad == "\\WindowsWartung-AutoWartung");
-            h.Ist("Grundmenge: eigene Aufgabe \\WindowsWartung-AutoWartung im Bild", wartung != null);
-            N(h, saetze, "zeitplan.anlegen: Aufgabe vorhanden", "zeitplan.anlegen", s, P("modus", "daily", "stunde", "3", "minute", "0"), true);
-            N(h, saetze, "zeitplan.loeschen: Aufgabe noch vorhanden", "zeitplan.loeschen", s, P(), false, null, false);
-            s.Autostart.Aufgaben.RemoveAll(a => a.Pfad == "\\WindowsWartung-AutoWartung");
+            // Zeitplan anlegen/loeschen ueber die eigene Aufgabe. Das Bild fuehrt nur die Selbststart-
+            // Aufgabe (\WindowsWartung-Autostart, eigen); die Wartungsaufgabe kommt im Speicher dazu,
+            // damit der Nachweis sie nicht mit der Selbststart-Aufgabe verwechselt.
+            const string Wartung = "\\WindowsWartung-AutoWartung";
+            var pz = P("modus", "daily", "stunde", "3", "minute", "0");
+            h.Ist("Grundmenge: eigene Selbststart-Aufgabe im Bild, Wartungsaufgabe " + Wartung + " nicht", s.Autostart.Aufgaben.Any(a => a.Eigen) && !s.Autostart.Aufgaben.Any(a => a.Pfad == Wartung));
+            n = N(h, saetze, "zeitplan.anlegen: Aufgabe fehlt (nur die Selbststart-Aufgabe ist da)", "zeitplan.anlegen", s, pz, false, null, false);
+            h.Ist("Satz sagt, dass die Liste vollstaendig gelesen war", n != null && n.Satz.Contains("vollständig gelesen"), n == null ? "" : n.Satz);
             N(h, saetze, "zeitplan.loeschen: Aufgabe weg", "zeitplan.loeschen", s, P(), true);
-            N(h, saetze, "zeitplan.anlegen: Aufgabe fehlt", "zeitplan.anlegen", s, P("modus", "daily", "stunde", "3", "minute", "0"), false, null, false);
+            s.Autostart.Aufgaben.Add(new Aufgabe { Pfad = Wartung, Eigen = true, Zustand = 3, Autor = "RECHNER\\NUTZER" });
+            n = N(h, saetze, "zeitplan.anlegen: Aufgabe vorhanden", "zeitplan.anlegen", s, pz, true);
+            h.Ist("Satz nennt den Zustand 3", n != null && n.Satz.Contains("Zustand 3"), n == null ? "" : n.Satz);
+            N(h, saetze, "zeitplan.loeschen: Aufgabe noch vorhanden", "zeitplan.loeschen", s, P(), false, null, false);
+            s.Autostart.Aufgaben.RemoveAll(a => a.Pfad == Wartung);
             s.Autostart.AufgabenVollstaendig = false;
-            N(h, saetze, "zeitplan.loeschen: Aufgabe weg, Liste unvollstaendig (belegt nichts)", "zeitplan.loeschen", s, P(), false, null, true);
-            N(h, saetze, "zeitplan.anlegen: Aufgabe fehlt, Liste unvollstaendig", "zeitplan.anlegen", s, P("modus", "daily", "stunde", "3", "minute", "0"), false, null, true);
-            s.Autostart.AufgabenVollstaendig = true;
+            n = N(h, saetze, "zeitplan.loeschen: Aufgabe weg, Liste unvollstaendig (belegt nichts)", "zeitplan.loeschen", s, P(), false, null, true);
+            h.Ist("Satz sagt, dass die unvollstaendige Liste kein Loeschen belegt", n != null && n.Satz.Contains("nicht vollständig"), n == null ? "" : n.Satz);
+            N(h, saetze, "zeitplan.anlegen: Aufgabe fehlt, Liste unvollstaendig", "zeitplan.anlegen", s, pz, false, null, true);
+            // Ist die Aufgabe trotz Luecke im Bild, zaehlt sie: Ja fuer anlegen, Nein fuer loeschen.
+            s.Autostart.Aufgaben.Add(new Aufgabe { Pfad = Wartung, Eigen = true, Zustand = 3 });
+            N(h, saetze, "zeitplan.anlegen: Aufgabe vorhanden, Liste unvollstaendig", "zeitplan.anlegen", s, pz, true);
+            N(h, saetze, "zeitplan.loeschen: Aufgabe noch vorhanden, Liste unvollstaendig", "zeitplan.loeschen", s, P(), false, null, false);
+            s.Autostart.Aufgaben.RemoveAll(a => a.Pfad == Wartung);
         }
 
         // ------------------------------------------------------------ (c) Nachweise: Updates
@@ -951,19 +1002,26 @@ namespace WartungsToolbox.Proben
             N(h, saetze, "unbekannter Dienst", D, s, P("name", "gibtesnicht"), false, null, true);
             N(h, saetze, "name fehlt", D, s, P(), false, null, true);
 
-            // Verbergen: der gesunde PC hat 1 verborgenes Update.
-            var v = h.Bild("dieser-pc-de.json"); if (v == null) return;
-            h.Ist("Grundmenge: genau 1 verborgenes Update mit Kennung 4340b239-...", v.WindowsUpdate.Verborgen.Count == 1 && v.WindowsUpdate.Verborgen[0].UpdateId == "4340b239-4b90-4305-9c2e-6a24dfcb6757");
-            const string Vb = "update.verbergen";
-            n = N(h, saetze, "nachher: Kennung in der Liste der verborgenen Updates", Vb, v, P("updateId", "4340b239-4b90-4305-9c2e-6a24dfcb6757"), true);
+            // Verbergen: das Nachher-Bild des Paars traegt genau das verborgene HP-USB-Update (die
+            // Kennung aus der Uebergabe, dieselbe wie auf diesem PC). Die echte Aufzeichnung laeuft
+            // nur noch als Zusatz in NachweiseDieserPc.
+            const string Vb = "update.verbergen", HpId = "4340b239-4b90-4305-9c2e-6a24dfcb6757";
+            var v = h.Bild("gepflanzt-massnahmen-" + Vb + "-nachher.json"); if (v == null) return;
+            h.Ist("Grundmenge: genau 1 verborgenes Update mit Kennung 4340b239-... und Titel", v.WindowsUpdate.Verborgen.Count == 1 && v.WindowsUpdate.Verborgen[0].UpdateId == HpId && !string.IsNullOrEmpty(v.WindowsUpdate.Verborgen[0].Titel));
+            n = N(h, saetze, "nachher: Kennung in der Liste der verborgenen Updates", Vb, v, P("updateId", HpId), true);
             h.Ist("Satz nennt den Titel des Updates", n != null && n.Satz.Contains("Hewlett-Packard"), n == null ? "" : n.Satz);
-            N(h, saetze, "Kennung in Grossschreibung", Vb, v, P("updateId", "4340B239-4B90-4305-9C2E-6A24DFCB6757"), true);
+            N(h, saetze, "Kennung in Grossschreibung", Vb, v, P("updateId", HpId.ToUpperInvariant()), true);
             N(h, saetze, "vorher: andere Kennung nicht verborgen", Vb, v, P("updateId", "00000000-0000-0000-0000-000000000001"), false, null, false);
+            // Ohne Titel im Bild nennt der Satz die Kennung.
+            v.WindowsUpdate.Verborgen[0].Titel = null;
+            n = N(h, saetze, "nachher: verborgen, Titel im Bild leer", Vb, v, P("updateId", HpId), true);
+            h.Ist("Satz nennt die Kennung statt des Titels", n != null && n.Satz.Contains(HpId), n == null ? "" : n.Satz);
             v.WindowsUpdate.Verborgen.Clear();
-            n = N(h, saetze, "nachher: Liste leer", Vb, v, P("updateId", "4340b239-4b90-4305-9c2e-6a24dfcb6757"), false, null, false);
+            n = N(h, saetze, "nachher: Liste leer", Vb, v, P("updateId", HpId), false, null, false);
             h.Ist("Satz nennt 0 Eintraege", n != null && n.Satz.Contains("0 Einträge"), n == null ? "" : n.Satz);
             v.Fehlerliste.Add(new Fehler { Quelle = "com.windowsupdate.suche.verborgen", Art = Fehler.Zeit, Text = "Probe" });
-            N(h, saetze, "nachher: Liste leer, weil die Suche im Bild als Fehler vermerkt ist", Vb, v, P("updateId", "4340b239-4b90-4305-9c2e-6a24dfcb6757"), false, null, true);
+            n = N(h, saetze, "nachher: Liste leer, weil die Suche im Bild als Fehler vermerkt ist", Vb, v, P("updateId", HpId), false, null, true);
+            h.Ist("Satz nennt die Fehlerart der Suche", n != null && n.Satz.Contains("(" + Fehler.Zeit + ")"), n == null ? "" : n.Satz);
             v.Fehlerliste.RemoveAll(f => f.Text == "Probe");
             N(h, saetze, "updateId fehlt", Vb, v, P(), false, null, true);
         }
@@ -1119,6 +1177,95 @@ namespace WartungsToolbox.Proben
             foreach (var m in Massnahmen.Alle().Where(x => x.Art == Massnahme.ArtRat))
                 N(h, saetze, m.Kennung + " (Rat): nicht bestanden", m.Kennung, s, P(), false, null, false);
             h.Ist("apps.entfernen: WasPassiert ohne Fachjargon Remove-AppxPackage", !Massnahmen.Finde("apps.entfernen").WasPassiert.Contains("Remove-AppxPackage"));
+        }
+
+        // ------------------------------------------------------------ (c, dieser PC) Zusatz, nur lokal
+
+        /// <summary>
+        /// Dieselben Nachweise noch einmal ueber die echte, redigierte Aufzeichnung dieses Rechners
+        /// (Konzept 7.1/10: die Datei liegt nur lokal, in der CI fehlt sie). Fehlt sie, wird die
+        /// Gruppe laut uebersprungen wie DieserPcProben, nicht rot. Sie laeuft erst NACH der
+        /// Deckungspruefung "jede Kennung mit Unlesbar-Zweig hat eine Unbestimmt-Probe" und steuert
+        /// dort nichts bei: die Deckung muss aus den committeten Bildern kommen.
+        /// </summary>
+        static void NachweiseDieserPc(Harness h, List<KeyValuePair<string, string>> saetze)
+        {
+            const string Datei = "dieser-pc-de.json";
+            if (!File.Exists(Path.Combine(h.Aufzeichnungen, Datei)))
+            {
+                h.Uebersprungen("MassnahmenProben (dieser PC)", Datei + " liegt nur lokal (docs/werkzeuge/aufzeichnen-dieser-pc.ps1 erzeugt sie)");
+                return;
+            }
+            h.Gruppe("Massnahmen (c, dieser PC): Nachweise ueber die echte Aufzeichnung (nur lokal, Zusatz)");
+            var s = h.Bild(Datei); if (s == null) return;
+
+            // Netz: Adapter 10 bezieht seine Namensserver fest (Uebergabe: DNS fest).
+            const string Dns = "netz.dns.zuruecksetzen";
+            var fest = s.Netz.Dns.FirstOrDefault(x => x.AdapterIndex == 10 && x.Familie == 2);
+            h.Ist("Grundmenge: Adapter 10 mit fest eingetragenen IPv4-Namensservern", fest != null && fest.Statisch == true && fest.Server.Count >= 1);
+            if (fest != null)
+            {
+                var n = N(h, saetze, "vorher: Namensserver fest eingetragen (Adapter 10)", Dns, s, P("adapter", "10"), false, null, false);
+                h.Ist("Satz nennt den festen Server", n != null && n.Satz.Contains(fest.Server[0]), n == null ? "" : n.Satz);
+                fest.Statisch = false;
+                N(h, saetze, "nachher: Namensserver automatisch (Statisch false)", Dns, s, P("adapter", "10"), true);
+                fest.Statisch = true;
+            }
+
+            // Leistung: echte Eintraege mit echtem Task-Manager-Status, echte Aufgabe, echte Dienste.
+            const string Auto = "leistung.autostart.deaktivieren";
+            var rtk = s.Autostart.Eintraege.FirstOrDefault(e => e.Quelle == "HKLM\\Run" && e.Name == "RtkAudUService");
+            var razer = s.Autostart.Eintraege.FirstOrDefault(e => e.Quelle == "HKLM\\Run" && e.Name == "RazerCortex");
+            var opera = s.Autostart.Eintraege.FirstOrDefault(e => e.Quelle == "HKCU\\Run" && e.Name == "Opera GX Stable");
+            var maus = s.Autostart.Eintraege.FirstOrDefault(e => e.Quelle == "HKLM\\Run32");
+            h.Ist("Grundmenge: RtkAudUService deaktiviert, RazerCortex aktiv, Opera (HKCU) deaktiviert, ein Run32-Eintrag, Aufgaben vollstaendig, >= 50 Dienste",
+                  rtk != null && rtk.Aktiviert == false && razer != null && razer.Aktiviert == true && opera != null && opera.Aktiviert == false && maus != null
+                  && s.Autostart.AufgabenVollstaendig && s.Autostart.Dienste.Count >= 50);
+            if (rtk != null && razer != null && opera != null && maus != null)
+            {
+                var n = N(h, saetze, "nachher: HKLM/Run RtkAudUService deaktiviert", Auto, s, P("hive", "HKLM", "ort", "Run", "name", "RtkAudUService"), true);
+                h.Ist("Satz nennt den Eintrag und den Ort", n != null && n.Satz.Contains("RtkAudUService") && n.Satz.Contains("HKLM\\Run"), n == null ? "" : n.Satz);
+                N(h, saetze, "Name ohne Ruecksicht auf Gross-/Kleinschreibung", Auto, s, P("hive", "hklm", "ort", "run", "name", "rtkaudUservice"), true);
+                N(h, saetze, "vorher: HKLM/Run RazerCortex aktiv", Auto, s, P("hive", "HKLM", "ort", "Run", "name", "RazerCortex"), false, null, false);
+                N(h, saetze, "nachher: HKCU/Run Opera deaktiviert", Auto, s, P("hive", "HKCU", "ort", "Run", "name", "Opera GX Stable"), true);
+                N(h, saetze, "HKLM/Run32 " + maus.Name + " (Status wie im Bild: " + (maus.Aktiviert == false ? "deaktiviert" : "aktiv") + ")", Auto, s, P("hive", "HKLM", "ort", "Run32", "name", maus.Name), maus.Aktiviert == false, null, false);
+            }
+            const string Aufg = "leistung.aufgabe.deaktivieren";
+            var hid = s.Autostart.Aufgaben.FirstOrDefault(a => a.Pfad == "\\HidHide_Updater");
+            h.Ist("Grundmenge: Aufgabe \\HidHide_Updater bereit (3), nicht deaktiviert", hid != null && hid.Zustand == 3 && hid.Aktiv != false);
+            if (hid != null)
+                N(h, saetze, "vorher: HidHide_Updater bereit (3), Enabled wie im Bild", Aufg, s, P("pfad", "\\HidHide_Updater"), false, null, false);
+            const string St = "leistung.dienst.startart";
+            var alg = s.Autostart.Dienste.FirstOrDefault(d => d.Name == "ALG");
+            var amd = s.Autostart.Dienste.FirstOrDefault(d => d.Startart == "Auto");
+            h.Ist("Grundmenge: Dienst ALG Manual, ein Dienst mit Startart Auto", alg != null && alg.Startart == "Manual" && amd != null);
+            if (alg != null && amd != null)
+            {
+                N(h, saetze, "ALG: Ziel Manual, ist Manual", St, s, P("name", "ALG", "startart", "Manual"), true);
+                N(h, saetze, "ALG: Ziel Disabled, ist Manual", St, s, P("name", "ALG", "startart", "Disabled"), false, null, false);
+                N(h, saetze, amd.Name + ": Ziel Automatic, ist Auto (Marke des Bildes)", St, s, P("name", amd.Name, "startart", "Automatic"), true);
+            }
+            // Zeitplan: die eigene Wartungsaufgabe steht wirklich in der Aufgabenplanung dieses PCs.
+            const string Wartung = "\\WindowsWartung-AutoWartung";
+            var pz = P("modus", "daily", "stunde", "3", "minute", "0");
+            var wartung = s.Autostart.Aufgaben.FirstOrDefault(a => a.Eigen && a.Pfad == Wartung);
+            h.Ist("Grundmenge: eigene Aufgabe " + Wartung + " im Bild, Liste vollstaendig", wartung != null && s.Autostart.AufgabenVollstaendig);
+            if (wartung != null)
+            {
+                N(h, saetze, "zeitplan.anlegen: Aufgabe vorhanden", "zeitplan.anlegen", s, pz, true);
+                N(h, saetze, "zeitplan.loeschen: Aufgabe noch vorhanden", "zeitplan.loeschen", s, P(), false, null, false);
+                s.Autostart.Aufgaben.RemoveAll(a => a.Pfad == Wartung);
+                N(h, saetze, "zeitplan.loeschen: Aufgabe weg", "zeitplan.loeschen", s, P(), true);
+                N(h, saetze, "zeitplan.anlegen: Aufgabe fehlt", "zeitplan.anlegen", s, pz, false, null, false);
+                s.Autostart.Aufgaben.Add(wartung);
+            }
+
+            // Updates: das verborgene HP-USB-Update (Kennung aus der Uebergabe).
+            const string Vb = "update.verbergen", HpId = "4340b239-4b90-4305-9c2e-6a24dfcb6757";
+            h.Ist("Grundmenge: genau 1 verborgenes Update mit Kennung 4340b239-...", s.WindowsUpdate.Verborgen.Count == 1 && string.Equals(s.WindowsUpdate.Verborgen[0].UpdateId, HpId, StringComparison.OrdinalIgnoreCase));
+            var nv = N(h, saetze, "nachher: Kennung in der Liste der verborgenen Updates", Vb, s, P("updateId", HpId), true);
+            h.Ist("Satz nennt den Titel des Updates", nv != null && nv.Satz.Contains("Hewlett-Packard"), nv == null ? "" : nv.Satz);
+            N(h, saetze, "vorher: andere Kennung nicht verborgen", Vb, s, P("updateId", "00000000-0000-0000-0000-000000000001"), false, null, false);
         }
 
         // ------------------------------------------------------------ (c2) die 16 Paare

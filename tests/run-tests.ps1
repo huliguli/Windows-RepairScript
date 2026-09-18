@@ -893,6 +893,58 @@ function Lies-Laufprotokoll([string]$pfad) {
     return ,$zeilen
 }
 
+# Warum ein Helferlauf nicht mit 0 endete, als Zeilen fuer die Details der Pruefung. Der CI-Lauf
+# 35354428200 (18.09.2026) meldete nur "Exit 2 statt 0 (Grund in lauf-probe-m3a-*.jsonl und in
+# logs\app.log)": beide Dateien liegen auf der Azure-VM, das Protokoll wird im finally entfernt,
+# und der Runner ist danach weg. Der Grund muss deshalb in der Ausgabe stehen. Aus dem Laufprotokoll
+# jede abgelehnt-Zeile (kennung, laie, fachmann.grund) und die letzten drei Zeilen mit Befund
+# (art fehler, nachweis mit bestanden=false, schritt mit problem=true); aus logs\app.log die letzten
+# fuenf Zeilen dieses Plans ab "helfer: Plan ... <planId> ... aus", dorthin schreibt der Helfer im
+# Plan-Modus jede [bad]- und [warn]-Zeile und die Ablehnung. Fehlt die Anfangszeile (Datei
+# rotiert), die letzten fuenf helfer-Zeilen ueberhaupt. app.log wird mit FileShare.ReadWrite und
+# Delete geoeffnet, weil Host oder geplante Wartung sie offen halten koennen (AppLog.Anhaengen).
+# Rueckgabe nie leer: auch "nichts gefunden" ist eine Zeile.
+function Lies-Laufgrund([string]$protokollPfad, [string]$planId, [string]$praefix) {
+    $aus = @()
+    $zeilen = Lies-Laufprotokoll $protokollPfad
+    $abgelehnt = @($zeilen | Where-Object { $_.art -eq 'abgelehnt' })
+    foreach ($z in $abgelehnt) {
+        $grund = ''
+        if ($z.fachmann -and "$($z.fachmann.grund)".Length -gt 0) { $grund = ' | grund: ' + $z.fachmann.grund }
+        $aus += "$praefix abgelehnt [$($z.kennung)]: $($z.laie)$grund"
+    }
+    $befunde = @($zeilen | Where-Object {
+        ($_.art -eq 'fehler') -or
+        ($_.art -eq 'nachweis' -and $_.fachmann -and $_.fachmann.bestanden -eq $false) -or
+        ($_.art -eq 'schritt' -and $_.fachmann -and $_.fachmann.problem -eq $true)
+    } | Select-Object -Last 3)
+    foreach ($z in $befunde) {
+        $mehr = ''
+        if ($z.fachmann -and "$($z.fachmann.fehler)".Length -gt 0) { $mehr = ' | fehler: ' + $z.fachmann.fehler }
+        $aus += "$praefix $($z.art) [$($z.kennung)]: $($z.laie)$mehr"
+    }
+    if ($zeilen.Count -eq 0) { $aus += "$praefix Laufprotokoll fehlt oder ist leer: $protokollPfad" }
+    elseif ($abgelehnt.Count -eq 0 -and $befunde.Count -eq 0) { $aus += "$praefix Laufprotokoll ($($zeilen.Count) Zeilen) nennt weder abgelehnt noch fehler noch problem" }
+    $appLog = Join-Path $env:ProgramData 'WindowsWartung\logs\app.log'
+    try {
+        $fs = New-Object IO.FileStream($appLog, [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+        try { $text = (New-Object IO.StreamReader($fs, [Text.Encoding]::UTF8)).ReadToEnd() } finally { $fs.Dispose() }
+        $alle = @($text -split "`r?`n" | Where-Object { $_.Length -gt 0 })
+        $start = -1
+        if ($planId.Length -gt 0) {
+            for ($i = $alle.Count - 1; $i -ge 0; $i--) { if ($alle[$i] -like "*helfer: Plan*$planId*aus *") { $start = $i; break } }
+        }
+        if ($start -ge 0) { $letzte = @($alle[$start..($alle.Count - 1)] | Select-Object -Last 5); $woher = "ab Plan $planId" }
+        else { $letzte = @($alle | Where-Object { $_ -like '*helfer:*' } | Select-Object -Last 5); $woher = "Anfangszeile des Plans nicht gefunden, letzte helfer-Zeilen" }
+        if ($letzte.Count -eq 0) { $aus += "$praefix logs\app.log ohne helfer-Zeile ($($alle.Count) Zeilen)" }
+        else {
+            $aus += "$praefix logs\app.log ($woher):"
+            foreach ($l in $letzte) { $aus += "$praefix    " + $l }
+        }
+    } catch { $aus += "$praefix logs\app.log nicht lesbar ($appLog): $($_.Exception.Message)" }
+    return ,$aus
+}
+
 # Hoechste Folgenummer der Wiederherstellungspunkte (WMI root\default, SystemRestore); nur erhoeht
 # lesbar, sonst null. Ein Trockenlauf darf sie nicht veraendern (B47).
 function Lies-Sicherungsnummer {
@@ -1676,14 +1728,25 @@ catch { $exeM3Fehler = "Helferprobe: " + $_.Exception.Message }
 # eine entfernte ebenso. rueckweg braucht eine echte Sicherungsdatei unter dem geschuetzten Ordner
 # und laeuft deshalb nicht im Trockenlauf; seine Ablehnungen misst Pruefung 2, seinen Inhalt Pruefung 4.
 #
-# Plan A: alle Kennungen, deren Parameter maschinenunabhaengig sind (der DHCP-Adapter kommt aus
-# Get-NetIPInterface; fehlt einer, fallen beide Adapter-Schritte weg, und die Zeile sagt es; die zwei
-# Defender-Massnahmen fallen weg, wenn MSFT_MpComputerStatus fehlt oder AMServiceEnabled falsch ist,
-# denn ohne Defender-Dienst melden sie zu Recht "nicht bestanden", was hier nicht der Trockenlauf
-# ist, der gemessen wird). Erwartet: Exit 0 in unter 60 s (ein echter Scan oder ein echtes Optimieren
-# von C: dauert Minuten), je Kennung eine schritt-Zeile, kein Kindprozess, keine Datei unter
-# sicherungen\massnahmen, Waechterdatei in %TEMP% bleibt, Folgenummer der Wiederherstellungspunkte
-# unveraendert, die vier Registrierungswerte und die Lesewerte aus Lies-Objektwerte vorher == nachher.
+# Plan A: alle Kennungen, deren Parameter maschinenunabhaengig sind. Jede Vorbedingung, die der
+# Helfer aus dem Systemzustand liest, wird hier vorher mit DEMSELBEN Kriterium gelesen, und bei
+# Nichterfuellung faellt der Schritt weg (die Ergebniszeile nennt ihn): sonst misst die Probe den
+# Rechner statt den Trockenlauf. Der DHCP-Adapter kommt aus Win32_NetworkAdapterConfiguration
+# (IPEnabled und DHCPEnabled, mit Adresse), wie AdapterPruefen in helfer\Massnahmen\Netz.cs - bis
+# 18.09.2026 kam er aus Get-NetIPInterface, und der CI-Lauf 35354428200 (Azure-VM) endete mit Exit 2,
+# also mit einer Ablehnung VOR dem ersten Schritt; von den Parameterpruefungen des Plans liest nur
+# AdapterPruefen den Systemzustand, und die beiden Sichten muessen nicht dieselben Anschluesse
+# fuehren (der Grund selbst stand damals nicht in der Ausgabe, deshalb Lies-Laufgrund unten).
+# Ebenso: Spooler und wuauserv als Win32_Service (DienstLesen),
+# ScheduledDefrag ueber Schedule.Service (AufgabeLesen), C: als MSFT_Volume mit DriveType 3 und fuer
+# den Scan NTFS/ReFS (VolumeLesen), Defender ueber MSFT_MpComputerStatus.AMServiceEnabled
+# (DefenderVorbedingung), die SmartScreen-Richtlinie EnableSmartScreen = 0 (SmartScreenWarn).
+# Eine Ablehnung (Exit 2) oder ein Problem (Exit 1) bleibt rot, aber die Details nennen den Grund
+# (Lies-Laufgrund): abgelehnt-Zeile, letzte Befunde, letzte app.log-Zeilen. Erwartet: Exit 0 in unter
+# 60 s (ein echter Scan oder ein echtes Optimieren von C: dauert Minuten), je Kennung eine
+# schritt-Zeile, kein Kindprozess, keine Datei unter sicherungen\massnahmen, Waechterdatei in %TEMP%
+# bleibt, Folgenummer der Wiederherstellungspunkte unveraendert, die vier Registrierungswerte und
+# die Lesewerte aus Lies-Objektwerte vorher == nachher.
 # Plan B: Objekte, die es auf dem Rechner geben muss (ein Run-Wert unter HKLM, ein Update aus dem
 # WUA-Cache, ein Geraet mit Problemcode 22). Fehlt eines, bleibt der Ersatz stehen, und die Massnahme
 # meldet das fehlende Objekt: Exit 0 oder 1, nie 2 (2 hiesse: die Parameterpruefung lehnt einen
@@ -1721,46 +1784,86 @@ foreach ($k in @($m3Statisch | Sort-Object -Unique)) { if ($m3ImCode -notcontain
 foreach ($k in $m3ImCode) { if ($m3Erwartet -notcontains $k) { $hits += "Kennung '$k' kommt aus MassnahmenM3.Alle(), steht aber nicht in der festen Liste dieser Probe" } }
 foreach ($k in $m3Erwartet) { if ($m3ImCode -notcontains $k) { $hits += "Kennung '$k' fehlt in MassnahmenM3.Alle() (helfer\Massnahmen\ meldet sie nicht mehr an)" } }
 
-# Adapter: der erste IPv4-Anschluss mit DHCP und Verbindung (InterfaceIndex, wie Systembild.Adapter.Index).
+# Adapter: dieselbe Sicht wie AdapterPruefen/AdapterLesen in helfer\Massnahmen\Netz.cs - die erste
+# Win32_NetworkAdapterConfiguration (nach InterfaceIndex) mit IPEnabled, DHCPEnabled und mindestens
+# einer Adresse. Bis 18.09.2026 kam der Index aus Get-NetIPInterface (Dhcp=Enabled,
+# ConnectionState=Connected); die beiden Sichten muessen nicht dieselben Anschluesse fuehren, und
+# AdapterPruefen ist die einzige Parameterpruefung des Plans, die den Systemzustand liest - der
+# naechstliegende Grund fuer das Exit 2 der CI. Der Helfer prueft nur WMI, also waehlt die Probe nur aus WMI.
 $adapterIndex = $null
+$adapterText = ''
 try {
-    $ni = @(Get-NetIPInterface -AddressFamily IPv4 -ErrorAction Stop | Where-Object { "$($_.Dhcp)" -eq 'Enabled' -and "$($_.ConnectionState)" -eq 'Connected' } | Sort-Object InterfaceIndex)
-    if ($ni.Count -gt 0) { $adapterIndex = [int]$ni[0].InterfaceIndex }
+    $nac = @(Get-CimInstance Win32_NetworkAdapterConfiguration -Filter 'IPEnabled = TRUE AND DHCPEnabled = TRUE' -ErrorAction Stop |
+             Where-Object { $null -ne $_.InterfaceIndex -and @($_.IPAddress | Where-Object { "$_".Length -gt 0 }).Count -gt 0 } |
+             Sort-Object InterfaceIndex)
+    if ($nac.Count -gt 0) { $adapterIndex = [int]$nac[0].InterfaceIndex; $adapterText = "$($nac[0].Description)" }
 } catch { }
-# Defender: nur mit laufendem Dienst messen die beiden Sicherheits-Massnahmen den Trockenlauf.
+# Defender: nur mit laufendem Dienst messen die beiden Sicherheits-Massnahmen den Trockenlauf
+# (DefenderVorbedingung: Klasse fehlt oder AMServiceEnabled falsch -> "nicht bestanden", Exit 1).
 $defenderAn = $false
 try {
     $mp = Get-CimInstance -Namespace 'root\Microsoft\Windows\Defender' -ClassName MSFT_MpComputerStatus -ErrorAction Stop | Select-Object -First 1
     if ($null -ne $mp -and $mp.AMServiceEnabled) { $defenderAn = $true }
 } catch { }
+# SmartScreen: eine Richtlinie EnableSmartScreen = 0 ueberstimmt den lokalen Wert, und die Massnahme
+# meldet dann zu Recht "nicht bestanden" (Exit 1), was hier nicht der Trockenlauf ist, der gemessen wird.
+$smartScreenRichtlinie = $null
+try { $smartScreenRichtlinie = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System' -Name 'EnableSmartScreen' -ErrorAction Stop).EnableSmartScreen } catch { }
+# C: wie VolumeLesen: MSFT_Volume mit DriveLetter C, DriveType 3 (fest); der Scan zusaetzlich nur NTFS/ReFS.
+# Liest sich die Klasse nicht (Namespace fehlt, WMI haengt), gilt das wie "nicht vorhanden", und die Zeile sagt es.
+$volumeC = $null
+$volumeCGrund = 'MSFT_Volume kennt kein Laufwerk C:'
+try {
+    $volumeC = Get-CimInstance -Namespace 'root\Microsoft\Windows\Storage' -ClassName MSFT_Volume -Filter "DriveLetter = 'C'" -ErrorAction Stop | Select-Object -First 1
+    if ($null -ne $volumeC -and [int]$volumeC.DriveType -ne 3) { $volumeCGrund = "C: ist kein festes Laufwerk (DriveType $($volumeC.DriveType))"; $volumeC = $null }
+} catch { $volumeCGrund = 'MSFT_Volume nicht lesbar: ' + $_.Exception.Message; $volumeC = $null }
+$volumeCScan = $null -ne $volumeC -and @('NTFS', 'ReFS') -contains "$($volumeC.FileSystem)"
+# Dienste wie DienstLesen: Win32_Service mit dem Namen; fehlt er, meldet der Schritt "nicht vorhanden" (Exit 1).
+$dienstDa = @{}
+foreach ($n in @('Spooler', 'wuauserv')) {
+    $dienstDa[$n] = $false
+    try { if ($null -ne (Get-CimInstance Win32_Service -Filter "Name = '$n'" -ErrorAction Stop | Select-Object -First 1)) { $dienstDa[$n] = $true } } catch { }
+}
+# Aufgabe wie AufgabeLesen: COM Schedule.Service, GetFolder(Ordner).GetTask(Name); nicht vorhanden wirft 0x80070002.
+$defragDa = $false
+$svc = $null
+try {
+    $svc = New-Object -ComObject 'Schedule.Service'
+    $svc.Connect()
+    if ($null -ne $svc.GetFolder('\Microsoft\Windows\Defrag').GetTask('ScheduledDefrag')) { $defragDa = $true }
+} catch { }
+finally { if ($null -ne $svc) { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($svc) } }
+
 $weggelassen = @()
 $planA = @(@{ kennung = 'netz.dnscache.leeren'; parameter = @{} })
 if ($null -ne $adapterIndex) {
     $planA += @{ kennung = 'netz.dns.zuruecksetzen'; parameter = @{ adapter = "$adapterIndex" } }
     $planA += @{ kennung = 'netz.dhcp.erneuern'; parameter = @{ adapter = "$adapterIndex" } }
-} else { $weggelassen += 'netz.dns.zuruecksetzen und netz.dhcp.erneuern (kein IPv4-Adapter mit DHCP verbunden)' }
+} else { $weggelassen += 'netz.dns.zuruecksetzen und netz.dhcp.erneuern (keine Win32_NetworkAdapterConfiguration mit IPEnabled, DHCPEnabled und Adresse)' }
 if ($defenderAn) {
     $planA += @{ kennung = 'sicherheit.signaturen.aktualisieren'; parameter = @{} }
     $planA += @{ kennung = 'sicherheit.schnellscan'; parameter = @{} }
 } else { $weggelassen += 'sicherheit.signaturen.aktualisieren und sicherheit.schnellscan (Defender-Dienst nicht an)' }
-# SmartScreen: eine Richtlinie EnableSmartScreen = 0 ueberstimmt den lokalen Wert, und die Massnahme
-# meldet dann zu Recht "nicht bestanden" (Exit 1), was hier nicht der Trockenlauf ist, der gemessen wird.
-$smartScreenRichtlinie = $null
-try { $smartScreenRichtlinie = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System' -Name 'EnableSmartScreen' -ErrorAction Stop).EnableSmartScreen } catch { }
 $planA += @(@{ kennung = 'sicherheit.firewall.einschalten'; parameter = @{ profil = '2' } })
 if ("$smartScreenRichtlinie" -ne '0') { $planA += @{ kennung = 'sicherheit.smartscreen.warn'; parameter = @{} } }
 else { $weggelassen += 'sicherheit.smartscreen.warn (Richtlinie EnableSmartScreen = 0)' }
 $planA += @(
     @{ kennung = 'sicherheit.uac.standard'; parameter = @{} },
-    @{ kennung = 'datentraeger.trim.einschalten'; parameter = @{} },
-    @{ kennung = 'volume.scan'; parameter = @{ buchstabe = 'C' } },
-    @{ kennung = 'volume.optimieren'; parameter = @{ buchstabe = 'C' } },
-    @{ kennung = 'systemschutz.punkt.anlegen'; parameter = @{} },
-    @{ kennung = 'leistung.aufgabe.deaktivieren'; parameter = @{ pfad = '\Microsoft\Windows\Defrag\ScheduledDefrag' } },
-    @{ kennung = 'leistung.dienst.startart'; parameter = @{ name = 'Spooler'; startart = 'Manual' } },
-    @{ kennung = 'update.dienst.aktivieren'; parameter = @{ name = 'wuauserv' } },
-    @{ kennung = 'wartung.massnahmen'; parameter = @{ freigaben = 'netz.dnscache.leeren' } }
+    @{ kennung = 'datentraeger.trim.einschalten'; parameter = @{} }
 )
+if ($volumeCScan) { $planA += @{ kennung = 'volume.scan'; parameter = @{ buchstabe = 'C' } } }
+elseif ($null -ne $volumeC) { $weggelassen += "volume.scan (C: hat das Dateisystem $($volumeC.FileSystem), der Scan gilt nur NTFS/ReFS)" }
+else { $weggelassen += "volume.scan ($volumeCGrund)" }
+if ($null -ne $volumeC) { $planA += @{ kennung = 'volume.optimieren'; parameter = @{ buchstabe = 'C' } } }
+else { $weggelassen += "volume.optimieren ($volumeCGrund)" }
+$planA += @(@{ kennung = 'systemschutz.punkt.anlegen'; parameter = @{} })
+if ($defragDa) { $planA += @{ kennung = 'leistung.aufgabe.deaktivieren'; parameter = @{ pfad = '\Microsoft\Windows\Defrag\ScheduledDefrag' } } }
+else { $weggelassen += 'leistung.aufgabe.deaktivieren (Aufgabe \Microsoft\Windows\Defrag\ScheduledDefrag nicht in der Aufgabenplanung)' }
+if ($dienstDa['Spooler']) { $planA += @{ kennung = 'leistung.dienst.startart'; parameter = @{ name = 'Spooler'; startart = 'Manual' } } }
+else { $weggelassen += 'leistung.dienst.startart (Dienst Spooler nicht vorhanden)' }
+if ($dienstDa['wuauserv']) { $planA += @{ kennung = 'update.dienst.aktivieren'; parameter = @{ name = 'wuauserv' } } }
+else { $weggelassen += 'update.dienst.aktivieren (Dienst wuauserv nicht vorhanden)' }
+$planA += @(@{ kennung = 'wartung.massnahmen'; parameter = @{ freigaben = 'netz.dnscache.leeren' } })
 
 # Plan B: Run-Wert (erster Wertname ohne Semikolon), UpdateId aus dem WUA-Cache (Online=false,
 # IsInstalled=0, hoechstens 60 s in einem eigenen Prozess), Geraet mit Problemcode 22.
@@ -1821,7 +1924,13 @@ try {
         $lauf = Starte-Helfer @('--helfer', '--plan', ('"' + $planADatei + '"'), '--trocken') $true
         $planASekunden = $lauf.Sekunden
         if ($null -eq $lauf.ExitCode) { $hits += "Plan A: ExitCode des Helfers nicht lesbar (Prozess-Handle nicht gebunden)" }
-        elseif ($lauf.ExitCode -ne 0) { $hits += "Plan A: Trockenlauf endete mit Exit $($lauf.ExitCode) statt 0 (Grund in $protokollA und in logs\app.log)" }
+        elseif ($lauf.ExitCode -ne 0) {
+            # Der Grund muss in der Ausgabe stehen (CI-Lauf 35354428200: Protokoll und app.log lagen
+            # auf dem Runner, die Zeile nannte nur den Pfad). 2 = abgelehnt (Parameterpruefung, VOR dem
+            # ersten Schritt), 1 = ein Schritt meldete ein Problem, 3 = Ausnahme.
+            $hits += "Plan A: Trockenlauf endete mit Exit $($lauf.ExitCode) statt 0 (Plan $planId, $($planA.Count) Schritte, Adapter $adapterIndex; Grund aus $protokollA und logs\app.log):"
+            $hits += Lies-Laufgrund $protokollA $planId 'Plan A:'
+        }
         if ($lauf.Kinder.Count -gt 0) { $hits += "Plan A: der Trockenlauf hat Kindprozesse gestartet: " + ($lauf.Kinder -join ', ') }
         # Zeitgrenze: ein Trockenlauf liest nur; ein echter Scan (MSFT_Volume.Repair) oder ein echtes
         # Optimieren von C: dauert Minuten und hinterlaesst weder Datei noch Kindprozess.
@@ -1829,21 +1938,36 @@ try {
         if (-not (Test-Path $protokollA)) { $hits += "Plan A: Laufprotokoll fehlt: $protokollA" }
         else {
             $zeilen = Lies-Laufprotokoll $protokollA
-            foreach ($s in $planA) {
-                $k = $s.kennung
-                $da = @($zeilen | Where-Object { $_.art -eq 'schritt' -and $_.kennung -eq $k })
-                if ($da.Count -lt 1) { $hits += "Plan A: keine schritt-Zeile fuer '$k' im Laufprotokoll" }
-                elseif ($lauf.ExitCode -ne 0) {
-                    foreach ($z in $da) { if ($z.fachmann.problem) { $hits += "Plan A: '$k' meldete ein Problem: " + $z.laie } }
+            if (@($zeilen | Where-Object { $_.art -eq 'abgelehnt' }).Count -gt 0) {
+                # Vor dem ersten Schritt abgelehnt: keine anfang-, schritt- oder ende-Zeile. Der Grund
+                # steht oben (Lies-Laufgrund); eine Zaehlung je Kennung waere nur Laerm davor.
+                $hits += "Plan A: der Plan wurde vor dem ersten Schritt abgelehnt, keine der $($planA.Count) Kennungen ist gelaufen"
+            }
+            else {
+                foreach ($s in $planA) {
+                    $k = $s.kennung
+                    $da = @($zeilen | Where-Object { $_.art -eq 'schritt' -and $_.kennung -eq $k })
+                    if ($da.Count -lt 1) { $hits += "Plan A: keine schritt-Zeile fuer '$k' im Laufprotokoll" }
+                    elseif ($lauf.ExitCode -ne 0) {
+                        # Die schritt-Zeile sagt nur "ist beendet"; den Satz dazu traegt die nachweis-Zeile
+                        # (bestanden=false) oder die fehler-Zeile derselben Kennung. Ein Problem ohne
+                        # beides (Katalog.Problem nach einer [bad]-Zeile) steht nur in app.log, siehe oben.
+                        foreach ($z in $da) {
+                            if (-not $z.fachmann.problem) { continue }
+                            $warum = @($zeilen | Where-Object { $_.kennung -eq $k -and ($_.art -eq 'fehler' -or ($_.art -eq 'nachweis' -and $_.fachmann.bestanden -eq $false)) } | ForEach-Object { $_.laie })
+                            if ($warum.Count -eq 0) { $warum = @('ohne nachweis- oder fehler-Zeile; der Satz steht als [bad]-Zeile in app.log') }
+                            $hits += "Plan A: '$k' meldete ein Problem: " + ($warum -join ' | ')
+                        }
+                    }
                 }
+                # Kein bestandener Nachweis im Trockenlauf (Vertrag 8.7): jede nachweis-Zeile traegt trocken=true.
+                foreach ($z in @($zeilen | Where-Object { $_.art -eq 'nachweis' })) {
+                    if ($z.fachmann.bestanden -eq $true) { $hits += "Plan A: '$($z.kennung)' meldet im Trockenlauf einen bestandenen Nachweis: " + $z.laie }
+                }
+                $ende = @($zeilen | Where-Object { $_.art -eq 'ende' -and $_.kennung -eq 'plan' })
+                if ($ende.Count -ne 1) { $hits += "Plan A: keine ende-Zeile des Plans ($($ende.Count))" }
+                elseif (-not $ende[0].fachmann.trocken) { $hits += "Plan A: die ende-Zeile traegt nicht trocken=true" }
             }
-            # Kein bestandener Nachweis im Trockenlauf (Vertrag 8.7): jede nachweis-Zeile traegt trocken=true.
-            foreach ($z in @($zeilen | Where-Object { $_.art -eq 'nachweis' })) {
-                if ($z.fachmann.bestanden -eq $true) { $hits += "Plan A: '$($z.kennung)' meldet im Trockenlauf einen bestandenen Nachweis: " + $z.laie }
-            }
-            $ende = @($zeilen | Where-Object { $_.art -eq 'ende' -and $_.kennung -eq 'plan' })
-            if ($ende.Count -ne 1) { $hits += "Plan A: keine ende-Zeile des Plans ($($ende.Count))" }
-            elseif (-not $ende[0].fachmann.trocken) { $hits += "Plan A: die ende-Zeile traegt nicht trocken=true" }
         }
 
         # ---- Plan B ----
@@ -1852,23 +1976,31 @@ try {
         $planBDatei = Schreibe-Plan $planId $planB
         $laufB = Starte-Helfer @('--helfer', '--plan', ('"' + $planBDatei + '"'), '--trocken') $true
         if ($null -eq $laufB.ExitCode) { $hits += "Plan B: ExitCode des Helfers nicht lesbar" }
-        elseif ($laufB.ExitCode -ne 0 -and $laufB.ExitCode -ne 1) { $hits += "Plan B: Exit $($laufB.ExitCode) statt 0 oder 1 (2 = ein gueltiger Parameter wurde abgelehnt; Grund in $protokollB)" }
+        elseif ($laufB.ExitCode -ne 0 -and $laufB.ExitCode -ne 1) {
+            $hits += "Plan B: Exit $($laufB.ExitCode) statt 0 oder 1 (2 = ein gueltiger Parameter wurde abgelehnt; Plan $planId; Grund aus $protokollB und logs\app.log):"
+            $hits += Lies-Laufgrund $protokollB $planId 'Plan B:'
+        }
         if ($laufB.Kinder.Count -gt 0) { $hits += "Plan B: Kindprozesse " + ($laufB.Kinder -join ', ') }
         $planBText = "Plan B Exit $($laufB.ExitCode)"
         if (-not (Test-Path $protokollB)) { $hits += "Plan B: Laufprotokoll fehlt: $protokollB" }
         else {
             $zeilen = Lies-Laufprotokoll $protokollB
-            $fehlend = @()
-            foreach ($s in $planB) {
-                $k = $s.kennung
-                $da = @($zeilen | Where-Object { $_.art -eq 'schritt' -and $_.kennung -eq $k })
-                if ($da.Count -lt 1) { $hits += "Plan B: keine schritt-Zeile fuer '$k'" }
-                elseif ($da[0].fachmann.problem) { $fehlend += $k }
+            if (@($zeilen | Where-Object { $_.art -eq 'abgelehnt' }).Count -gt 0) {
+                $hits += "Plan B: der Plan wurde vor dem ersten Schritt abgelehnt, keine der $($planB.Count) Kennungen ist gelaufen"
             }
-            if ($laufB.ExitCode -eq 1 -and $fehlend.Count -eq 0) { $hits += "Plan B: Exit 1, aber keine schritt-Zeile nennt ein Problem" }
-            if ($fehlend.Count -gt 0) { $planBText += ', Objekt fehlt bei ' + ($fehlend -join ', ') }
-            foreach ($z in @($zeilen | Where-Object { $_.art -eq 'nachweis' })) {
-                if ($z.fachmann.bestanden -eq $true) { $hits += "Plan B: '$($z.kennung)' meldet im Trockenlauf einen bestandenen Nachweis: " + $z.laie }
+            else {
+                $fehlend = @()
+                foreach ($s in $planB) {
+                    $k = $s.kennung
+                    $da = @($zeilen | Where-Object { $_.art -eq 'schritt' -and $_.kennung -eq $k })
+                    if ($da.Count -lt 1) { $hits += "Plan B: keine schritt-Zeile fuer '$k'" }
+                    elseif ($da[0].fachmann.problem) { $fehlend += $k }
+                }
+                if ($laufB.ExitCode -eq 1 -and $fehlend.Count -eq 0) { $hits += "Plan B: Exit 1, aber keine schritt-Zeile nennt ein Problem" }
+                if ($fehlend.Count -gt 0) { $planBText += ', Objekt fehlt bei ' + ($fehlend -join ', ') }
+                foreach ($z in @($zeilen | Where-Object { $_.art -eq 'nachweis' })) {
+                    if ($z.fachmann.bestanden -eq $true) { $hits += "Plan B: '$($z.kennung)' meldet im Trockenlauf einen bestandenen Nachweis: " + $z.laie }
+                }
             }
         }
 
@@ -1915,7 +2047,9 @@ finally {
 }
 $weggelassenText = ''
 if ($weggelassen.Count -gt 0) { $weggelassenText = '; weggelassen: ' + ($weggelassen -join '; ') }
-Test-Result "Trockenlauf der M3-Kennungen: Plan A Exit 0 ($($planA.Count) Schritte, $planASekunden s), $planBText, kein Kindprozess, keine Sicherungsdatei, 5 Registrierungswerte (SmartScreen, UAC, TRIM, Drossel der Wiederherstellungspunkte) und $lesewerteText ($($m3ImCode.Count) Kennungen zur Laufzeit; $sicherungText$weggelassenText)" ($hits.Count -eq 0) $hits
+$adapterInfo = 'ohne Adapter'
+if ($null -ne $adapterIndex) { $adapterInfo = "Adapter $adapterIndex $adapterText" }
+Test-Result "Trockenlauf der M3-Kennungen: Plan A Exit 0 ($($planA.Count) Schritte, $planASekunden s, $adapterInfo), $planBText, kein Kindprozess, keine Sicherungsdatei, 5 Registrierungswerte (SmartScreen, UAC, TRIM, Drossel der Wiederherstellungspunkte) und $lesewerteText ($($m3ImCode.Count) Kennungen zur Laufzeit; $sicherungText$weggelassenText)" ($hits.Count -eq 0) $hits
 
 # 2. Ablehnungen: jede Parameterpruefung einer M3-Kennung hat hier einen Fall, der VOR dem ersten
 # Eingriff mit Exit 2 und einer abgelehnt-Zeile enden muss (keine anfang-Zeile, kein Prozess).
