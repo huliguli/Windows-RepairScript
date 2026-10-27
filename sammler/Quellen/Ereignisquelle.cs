@@ -88,6 +88,11 @@ namespace WartungsToolbox.Sammler.Quellen
             // nach ID filtern, den Anbieter je Ereignis gegen seine Meldungsdatei (IoLogMsg.dll) pruefen.
             new Abo("System", null, "log.system.id129", 129),
             new Abo("System", "volmgr", "log.system.volmgr", 46, 49),
+            // Verworfene Wiederherstellungspunkte (Regel Systemschutz): 25 = alle Schattenkopien eines
+            // Laufwerks geloescht, weil der Speicher nicht rechtzeitig wuchs; 36 = abgebrochen an der
+            // Obergrenze; 33 = aeltester Punkt verdraengt, um unter der Obergrenze zu bleiben. Feld
+            // VolumeName traegt den Laufwerksbuchstaben ("C:"). Gemessen 30.09.2026: 33 kam 45-mal in 30 Tagen.
+            new Abo("System", "Volsnap", "log.system.volsnap", 25, 33, 36),
             // Uebersicht und Historie (keine Regel entscheidet daran)
             new Abo("System", "Microsoft-Windows-Kernel-General", "log.system.kernel-general", 12, 13),
             new Abo("System", "Microsoft-Windows-Kernel-Processor-Power", "log.system.kernel-processor-power", 37),

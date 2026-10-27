@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Management;
 using System.Threading;
 using Microsoft.Win32;
@@ -12,8 +13,9 @@ namespace WartungsToolbox.Helfer
     public static partial class MassnahmenM3
     {
         // Datentraeger (docs/M3-ENTWURF.md, Abschnitt 1): volume.scan, volume.optimieren,
-        // datentraeger.trim.einschalten, systemschutz.punkt.anlegen. Hier nur die Anmeldung; die
-        // Arbeit liegt in DatentraegerMassnahmen, damit die Sammelstelle keine Namen mit den
+        // datentraeger.trim.einschalten, systemschutz.punkt.anlegen; seit M4 (docs/M4-ENTWURF.md,
+        // Abschnitt 1) dazu volume.spotfix und volume.reparatur (Stufe 3). Hier nur die Anmeldung;
+        // die Arbeit liegt in DatentraegerMassnahmen, damit die Sammelstelle keine Namen mit den
         // anderen Bereichsdateien teilt.
         static partial void Datentraeger(List<Massnahme> l)
         {
@@ -29,14 +31,24 @@ namespace WartungsToolbox.Helfer
             l.Add(Massnahmenbau.Neu("systemschutz.punkt.anlegen", "Wiederherstellungspunkt anlegen", 1,
                 s => null,
                 DatentraegerMassnahmen.PunktAnlegen));
+            l.Add(Massnahmenbau.Neu("volume.spotfix", "Dateisystem kurz reparieren (Spot-Fix)", 3,
+                s => DatentraegerMassnahmen.BuchstabeGrund(s.Wert("buchstabe")),
+                DatentraegerMassnahmen.VolumeSpotfix));
+            l.Add(Massnahmenbau.Neu("volume.reparatur", "Dateisystem beim Neustart reparieren", 3,
+                s => DatentraegerMassnahmen.BuchstabeGrund(s.Wert("buchstabe")),
+                DatentraegerMassnahmen.VolumeReparatur));
         }
     }
 
     /// <summary>
     /// Die Datentraeger-Massnahmen des Helfers. Vorbedingungen misst der Helfer selbst und frisch
     /// (MSFT_Volume, MSFT_Partition, MSFT_PhysicalDisk, Registry), nie aus dem Systembild des
-    /// Hosts. Lange WMI-Methoden (Repair 30 min, Optimize 45 min) laufen ueber Langlauf: eigener
-    /// Thread, Abbruchpruefung jede Sekunde, alle 30 s eine Lebenszeile, harte Zeitgrenze.
+    /// Hosts. Lange WMI-Methoden (Repair 30 min, Spot-Fix 30 min, Offline-Reparatur 60 min,
+    /// Optimize 45 min) laufen ueber Langlauf: eigener Thread, Abbruchpruefung jede Sekunde, alle
+    /// 30 s eine Lebenszeile, harte Zeitgrenze. Die Stufe-3-Reparaturen (M4) auf dem
+    /// Windows-Laufwerk werden nur vorgemerkt (neustart = "1"); Windows faehrt sie beim Start.
+    /// Das Laufwerk mit dem Programm oder dem Laufzeitordner (BelegtDurch) wird im Betrieb nie
+    /// abgehaengt: Zeile bad und Problem, nichts geaendert.
     ///
     /// Trockenlauf: Lesezugriffe laufen (Volume, Medientyp, Registry, Folgenummer), Sicherung und
     /// Eingriff nicht; Werkzeuge.Lauf und Sicherungsdatei.Schreiben melden "(trocken) ..." selbst.
@@ -49,6 +61,14 @@ namespace WartungsToolbox.Helfer
         const int OptimierenMs = 45 * 60 * 1000;
         const int LeseMs = 30000;
         const int FsutilMs = 2 * 60 * 1000;
+        // M4 (Vertrag Abschnitt 1): Spot-Fix bis 30 Minuten, Offline-Reparatur eines Datenlaufwerks
+        // bis 60 Minuten; das Vormerken fuer den naechsten Start kehrt in Sekunden zurueck.
+        const int SpotfixMs = 30 * 60 * 1000;
+        const int ReparaturMs = 60 * 60 * 1000;
+        const int VormerkenMs = 5 * 60 * 1000;
+
+        /// <summary>Session Manager\BootExecute (REG_MULTI_SZ): traegt eine vorgemerkte Laufwerkspruefung als "autocheck autochk ... \??\C:".</summary>
+        const string SessionManagerSchluessel = @"SYSTEM\CurrentControlSet\Control\Session Manager";
 
         /// <summary>HKLM-Schluessel und Wert, den auch der Sammler liest (DatentraegerQuelle.TrimSystemweit).</summary>
         public const string TrimSchluessel = @"SYSTEM\CurrentControlSet\Control\FileSystem";
@@ -281,7 +301,14 @@ namespace WartungsToolbox.Helfer
         public static int TrimSetzen(Ausfuehrungskontext k, int wert)
         {
             string tail;
-            return Werkzeuge.Lauf(k, "fsutil.exe", "behavior set DisableDeleteNotify " + (wert == 0 ? "0" : "1"), FsutilMs, null, false, out tail);
+            return Werkzeuge.Lauf(k, Fsutil(), "behavior set DisableDeleteNotify " + (wert == 0 ? "0" : "1"), FsutilMs, null, false, out tail);
+        }
+
+        // Fester Pfad aus System32: ein blosser Dateiname wuerde zuerst im Programmordner gesucht,
+        // und der ist bei einer ZIP-Installation fuer Benutzer beschreibbar (M4-Grundsatz, wie Pnputil()).
+        static string Fsutil()
+        {
+            return Path.Combine(Environment.SystemDirectory, "fsutil.exe");
         }
 
         // ------------------------------------------------------------------ systemschutz.punkt.anlegen
@@ -326,6 +353,221 @@ namespace WartungsToolbox.Helfer
             return k.Werte.TryGetValue(name, out v) && int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out wert);
         }
 
+        // ------------------------------------------------------------------ volume.spotfix / volume.reparatur (M4)
+
+        /// <summary>
+        /// MSFT_Volume.Repair(OfflineScanAndFix=false, Scan=false, SpotFix=true), also chkdsk
+        /// /spotfix: behebt nur die im Scan vermerkten Fehler ($corrupt), das Laufwerk ist dabei
+        /// Sekunden abgehaengt. Das Windows-Laufwerk (Environment.SystemDirectory) laesst sich im
+        /// Betrieb nicht abhaengen: dort wird stattdessen die Offline-Reparatur fuer den naechsten
+        /// Start vorgemerkt (Repair(OfflineScanAndFix=true), neustart = "1"), wie bei
+        /// volume.reparatur (docs/M4-ENTWURF.md, Abschnitt 1). Keine Sicherung, kein Rueckweg.
+        /// </summary>
+        public static void VolumeSpotfix(PlanSchritt s, Ausfuehrungskontext k)
+        {
+            Reparieren(s, k, "volume.spotfix", false);
+        }
+
+        /// <summary>
+        /// MSFT_Volume.Repair(OfflineScanAndFix=true), also chkdsk /f: Windows-Laufwerk → vorgemerkt
+        /// fuer den naechsten Start (neustart = "1"); anderes festes Laufwerk → sofort, das Laufwerk
+        /// ist waehrenddessen abgehaengt (5 bis 60 Minuten, Lebenszeichen ueber Langlauf).
+        /// </summary>
+        public static void VolumeReparatur(PlanSchritt s, Ausfuehrungskontext k)
+        {
+            Reparieren(s, k, "volume.reparatur", true);
+        }
+
+        static void Reparieren(PlanSchritt s, Ausfuehrungskontext k, string kennung, bool offline)
+        {
+            string lw = BuchstabePruefen(s.Wert("buchstabe"));
+            // Spot-Fix gibt es nur fuer NTFS und ReFS; die Offline-Reparatur kennt auch FAT.
+            VolumeStand v = VolumeLesen(k, lw, !offline);
+            if (v == null) return;
+            // Nichts zu tun, wenn das Laufwerk nachweislich sauber ist: kein Reparaturvermerk und das
+            // Dirty-Bit lesbar und nicht gesetzt. Ein unlesbares Dirty-Bit (null) ist kein Beleg
+            // fuer "sauber", dann laeuft die Reparatur, die der Nutzer bestaetigt hat.
+            if (!BrauchtReparatur(v) && v.Dirty == false)
+            {
+                LeistungMassnahmen.SchonSo(k, kennung, "Laufwerk " + lw + ": braucht keine Reparatur (" + ZustandSatz(v) + "); es wurde nichts geändert.");
+                return;
+            }
+            k.Schreibe("   Laufwerk " + lw + ": (" + v.Dateisystem + ", " + Gb(v.Groesse) + "): " + ZustandSatz(v) + ".", "dim");
+            string windows = WindowsLaufwerk();
+            if (windows != null && windows == lw) { OfflineVormerken(k, kennung, lw); return; }
+            // Das Laufwerk mit dem Programm (Abbild des laufenden Helfers) oder dem Laufzeitordner
+            // (app.log, Laufprotokoll, Sicherungen) wird im Betrieb nicht abgehaengt: beim erzwungenen
+            // Abhaengen verloere der Helfer sein Abbild oder sein Protokoll, und das Ergebnis erreichte
+            // den Host nie. Ob Repair bei offenen Handles erzwingt oder verschiebt, ist nicht belegt.
+            string traeger = BelegtDurch(lw);
+            if (traeger != null)
+            {
+                k.Schreibe("   Laufwerk " + lw + ": trägt " + traeger + "; es wird nicht im Betrieb abgehängt, die Reparatur läuft hier nicht.", "bad");
+                Katalog.Problem(k);
+                return;
+            }
+            if (offline)
+            {
+                k.Schreibe("   Laufwerk " + lw + ": wird für die Reparatur abgehängt und ist solange nicht benutzbar (5 bis 60 Minuten).", "dim");
+                if (k.Trocken)
+                {
+                    k.Schreibe("(trocken) WMI MSFT_Volume(" + lw + ":).Repair(OfflineScanAndFix=true, Scan=false, SpotFix=false)", "dim");
+                    Nachweise.Trocken(k, kennung, "Laufwerk " + lw + ": würde abgehängt und offline repariert; Ergebnis erst im echten Lauf.");
+                    return;
+                }
+                RepairLauf(k, kennung, lw, "Die Reparatur von " + lw + ":", ReparaturMs, true, false, false);
+                return;
+            }
+            k.Schreibe("   Laufwerk " + lw + ": wird für den Spot-Fix einige Sekunden abgehängt; behoben werden nur die im Scan vermerkten Fehler.", "dim");
+            if (k.Trocken)
+            {
+                k.Schreibe("(trocken) WMI MSFT_Volume(" + lw + ":).Repair(OfflineScanAndFix=false, Scan=false, SpotFix=true)", "dim");
+                Nachweise.Trocken(k, kennung, "Laufwerk " + lw + ": würde per Spot-Fix repariert; Ergebnis erst im echten Lauf.");
+                return;
+            }
+            RepairLauf(k, kennung, lw, "Der Spot-Fix von " + lw + ":", SpotfixMs, false, false, true);
+        }
+
+        /// <summary>true, wenn OperationalStatus 0xD00E oder 0xD00F traegt oder das Dirty-Bit gesetzt ist.</summary>
+        static bool BrauchtReparatur(VolumeStand v)
+        {
+            return v.OpStatus.Contains(OpSpotFix) || v.OpStatus.Contains(OpReparatur) || v.Dirty == true;
+        }
+
+        /// <summary>Buchstabe des Windows-Laufwerks aus Environment.SystemDirectory (C:\Windows\system32 → "C"); null, wenn nicht bestimmbar.</summary>
+        public static string WindowsLaufwerk()
+        {
+            return LaufwerkVon(Environment.SystemDirectory);
+        }
+
+        /// <summary>Laufwerksbuchstabe eines Pfads (Path.GetPathRoot → BuchstabePruefen); null bei UNC-Pfad oder nicht bestimmbar.</summary>
+        static string LaufwerkVon(string pfad)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(pfad)) return null;
+                string root = Path.GetPathRoot(pfad);
+                if (string.IsNullOrEmpty(root) || root.Length < 2) return null;
+                return BuchstabePruefen(root.Substring(0, 2));
+            }
+            catch (Exception) { return null; }
+        }
+
+        /// <summary>
+        /// Was auf dem Laufwerk lw liegt und den laufenden Helfer traegt: das Programm
+        /// (AppDomain.CurrentDomain.BaseDirectory, beim Betreiber D:\Tools) oder der Laufzeitordner
+        /// (Ablage.Maschinenweit(): app.log, Laufprotokoll, Sicherungen). null = nichts davon.
+        /// </summary>
+        static string BelegtDurch(string lw)
+        {
+            bool programm = false, laufzeit = false;
+            try { programm = LaufwerkVon(AppDomain.CurrentDomain.BaseDirectory) == lw; } catch (Exception) { }
+            try { laufzeit = LaufwerkVon(Ablage.Maschinenweit()) == lw; } catch (Exception) { }
+            if (programm && laufzeit) return "das Programm und den Laufzeitordner";
+            if (programm) return "das Programm";
+            if (laufzeit) return "den Laufzeitordner (Protokolle, Sicherungen)";
+            return null;
+        }
+
+        // Das Windows-Laufwerk laesst sich im Betrieb nicht abhaengen: Repair(OfflineScanAndFix=true)
+        // merkt die Reparatur fuer den naechsten Start vor (autochk vor der Anmeldung), Windows selbst
+        // laeuft sie dann. Rueckgabe 0 heisst "vorgemerkt"; als Beleg liest der Helfer danach
+        // BootExecute und das Dirty-Bit und nennt, was er fand.
+        static void OfflineVormerken(Ausfuehrungskontext k, string kennung, string lw)
+        {
+            k.Schreibe("   Laufwerk " + lw + ": ist das Windows-Laufwerk und lässt sich im Betrieb nicht abhängen; die Reparatur läuft beim nächsten Start vor der Anmeldung (5 bis 60 Minuten).", "dim");
+            if (k.Trocken)
+            {
+                k.Schreibe("(trocken) WMI MSFT_Volume(" + lw + ":).Repair(OfflineScanAndFix=true, Scan=false, SpotFix=false)", "dim");
+                Nachweise.Trocken(k, kennung, "Laufwerk " + lw + ": würde für die Reparatur beim nächsten Start vorgemerkt; 1 Neustart wäre nötig.");
+                return;
+            }
+            long? rc = null, output = null;
+            string erweitert = null;
+            Langlauf.Mit(k, "Das Vormerken der Reparatur von " + lw + ":", VormerkenMs, () =>
+            {
+                using (ManagementBaseObject raus = Wmi2.InstanzVoll(VormerkenMs + 60000, StorageNs, "MSFT_Volume", "DriveLetter='" + lw + "'", "Repair", true, false, false))
+                {
+                    rc = Rueckgabe(raus);
+                    output = Sammler.Quellen.Wmi.Lang(raus, "Output");
+                    erweitert = ErweiterterStatus(raus);
+                }
+                return true;
+            });
+            if (rc != 0)
+            {
+                Nachweise.NichtBestanden(k, kennung, "Das Vormerken der Reparatur von " + lw + ": wurde nicht angenommen: " + StorageFehler(rc) + (erweitert == null ? "" : " (" + erweitert + ")") + ".");
+                return;
+            }
+            k.Werte["neustart"] = "1";
+            k.Schreibe("   1 Neustart nötig; das Programm startet ihn nicht selbst.", "warn");
+            string beleg = VormerkBeleg(lw);
+            Nachweise.Bestanden(k, kennung, "Laufwerk " + lw + ": ist für die Reparatur beim nächsten Start vorgemerkt (Repair(OfflineScanAndFix) angenommen, Rückgabe 0"
+                + (output.HasValue ? ", Ergebnis " + output.Value.ToString(CultureInfo.InvariantCulture) : "")
+                + (beleg == null ? "" : "; " + beleg) + "); die Reparatur selbst läuft beim Neustart.");
+        }
+
+        /// <summary>Was nach dem Vormerken zu sehen ist: ein BootExecute-Eintrag fuer das Laufwerk oder das Dirty-Bit; null = nichts davon lesbar.</summary>
+        static string VormerkBeleg(string lw)
+        {
+            try
+            {
+                using (RegistryKey key = Reg.Hklm(SessionManagerSchluessel, false))
+                {
+                    var zeilen = key == null ? null : key.GetValue("BootExecute") as string[];
+                    if (zeilen != null)
+                        foreach (string z in zeilen)
+                            if (z != null && z.IndexOf("\\??\\" + lw + ":", StringComparison.OrdinalIgnoreCase) >= 0)
+                                return "BootExecute nennt " + lw + ":";
+                }
+            }
+            catch (Exception ex) { AppLog.Warn("BootExecute nicht lesbar: " + ex.Message); }
+            return DirtyLesen(lw) == true ? "Dirty-Bit gesetzt" : null;
+        }
+
+        // Repair mit den drei booleschen Parametern (ID-Reihenfolge 0 OfflineScanAndFix, 1 Scan,
+        // 2 SpotFix) und Nachmessung: bestanden nur, wenn Windows ein gutes Ergebnis nennt UND das
+        // Laufwerk danach ohne 0xD00E/0xD00F und ohne Dirty-Bit lesbar ist. Nicht lesbar ist nicht bestanden.
+        static void RepairLauf(Ausfuehrungskontext k, string kennung, string lw, string was, int zeitMs, bool offline, bool scan, bool spotfix)
+        {
+            long? rc = null, output = null;
+            string erweitert = null;
+            Langlauf.Mit(k, was, zeitMs, () =>
+            {
+                using (ManagementBaseObject raus = Wmi2.InstanzVoll(zeitMs + 60000, StorageNs, "MSFT_Volume", "DriveLetter='" + lw + "'", "Repair", offline, scan, spotfix))
+                {
+                    rc = Rueckgabe(raus);
+                    output = Sammler.Quellen.Wmi.Lang(raus, "Output");
+                    erweitert = ErweiterterStatus(raus);
+                }
+                return true;
+            });
+            if (rc != 0)
+            {
+                Nachweise.NichtBestanden(k, kennung, was + " " + (rc == 4096 ? "lieferte kein Ergebnis" : "wurde nicht angenommen") + ": " + StorageFehler(rc) + (erweitert == null ? "" : " (" + erweitert + ")") + ".");
+                return;
+            }
+            bool gut;
+            string deutung = RepairDeutung(output, out gut);
+            string ergebnis = " (Ergebnis " + (output.HasValue ? output.Value.ToString(CultureInfo.InvariantCulture) : "?") + ")";
+            VolumeStand nach = VolumeLeise(lw);
+            if (nach == null)
+            {
+                Nachweise.NichtBestanden(k, kennung, "Laufwerk " + lw + ": " + deutung + ergebnis + "; der Zustand danach ist nicht lesbar.");
+                return;
+            }
+            // Leerer OperationalStatus und Dirty-Bit null: beides nicht lesbar, wie der Kern-Nachweis
+            // VolumeRepariert (Unlesbar). Ein nicht lesbarer Wert ist kein bestandener Nachweis.
+            if (nach.OpStatus.Count == 0 && !nach.Dirty.HasValue)
+            {
+                Nachweise.NichtBestanden(k, kennung, "Laufwerk " + lw + ": " + deutung + ergebnis + "; der Zustand danach ist nicht lesbar (weder OperationalStatus noch Dirty-Bit).");
+                return;
+            }
+            bool frei = !nach.OpStatus.Contains(OpSpotFix) && !nach.OpStatus.Contains(OpReparatur) && nach.Dirty != true;
+            if (gut && frei) Nachweise.Bestanden(k, kennung, "Laufwerk " + lw + ": repariert, " + deutung + ergebnis + "; " + ZustandSatz(nach) + ".");
+            else Nachweise.NichtBestanden(k, kennung, "Laufwerk " + lw + ": " + deutung + ergebnis + "; " + ZustandSatz(nach) + ".");
+        }
+
         // ------------------------------------------------------------------ Volume lesen
 
         public sealed class VolumeStand
@@ -343,23 +585,15 @@ namespace WartungsToolbox.Helfer
         /// </summary>
         static VolumeStand VolumeLesen(Ausfuehrungskontext k, string lw, bool nurNtfsRefs)
         {
-            ManagementObject mo = null;
             try
             {
-                mo = Wmi2.Erste(StorageNs, "SELECT DriveLetter, FileSystem, DriveType, Size, OperationalStatus FROM MSFT_Volume WHERE DriveLetter='" + lw + "'", LeseMs);
-                if (mo == null)
+                VolumeStand v = VolumeAbfrage(lw);
+                if (v == null)
                 {
                     k.Schreibe("   Ein Laufwerk " + lw + ": gibt es nicht (MSFT_Volume kennt keinen Buchstaben " + lw + ").", "bad");
                     Katalog.Problem(k);
                     return null;
                 }
-                var v = new VolumeStand
-                {
-                    Dateisystem = Sammler.Quellen.Wmi.Str(mo, "FileSystem") ?? "?",
-                    Typ = Sammler.Quellen.Wmi.Ganz(mo, "DriveType") ?? 0,
-                    Groesse = Sammler.Quellen.Wmi.Lang(mo, "Size") ?? 0,
-                    OpStatus = Sammler.Quellen.Wmi.Ganze(mo, "OperationalStatus"),
-                };
                 if (v.Typ != 3)
                 {
                     k.Schreibe("   Laufwerk " + lw + ": ist kein festes Laufwerk (DriveType " + v.Typ + "); Wechsel- und Netzlaufwerke werden nicht geprüft oder optimiert.", "bad");
@@ -380,6 +614,40 @@ namespace WartungsToolbox.Helfer
                 k.Schreibe("   Laufwerk " + lw + ": ließ sich nicht lesen: " + ex.Message, "bad");
                 Katalog.Problem(k);
                 return null;
+            }
+        }
+
+        /// <summary>Nachmessung ohne Zeilen und ohne Problem-Signal: Volume samt Dirty-Bit oder null (fehlt oder nicht lesbar); der Aufrufer deutet null als "nicht lesbar".</summary>
+        static VolumeStand VolumeLeise(string lw)
+        {
+            try
+            {
+                VolumeStand v = VolumeAbfrage(lw);
+                if (v != null) v.Dirty = DirtyLesen(lw);
+                return v;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Laufwerk " + lw + ": nach der Reparatur nicht lesbar: " + ex.Message);
+                return null;
+            }
+        }
+
+        /// <summary>MSFT_Volume zum Buchstaben (ohne Dirty-Bit) oder null, wenn es das Laufwerk nicht gibt; wirft bei WMI-Fehlern.</summary>
+        static VolumeStand VolumeAbfrage(string lw)
+        {
+            ManagementObject mo = null;
+            try
+            {
+                mo = Wmi2.Erste(StorageNs, "SELECT DriveLetter, FileSystem, DriveType, Size, OperationalStatus FROM MSFT_Volume WHERE DriveLetter='" + lw + "'", LeseMs);
+                if (mo == null) return null;
+                return new VolumeStand
+                {
+                    Dateisystem = Sammler.Quellen.Wmi.Str(mo, "FileSystem") ?? "?",
+                    Typ = Sammler.Quellen.Wmi.Ganz(mo, "DriveType") ?? 0,
+                    Groesse = Sammler.Quellen.Wmi.Lang(mo, "Size") ?? 0,
+                    OpStatus = Sammler.Quellen.Wmi.Ganze(mo, "OperationalStatus"),
+                };
             }
             finally { if (mo != null) mo.Dispose(); }
         }

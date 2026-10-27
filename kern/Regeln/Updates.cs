@@ -29,6 +29,14 @@ namespace WartungsToolbox.Kern.Regeln
         public const string Verbergen = "update.verbergen";
         public const string EinstellungenOeffnen = "update.einstellungen.oeffnen";
         public const string DienstAktivieren = "update.dienst.aktivieren";
+        /// <summary>
+        /// Windows-Update-Reset (docs/M4-ENTWURF.md, Abschnitt 1 und 2.4): Stufe 3, sichert verborgene
+        /// Updates, stoppt die Dienste, benennt SoftwareDistribution und catroot2 um. Haengt an
+        /// update.fehlschlag.&lt;id&gt; mit einem Code aus Fehlercodes.ResetHilft und einmal an
+        /// update.fehlschlaege.mehrere; die Reparatur der Windows-Dateien (Stabilitaet.MDateienReparieren)
+        /// an Codes aus Fehlercodes.Komponentenspeicher.
+        /// </summary>
+        public const string Zuruecksetzen = "update.zuruecksetzen";
 
         /// <summary>
         /// Planparameter (docs/M3-ENTWURF.md, Abschnitt 1). update.verbergen braucht die UpdateID
@@ -61,7 +69,9 @@ namespace WartungsToolbox.Kern.Regeln
             var fehlschlaege = Fehlschlaege(ctx, u);
 
             Neustart(u, e);
-            foreach (var f in fehlschlaege.Values.Where(f => !verborgen.Contains(f.Id))) e.Befunde.Add(FehlschlagBefund(ctx, f));
+            var offeneFehlschlaege = fehlschlaege.Values.Where(f => !verborgen.Contains(f.Id)).ToList();
+            foreach (var f in offeneFehlschlaege) e.Befunde.Add(FehlschlagBefund(ctx, f));
+            MehrereFehlschlaege(ctx, offeneFehlschlaege, e);
             foreach (var l in schleifen.Values.Where(l => !verborgen.Contains(l.Id))) e.Befunde.Add(SchleifeBefund(l));
             Sicherheitsalter(ctx, u, e);
             LetzteSuche(ctx, s, u, e);
@@ -204,7 +214,49 @@ namespace WartungsToolbox.Kern.Regeln
             if (f.Codes.Count == 0) b.Detail.Add("Kein Fehlercode überliefert");
             b.Detail.Add("Zählung: Verlauf " + f.Verlauf + ", System-Protokoll " + f.Log + " (es zählt das Maximum, weil beide Quellen denselben Fehlschlag sehen können)");
             VerbergenAnhaengen(b, f);
+            // Der Fehlercode entscheidet ueber die zweite Kennung (docs/M4-ENTWURF.md, Abschnitt 2.4):
+            // ein Code des Download-Zwischenspeichers oder Datenspeichers -> Update-Reset, ein Code
+            // des Komponentenspeichers -> Reparatur der Windows-Dateien. Ohne Deutung keine Kennung.
+            bool reset = f.Codes.Any(Fehlercodes.ResetHilft);
+            bool cbs = f.Codes.Any(Fehlercodes.Komponentenspeicher);
+            if (reset)
+            {
+                b.Rat += " Der Fehlercode deutet auf einen beschädigten Update-Zwischenspeicher; ein Windows-Update-Reset behebt das meist (verborgene Updates werden vorher gesichert).";
+                b.Massnahmen.Add(Zuruecksetzen);
+            }
+            if (cbs)
+            {
+                b.Rat += " Der Fehlercode deutet auf beschädigte Windows-Dateien; die Reparatur mit DISM und SFC ersetzt sie aus dem Komponentenspeicher oder von Windows Update.";
+                b.Massnahmen.Add(Stabilitaet.MDateienReparieren);
+            }
             return b;
+        }
+
+        /// <summary>
+        /// Zwei oder mehr verschiedene Kennungen mit je mindestens UpdateFehlschlagMin Fehlschlaegen im
+        /// Fenster (docs/M4-ENTWURF.md, Abschnitt 2.4): dann liegt es meist nicht am einzelnen Update,
+        /// sondern am Zwischenspeicher, und der Reset haengt EINMAL hier, ohne Parameter. Die
+        /// Einzelbefunde bleiben; verborgene Kennungen zaehlen nicht (sie installieren sich nicht mehr).
+        /// </summary>
+        static void MehrereFehlschlaege(Kontext ctx, List<Fall> faelle, BereichErgebnis e)
+        {
+            if (faelle.Count < 2) return;
+            var b = new Befund
+            {
+                Bereich = Bereich.Updates,
+                Schluessel = "update.fehlschlaege.mehrere",
+                Zustand = Zustand.Warn,
+                Messwert = Messwert.Von(faelle.Count, "Updates mit ≥ " + Schwellen.UpdateFehlschlagMin + " Fehlschlägen", "≥ 2"),
+                Quelle = "IUpdateHistoryEntry.ResultCode 4, WindowsUpdateClient 20",
+                Titel = "Mehrere Updates schlagen fehl",
+                Satz = faelle.Count + " verschiedene Updates sind in den letzten " + Schwellen.UpdateFehlschlagTage + " Tagen je mindestens " + Text.Mal(Schwellen.UpdateFehlschlagMin) + " fehlgeschlagen; scheitern mehrere zugleich, liegt es meist am Update-Zwischenspeicher, nicht am einzelnen Update.",
+                Rat = "Windows Update zurücksetzen (Zwischenspeicher leeren, Dienste neu starten; verborgene Updates werden vorher gesichert und danach wieder verborgen), danach erneut nach Updates suchen.",
+            };
+            foreach (var f in faelle.OrderByDescending(f => f.Anzahl))
+                b.Detail.Add("„" + Anzeige(f) + "“ (Kennung " + f.Id + "): " + Text.Mal(f.Anzahl) + (f.Codes.Count > 0 ? ", zuletzt 0x" + Hex(f.Codes[f.Codes.Count - 1]) : ""));
+            b.Detail.Add("Die Einzelkarten je Update bleiben stehen; der Reset gehört auf diese Karte, damit er nur einmal angeboten wird.");
+            b.Massnahmen.Add(Zuruecksetzen);
+            e.Befunde.Add(b);
         }
 
         // ---------------------------------------------------------------- Schleife
@@ -510,15 +562,41 @@ namespace WartungsToolbox.Kern.Regeln
     }
 
     /// <summary>
-    /// Die 15 haeufigsten Windows-Update-Fehlercodes mit Deutung. Quelle: learn.microsoft.com
-    /// "Windows Update error codes by component" (WU_E_*) und winerror.h (0x8007xxxx =
-    /// Win32-Fehler). Nur was hier steht, wird gedeutet; alles andere bleibt "keine Deutung".
+    /// Die 26 haeufigsten Windows-Update-Fehlercodes mit Deutung. Quelle: learn.microsoft.com
+    /// "Windows Update error codes by component" (WU_E_*), "Windows Update common errors and
+    /// mitigation" (0x8007xxxx = Win32-Fehler aus winerror.h, 0x800Fxxxx = Komponentenspeicher CBS).
+    /// Nur was hier steht, wird gedeutet; alles andere bleibt "keine Deutung". Zwei Mengen daraus
+    /// entscheiden seit M4 ueber Massnahmen (docs/M4-ENTWURF.md, Abschnitt 2.4): ResetHilft
+    /// (Download-Zwischenspeicher, Datenspeicher, Dienste -> update.zuruecksetzen) und
+    /// Komponentenspeicher (CBS-Beschaedigung -> dateien.reparieren). Codes, deren Namen Microsoft
+    /// nicht veroeffentlicht (0x8024A105, 0x800F0986), tragen nur die beobachtete Wirkung.
     /// </summary>
     public static class Fehlercodes
     {
+        static readonly HashSet<long> ResetMenge = new HashSet<long>
+        {
+            0x80070002, 0x80070003, 0x8007000E, 0x80070020, 0x80240034, 0x8024200D,
+            0x80244022, 0x80246007, 0x80240016, 0x80248007, 0x8024A105, 0x80070490,
+        };
+
+        static readonly HashSet<long> KomponentenspeicherMenge = new HashSet<long>
+        {
+            0x800F081F, 0x800F0831, 0x800F0922, 0x80073712, 0x8007000D, 0x800F0986,
+        };
+
         static readonly Dictionary<long, string> Tabelle = new Dictionary<long, string>
         {
+            { 0x80070002, "Eine Datei des Updates wurde nicht gefunden (ERROR_FILE_NOT_FOUND); meist ist der Download-Zwischenspeicher (SoftwareDistribution) unvollständig" },
+            { 0x80070003, "Ein Ordner des Updates wurde nicht gefunden (ERROR_PATH_NOT_FOUND); meist ist der Download-Zwischenspeicher (SoftwareDistribution) beschädigt" },
+            { 0x8007000D, "Die Daten eines Updates sind ungültig (ERROR_INVALID_DATA); ein Paket im Komponentenspeicher ist beschädigt" },
+            { 0x8007000E, "Windows Update ging der Arbeitsspeicher aus (E_OUTOFMEMORY); tritt bei einem sehr großen Update-Stau im Zwischenspeicher auf" },
             { 0x80070020, "Eine Datei ist durch ein anderes Programm gesperrt (ERROR_SHARING_VIOLATION); oft Virenschutz, Sicherung oder ein laufender Installer" },
+            { 0x80070490, "Ein Element wurde nicht gefunden (ERROR_NOT_FOUND); der Datenspeicher von Windows Update oder ein Eintrag im Komponentenspeicher fehlt" },
+            { 0x80073712, "Der Komponentenspeicher ist beschädigt (ERROR_SXS_COMPONENT_STORE_CORRUPT); nur eine Reparatur mit DISM ersetzt die beschädigten Teile" },
+            { 0x800F081F, "Die Quelldateien für die Reparatur fehlen (CBS_E_SOURCE_MISSING); DISM braucht Windows Update oder ein Installationsabbild als Quelle" },
+            { 0x800F0831, "Ein Paket im Komponentenspeicher ist beschädigt (CBS_E_STORE_CORRUPTION); das Vorgängerupdate fehlt oder ist unvollständig" },
+            { 0x800F0922, "Der Installer im Komponentenspeicher ist beim Abschließen gescheitert (CBS_E_INSTALLERS_FAILED); oft eine zu kleine Systempartition oder ein Treiber, der den Abschluss stört" },
+            { 0x800F0986, "Eine Komponente ließ sich beim Anwenden des Updates nicht aus dem Komponentenspeicher aufbauen (0x800F0986, von Microsoft ohne Namen geführt); die Reparatur mit DISM ersetzt sie" },
             { 0x80070422, "Der Windows-Update-Dienst ist deaktiviert (ERROR_SERVICE_DISABLED)" },
             { 0x8024402C, "Der Name des Update-Servers oder Proxys ließ sich nicht auflösen (WU_E_PT_WINHTTP_NAME_NOT_RESOLVED); Namensauflösung, DNS oder Proxy prüfen" },
             { 0x8024001E, "Der Vorgang brach ab, weil Dienst oder System heruntergefahren wurden (WU_E_SERVICE_STOP)" },
@@ -533,6 +611,7 @@ namespace WartungsToolbox.Kern.Regeln
             { 0x80240017, "Das Update ist für dieses System nicht anwendbar (WU_E_NOT_APPLICABLE)" },
             { 0x8024200D, "Der Installer braucht das Update noch einmal; der Download muss wiederholt werden (WU_E_UH_NEEDANOTHERDOWNLOAD)" },
             { 0x80248007, "Im Datenspeicher von Windows Update fehlen die Angaben zum Update (WU_E_DS_NODATA)" },
+            { 0x8024A105, "Der Update-Dienst meldet einen inneren Fehler (0x8024A105, von Microsoft ohne Namen geführt: „Der Updatedienst hat Probleme“); ein Windows-Update-Reset behebt das meist" },
         };
 
         public static int Anzahl { get { return Tabelle.Count; } }
@@ -542,6 +621,26 @@ namespace WartungsToolbox.Kern.Regeln
         {
             string d;
             return Tabelle.TryGetValue(code & 0xFFFFFFFFL, out d) ? d : null;
+        }
+
+        /// <summary>
+        /// Ob ein Windows-Update-Reset (update.zuruecksetzen) bei diesem Code hilft: die 12 Codes des
+        /// Download-Zwischenspeichers, des Datenspeichers und der Dienste (docs/M4-ENTWURF.md, 2.4).
+        /// Vorzeichenbehaftete Schreibweise wie bei Deutung. Reine Funktion.
+        /// </summary>
+        public static bool ResetHilft(long code)
+        {
+            return ResetMenge.Contains(code & 0xFFFFFFFFL);
+        }
+
+        /// <summary>
+        /// Ob der Code eine Beschaedigung des Komponentenspeichers (CBS) nennt, die nur DISM
+        /// RestoreHealth und SFC beheben (dateien.reparieren): die 6 Codes aus docs/M4-ENTWURF.md, 2.4.
+        /// Reine Funktion.
+        /// </summary>
+        public static bool Komponentenspeicher(long code)
+        {
+            return KomponentenspeicherMenge.Contains(code & 0xFFFFFFFFL);
         }
     }
 }

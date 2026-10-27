@@ -18,7 +18,10 @@ namespace WartungsToolbox.Kern.Regeln
     /// ("geraet:&lt;instanzId&gt;:22"): ein anderer Code ist eine neue Frage.
     ///
     /// Grundsatz "keine erfundenen Diagnosen": nur die 57 dokumentierten Codes aus
-    /// Problemcodes.cs werden gedeutet. Ein unbekannter Code bleibt unknown, nie bad.
+    /// Problemcodes.cs werden gedeutet. Ein unbekannter Code bleibt unknown, nie bad. Ein nicht
+    /// gelesener Code (ProblemCode null, seit M4-Entwurf 10.2) ist unknown ohne Kennung und nie
+    /// "ohne Fehler": nur eine gemessene 0 zaehlt als gesund; die fehlende Messung steht zudem
+    /// in Fehlend ("Problemcode von N Geraeten"), damit der Bereich sie als "Nicht geprueft" nennt.
     /// Elternschaft kommt nur aus dem Feld parent (DEVPKEY_Device_Parent); fehlt es, sagt das
     /// Detail "nicht ermittelbar" und raet nichts aus dem Instanzpfad. Auch die Steckbarkeit
     /// wird nicht aus dem Pfad geraten: der Rat nennt sie als Bedingung ("ein Steckgeraet").
@@ -32,15 +35,20 @@ namespace WartungsToolbox.Kern.Regeln
         public const string QuellePnp = "wmi.pnp";
 
         // Massnahmen-Kennungen (kern/Massnahmen.cs): geraet.aktivieren ist Stufe 2 und haengt nur
-        // an Code 22 nach der Antwort "reparieren"; geraet.treiber.neu bleibt Rat bis M4.
+        // an Code 22 nach der Antwort "reparieren"; geraet.treiber.neu ist seit M4 Stufe 3 (Export des
+        // Herstellertreibers, Geraet entfernen, neu erkennen) an Defekt-Codes der Ursache Treiber,
+        // geraet.treiber.zurueck der Rat "vorheriger Treiber ueber den Geraete-Manager" daneben
+        // (docs/M4-ENTWURF.md, Abschnitt 1 und 2.4).
         public const string MAktivieren = "geraet.aktivieren";
         public const string MTreiberNeu = "geraet.treiber.neu";
+        public const string MTreiberZurueck = "geraet.treiber.zurueck";
 
         /// <summary>
-        /// Planparameter fuer geraet.aktivieren (docs/M3-ENTWURF.md, Abschnitt 1): die Instanz-Id
-        /// (Win32_PnPEntity.PNPDeviceID = DEVPKEY_Device_InstanceId), wie sie im Bild und im
-        /// Schluessel geraet.problem.&lt;instanzId&gt; steht. Der Helfer prueft sie erneut gegen sein
-        /// eigenes Bild; der Host prueft zusaetzlich die Antwort "reparieren".
+        /// Planparameter fuer geraet.aktivieren und geraet.treiber.neu (docs/M3-ENTWURF.md und
+        /// M4-ENTWURF.md, Abschnitt 1): die Instanz-Id (Win32_PnPEntity.PNPDeviceID =
+        /// DEVPKEY_Device_InstanceId), wie sie im Bild und im Schluessel geraet.problem.&lt;instanzId&gt;
+        /// steht. Der Helfer prueft sie erneut gegen sein eigenes Bild; der Host prueft bei
+        /// geraet.aktivieren zusaetzlich die Antwort "reparieren".
         /// </summary>
         public const string ParamInstanzId = "instanzId";
 
@@ -99,18 +107,27 @@ namespace WartungsToolbox.Kern.Regeln
         static void GeraetePruefen(Kontext ctx, BereichErgebnis e)
         {
             var s = ctx.S;
-            int praesent = 0, mitBefund = 0;
+            int praesent = 0, mitBefund = 0, ohneCode = 0;
             var harmlos = new List<Geraet>();
             foreach (var g in s.Geraete)
             {
                 if (!g.Present) continue;   // WMI liefert ohnehin nur Praesente; ein Testbild darf es anders sagen
                 praesent++;
+                // Nur eine gemessene 0 ist "ohne Fehler"; null (Code nicht gelesen) faellt nicht
+                // hierunter und wird in GeraetBefund als unknown ohne Kennung gemeldet.
                 if (g.ProblemCode == 0) continue;
+                if (!g.ProblemCode.HasValue) ohneCode++;
                 var b = GeraetBefund(ctx, g);
                 if (b == null) { harmlos.Add(g); continue; }   // harmlos (45, 47, 20): kein Befund, aber im Sammelsatz genannt
                 mitBefund++;
                 e.Befunde.Add(b);
             }
+
+            // Ein nicht gelesener Code ist eine ausgefallene Messung, kein Urteil: er steht wie jede
+            // Quelle ohne Wert in Fehlend ("Nicht geprueft: ..."), sonst laeuft der Bereich als
+            // "unauffaellig" durch, ohne den Grund zu nennen (Grundsatz: Daten ODER Fehlereintrag,
+            // wie Netz.cs). Das Gesamturteil bleibt: unknown zaehlt dort ohnehin nicht.
+            if (ohneCode > 0) e.Fehlend.Add(ohneCode == 1 ? "Problemcode von 1 Gerät" : "Problemcode von " + ohneCode + " Geräten");
 
             if (mitBefund == 0)
             {
@@ -130,8 +147,10 @@ namespace WartungsToolbox.Kern.Regeln
                 };
                 foreach (var g in harmlos)
                 {
-                    var eintrag = Problemcodes.Von(g.ProblemCode);
-                    ok.Detail.Add("Harmloser Code: „" + Anzeigename(g) + "“ meldet " + g.ProblemCode + " (CM_PROB_" + eintrag.Name + "): " + eintrag.Bedeutung);
+                    // harmlos enthaelt nur Geraete mit gemessenem Code (GeraetBefund liefert fuer null nie null).
+                    int code = g.ProblemCode.Value;
+                    var eintrag = Problemcodes.Von(code);
+                    ok.Detail.Add("Harmloser Code: „" + Anzeigename(g) + "“ meldet " + code + " (CM_PROB_" + eintrag.Name + "): " + eintrag.Bedeutung);
                 }
                 e.Befunde.Add(ok);
             }
@@ -144,16 +163,44 @@ namespace WartungsToolbox.Kern.Regeln
             if (harmlos.Count == 1)
             {
                 var g = harmlos[0];
-                var eintrag = Problemcodes.Von(g.ProblemCode);
-                return "Von " + praesent + " angeschlossenen Geräten laufen " + ohne + " ohne Fehlercode; „" + Anzeigename(g) + "“ meldet Code " + g.ProblemCode + " (" + eintrag.Bedeutung + "), das ist kein Fehler.";
+                int code = g.ProblemCode.Value;
+                var eintrag = Problemcodes.Von(code);
+                return "Von " + praesent + " angeschlossenen Geräten laufen " + ohne + " ohne Fehlercode; „" + Anzeigename(g) + "“ meldet Code " + code + " (" + eintrag.Bedeutung + "), das ist kein Fehler.";
             }
-            string codes = string.Join(", ", harmlos.Select(g => g.ProblemCode).Distinct().OrderBy(c => c));
+            string codes = string.Join(", ", harmlos.Select(g => g.ProblemCode.Value).Distinct().OrderBy(c => c));
             return "Von " + praesent + " angeschlossenen Geräten laufen " + ohne + " ohne Fehlercode; " + harmlos.Count + " melden nur harmlose Codes (" + codes + "), das ist kein Fehler.";
+        }
+
+        /// <summary>
+        /// Ein praesentes Geraet, dessen Problemcode weder Win32_PnPEntity noch der DEVPKEY geliefert
+        /// hat (M4-Entwurf 10.2): unknown ohne Kennung und ohne Frage. Nicht gelesen ist kein Befund
+        /// und kein Freispruch; die Karte sagt nur, dass die Messung fehlt, und zaehlt nicht ins
+        /// Gesamturteil (GeraetePruefen traegt sie zusaetzlich in Fehlend ein). Eine Massnahme
+        /// haengt hier nie: der Helfer lehnt einen Eingriff an einem
+        /// Geraet ohne Code ab, und ein Knopf, der mit einer Ablehnung endet, ist keiner.
+        /// </summary>
+        static Befund CodeNichtGelesen(Kontext ctx, Geraet g)
+        {
+            string name = Anzeigename(g);
+            var b = new Befund
+            {
+                Bereich = Bereich.Hardware,
+                Schluessel = "geraet.problem." + g.InstanzId,
+                Zustand = Zustand.Unknown,
+                Messwert = Messwert.Von("nicht gelesen", "Problemcode", "0"),
+                Quelle = "Win32_PnPEntity.ConfigManagerErrorCode",
+                Titel = "Problemcode nicht lesbar",
+                Satz = "„" + name + "“ ist angeschlossen, Windows nannte bei der Messung aber keinen Problemcode für das Gerät; ob es läuft, lässt sich so nicht sagen.",
+                Rat = "Die Prüfung wiederholen; fehlt der Code dann noch, im Geräte-Manager nachsehen, ob das Gerät ein Warnzeichen trägt.",
+            };
+            b.Detail.AddRange(Einzelheiten(ctx, g, null));
+            return b;
         }
 
         static Befund GeraetBefund(Kontext ctx, Geraet g)
         {
-            int code = g.ProblemCode;
+            if (!g.ProblemCode.HasValue) return CodeNichtGelesen(ctx, g);
+            int code = g.ProblemCode.Value;
             var eintrag = Problemcodes.Von(code);
             string klasse = Problemcodes.Klasse(code);
             string name = Anzeigename(g);
@@ -196,9 +243,19 @@ namespace WartungsToolbox.Kern.Regeln
                     b.Satz = "„" + name + "“ meldet Code " + code + ": " + eintrag.Bedeutung;
                     if (eintrag.Ursache == Problemcodes.Treiber)
                     {
+                        // Die Massnahme nur mit einer Instanz-Id, die der Helfer annimmt (InstanzIdZulaessig),
+                        // sonst bleibt der Rat; geraet.treiber.zurueck ist Rat und haengt immer daneben.
+                        bool zulaessig = InstanzIdZulaessig(g.InstanzId);
                         b.Titel = "Gerät mit Treiberproblem";
-                        b.Rat = "Den Treiber neu installieren, am besten die aktuelle Fassung vom Hersteller" + AnbieterZusatz(g) + ".";
-                        b.Massnahmen.Add(MTreiberNeu);
+                        b.Rat = zulaessig
+                            ? "Den Treiber neu installieren lassen (Maßnahme an dieser Karte: ein Herstellertreiber wird vorher exportiert, das Gerät ist dabei einige Sekunden weg), am besten danach die aktuelle Fassung vom Hersteller" + AnbieterZusatz(g) + " einspielen; hilft das nicht, im Geräte-Manager den vorherigen Treiber wählen."
+                            : "Den Treiber im Geräte-Manager von Hand neu installieren, am besten die aktuelle Fassung vom Hersteller" + AnbieterZusatz(g) + "; die Kennung des Geräts enthält Zeichen, die das Programm nicht weitergibt, deshalb gibt es hier keine Maßnahme.";
+                        if (zulaessig)
+                        {
+                            b.Massnahmen.Add(MTreiberNeu);
+                            b.Parameter[ParamInstanzId] = g.InstanzId;
+                        }
+                        b.Massnahmen.Add(MTreiberZurueck);
                     }
                     else if (eintrag.Ursache == Problemcodes.Hardware)
                     {
@@ -388,7 +445,9 @@ namespace WartungsToolbox.Kern.Regeln
         /// <summary>Fachzeilen: Code-Name, Instanz, Klasse, Eltern (nur aus DEVPKEY), Treiber, Statusbits.</summary>
         static IEnumerable<string> Einzelheiten(Kontext ctx, Geraet g, Problemcodes.Eintrag eintrag)
         {
-            yield return "Problemcode " + g.ProblemCode + (eintrag == null ? " (nicht in cfg.h 10.0.26100)" : " (CM_PROB_" + eintrag.Name + "): " + eintrag.Bedeutung);
+            yield return !g.ProblemCode.HasValue
+                ? "Problemcode: nicht gelesen (Win32_PnPEntity.ConfigManagerErrorCode ohne Wert, DEVPKEY_Device_ProblemCode nicht geliefert)"
+                : "Problemcode " + g.ProblemCode.Value + (eintrag == null ? " (nicht in cfg.h 10.0.26100)" : " (CM_PROB_" + eintrag.Name + "): " + eintrag.Bedeutung);
             yield return "Instanz: " + g.InstanzId;
             if (!string.IsNullOrEmpty(g.Klasse) || !string.IsNullOrEmpty(g.KlasseGuid))
                 yield return "Klasse: " + (g.Klasse ?? "?") + (string.IsNullOrEmpty(g.KlasseGuid) ? "" : " " + g.KlasseGuid);

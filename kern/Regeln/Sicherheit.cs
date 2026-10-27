@@ -34,6 +34,8 @@ namespace WartungsToolbox.Kern.Regeln
         const int RidAdministrator = 500;     // eingebauter Administrator (SID-RID, sprachneutral)
         const int RidGast = 501;              // eingebautes Gastkonto ("Gast" ist lokalisiert)
         const int EingehendErlauben = 1;      // NET_FW_ACTION_ALLOW (INetFwPolicy2.DefaultInboundAction)
+        const int AusgehendBlockieren = 0;    // NET_FW_ACTION_BLOCK (INetFwPolicy2.DefaultOutboundAction)
+        const int AusgehendErlauben = 1;      // NET_FW_ACTION_ALLOW, der Auslieferungszustand
         const int Smb1Aktiv = 1;              // Win32_OptionalFeature.InstallState: 1 Enabled
         const int GesundheitNichtUeberwacht = 1; // WSC_SECURITY_PROVIDER_HEALTH_NOTMONITORED (Doku wscapi.h)
         const int GesundheitSchlummert = 3;   // WSC_SECURITY_PROVIDER_HEALTH_SNOOZE
@@ -48,13 +50,46 @@ namespace WartungsToolbox.Kern.Regeln
         public const string MassnahmeFirewall = "sicherheit.firewall.einschalten";
         public const string MassnahmeUac = "sicherheit.uac.standard";
         public const string MassnahmeSmartScreen = "sicherheit.smartscreen.warn";
+        // M4 (docs/M4-ENTWURF.md, Abschnitt 1 und 2.4): eingehend.blockieren ist Stufe 2 mit Profil,
+        // firewall.zuruecksetzen Stufe 3 mit Export; letzteres haengt bei registrierter Fremd-Firewall
+        // an keinem Befund (der Reset stellte die Windows-Firewall neben die Suite, der Export ersetzt
+        // deren Regeln nicht).
+        public const string MassnahmeEingehendBlockieren = "sicherheit.firewall.eingehend.blockieren";
+        public const string MassnahmeFirewallReset = "sicherheit.firewall.zuruecksetzen";
 
         /// <summary>
-        /// Planparameter fuer sicherheit.firewall.einschalten (docs/M3-ENTWURF.md, Abschnitt 1): das
-        /// Profil als Zahl wie in NET_FW_PROFILE_TYPE2 (1 Domaene, 2 privat, 4 oeffentlich). Je Profil
-        /// entsteht ein eigener Befund sicherheit.firewall.aus.&lt;profil&gt;, der Wert steht daneben.
+        /// Planparameter fuer sicherheit.firewall.einschalten und sicherheit.firewall.eingehend.blockieren
+        /// (docs/M3-ENTWURF.md und M4-ENTWURF.md, Abschnitt 1): das Profil als Zahl wie in
+        /// NET_FW_PROFILE_TYPE2 (1 Domaene, 2 privat, 4 oeffentlich). Je Profil entsteht ein eigener
+        /// Befund sicherheit.firewall.aus.&lt;profil&gt; bzw. .eingehend.&lt;profil&gt;, der Wert steht daneben.
         /// </summary>
         public const string ParamProfil = "profil";
+
+        /// <summary>
+        /// Die Anzeigenamen, unter denen Windows seine eigene Firewall in root\SecurityCenter2
+        /// FirewallProduct fuehrt (je nach Fassung und Sprache); alles andere dort ist ein Fremdprodukt.
+        /// Eine Zeichenmenge an EINER Stelle (M3-Entwurf 8.5, M4-Entwurf 10.2): der Sammler
+        /// (sammler/Quellen/Sicherheitsquelle.cs DrittFirewall) und der Helfer
+        /// (helfer/Massnahmen/Sicherheit.cs FremdFirewall) rufen IstWindowsFirewallName statt
+        /// die vier Praefixe je einmal zu fuehren.
+        /// </summary>
+        static readonly string[] WindowsFirewallNamen = { "Windows Defender", "Microsoft Defender", "Windows-Firewall", "Windows Firewall" };
+
+        /// <summary>
+        /// true, wenn der Anzeigename eines FirewallProduct-Eintrags die Windows-Firewall selbst
+        /// bezeichnet: nach dem Abschneiden von Leerraum beginnt er mit einem der 4 Praefixe aus
+        /// WindowsFirewallNamen (Gross/Klein egal). null, leer oder nur Leerraum ist false, weil ein
+        /// Eintrag ohne Namen kein Windows-Eintrag ist; der Aufrufer ueberspringt leere Namen selbst.
+        /// Reine Funktion, kein Windows-Zugriff.
+        /// </summary>
+        public static bool IstWindowsFirewallName(string displayName)
+        {
+            if (string.IsNullOrWhiteSpace(displayName)) return false;
+            string name = displayName.Trim();
+            foreach (string praefix in WindowsFirewallNamen)
+                if (name.StartsWith(praefix, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
 
         public static BereichErgebnis Pruefen(Kontext ctx)
         {
@@ -75,7 +110,35 @@ namespace WartungsToolbox.Kern.Regeln
             Konten(ctx, si, e);
             Rdp(ctx, s, e);
             Smb1(ctx, si, e);
+            Programmordner(ctx, si, e);
             return e;
+        }
+
+        // ------------------------------------------------------------------ Programmordner
+
+        /// <summary>
+        /// Die EXE startet als Helfer (runas) und aus den Aufgaben der App mit hoechsten Rechten. Darf
+        /// ein Konto ohne Administratorrechte sie oder ihren Ordner beschreiben, kann ein Schadprogramm
+        /// ohne Rechte sie austauschen und wird beim naechsten Start mit vollen Rechten ausgefuehrt.
+        /// null ohne Fehlereintrag = aeltere Aufzeichnung ohne das Feld: kein Befund, keine Zeile.
+        /// </summary>
+        static void Programmordner(Kontext ctx, Kern.Sicherheit si, BereichErgebnis e)
+        {
+            if (si.ProgrammOrdnerBeschreibbar == null)
+            {
+                if (ctx.S.FehlerVon("datei.programmordner").Any()) e.Fehlend.Add("Schreibrechte am Programmordner");
+                return;
+            }
+            int n = si.ProgrammOrdnerBeschreibbar.Count;
+            if (n == 0) return;
+            var b = Neu(e, "sicherheit.programmordner.beschreibbar", Zustand.Warn,
+                "Der Programmordner ist ohne Administratorrechte beschreibbar",
+                "Im Ordner „" + (si.ProgrammOrdner ?? "?") + "“ " + (n == 1 ? "erlaubt 1 Eintrag" : "erlauben " + n + " Einträge")
+                    + " das Ändern ohne Administratorrechte; ein Schadprogramm könnte so die Windows-Wartung austauschen, die mit Administratorrechten gestartet wird.",
+                "Schalten Sie in den Einstellungen die geplante Wartung und den Start mit Windows aus, deinstallieren Sie die Windows-Wartung und installieren Sie sie neu; sie liegt dann unter „C:\\Program Files“, wo nur Administratoren Dateien ändern dürfen. Danach beides wieder einschalten.",
+                "FileSystemSecurity der Programmdatei und ihres Ordners", Messwert.Von(n, "Einträge mit Schreibrecht", "0"));
+            foreach (var t in si.ProgrammOrdnerBeschreibbar) b.Detail.Add(t);
+            b.Detail.Add("Mit Administratorrechten startet diese Datei als Helfer nach der Abfrage der Benutzerkontensteuerung und, wo so eingerichtet, aus geplanten Aufgaben mit höchsten Rechten; dort ohne jede Nachfrage.");
         }
 
         // ------------------------------------------------------------------ Virenschutz
@@ -459,24 +522,56 @@ namespace WartungsToolbox.Kern.Regeln
                 }
                 if (p.Eingehend.HasValue && p.Eingehend.Value == EingehendErlauben)
                 {
+                    // Erste Kennung setzt nur die Standardaktion dieses Profils (Stufe 2, Rueckweg ueber
+                    // die Sicherung); der Reset (Stufe 3) als zweite, nur ohne Fremd-Firewall.
                     var b = Neu(e, "sicherheit.firewall.eingehend." + p.Profil, Zustand.Warn,
                         "Die Firewall lässt im Profil „" + ProfilName(p.Profil) + "“ alles herein",
                         "Für „" + ProfilName(p.Profil) + "“ steht die Standardaktion für eingehende Verbindungen auf „Zulassen“ statt „Blockieren“; jede Verbindung von außen kommt ohne Regel durch.",
-                        "In „Windows-Sicherheit“ > „Firewall“ die eingehenden Verbindungen für dieses Profil wieder blockieren.",
+                        "Die eingehenden Verbindungen für dieses Profil wieder blockieren (Maßnahme an dieser Karte, wirkt sofort); bleibt die Firewall danach lückenhaft, alle Regeln auf den Auslieferungszustand zurücksetzen.",
                         "INetFwPolicy2.DefaultInboundAction[" + p.Profil + "]", Messwert.Von(p.Eingehend.Value, "NET_FW_ACTION", "0 = Block"));
                     b.Detail.Add("NET_FW_ACTION: 0 Block, 1 Allow (Doku INetFwPolicy2).");
+                    b.Massnahmen.Add(MassnahmeEingehendBlockieren);
+                    b.Parameter[ParamProfil] = p.Profil.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    if (fremd) b.Detail.Add("Kein Firewall-Reset: " + FirewallNamen(si) + " ist als Firewall registriert, ein Reset der Windows-Firewall ersetzt deren Regeln nicht.");
+                    else b.Massnahmen.Add(MassnahmeFirewallReset);
+                }
+                if (p.Ausgehend.HasValue && p.Ausgehend.Value == AusgehendBlockieren)
+                {
+                    // Standardaktion ausgehend auf Block: Browser, Update und Mail scheitern ohne eigene
+                    // Regel. Das ist keine Einstellung, die Windows von selbst setzt; der Reset (Stufe 3,
+                    // mit Export) stellt den Auslieferungszustand her, bei Fremd-Firewall bleibt es Rat.
+                    // Ist das Profil aus, blockiert die Firewall dort nichts: der Wert ruht, also warn
+                    // mit der Bedingung im Titel (die aus-Karte oben ist die wirksame Luecke); bad nur,
+                    // wenn das Profil an ist und der Wert wirkt.
+                    var b = Neu(e, "sicherheit.firewall.ausgehend." + p.Profil, p.An ? Zustand.Bad : Zustand.Warn,
+                        p.An
+                            ? "Die Firewall blockiert im Profil „" + ProfilName(p.Profil) + "“ alles nach draußen"
+                            : "Standardaktion ausgehend im Profil „" + ProfilName(p.Profil) + "“ steht auf Blockieren (Firewall dort aus)",
+                        p.An
+                            ? "Für „" + ProfilName(p.Profil) + "“ steht die Standardaktion für ausgehende Verbindungen auf „Blockieren“ statt „Zulassen“; in diesem Netz kommt kein Programm ohne eigene Regel ins Internet, auch Browser und Windows Update nicht."
+                            : "Für „" + ProfilName(p.Profil) + "“ steht die Standardaktion für ausgehende Verbindungen auf „Blockieren“ statt „Zulassen“; sobald die Firewall in diesem Profil eingeschaltet wird, kommt kein Programm ohne eigene Regel ins Internet.",
+                        fremd
+                            ? "Die Einstellung im Firewall-Programm " + FirewallNamen(si) + " prüfen; das Programm setzt die Windows-Firewall daneben nicht zurück."
+                            : "Die Firewall auf den Auslieferungszustand zurücksetzen (Maßnahme an dieser Karte, mit Export der bisherigen Regeln); selbst angelegte Regeln sind danach weg.",
+                        "INetFwPolicy2.DefaultOutboundAction[" + p.Profil + "]", Messwert.Von(p.Ausgehend.Value, "NET_FW_ACTION", "1 = Allow"));
+                    b.Detail.Add("NET_FW_ACTION: 0 Block, 1 Allow (Doku INetFwPolicy2); Auslieferungszustand ausgehend ist Allow.");
+                    if (fremd) b.Detail.Add("Kein Firewall-Reset: " + FirewallNamen(si) + " ist als Firewall registriert.");
+                    else b.Massnahmen.Add(MassnahmeFirewallReset);
                 }
             }
             if (aus.Count > 0 && fremd) { FremdFirewall(ctx, si, aus, e); return; }
             if (aus.Count == 0)
             {
                 bool eingehendBekannt = si.Firewall.All(p => p.Eingehend.HasValue);
+                bool eingehendBlock = eingehendBekannt && si.Firewall.All(p => p.Eingehend.Value != EingehendErlauben);
+                bool ausgehendZu = si.Firewall.All(p => p.Ausgehend.HasValue && p.Ausgehend.Value == AusgehendErlauben);
                 var b = Neu(e, "sicherheit.firewall.an", Zustand.Ok,
                     "Die Firewall ist eingeschaltet",
-                    "Die Windows-Firewall ist in allen " + si.Firewall.Count + " Netzwerkprofilen an" + (eingehendBekannt ? " und blockiert eingehende Verbindungen" : "") + ".",
+                    "Die Windows-Firewall ist in allen " + si.Firewall.Count + " Netzwerkprofilen an" + (eingehendBlock ? " und blockiert eingehende Verbindungen" : "") + (ausgehendZu ? " und lässt ausgehende Verbindungen zu" : "") + ".",
                     null, eingehendBekannt ? "INetFwPolicy2.FirewallEnabled" : "MSFT_NetFirewallProfile.Enabled",
                     Messwert.Von(si.Firewall.Count, "Profile an", si.Firewall.Count.ToString()));
                 if (!eingehendBekannt) b.Detail.Add("Standardaktion eingehend nicht gelesen (Rückfall auf den gespeicherten Zustand, nicht den wirksamen).");
+                if (!ausgehendZu && si.Firewall.All(p => !p.Ausgehend.HasValue)) b.Detail.Add("Standardaktion ausgehend nicht gelesen (ältere Aufzeichnung oder Rückfall).");
                 if (fremd) b.Detail.Add("SecurityCenter2.FirewallProduct: zusätzlich registriert " + FirewallNamen(si) + "; die Windows-Firewall ist trotzdem in allen Profilen an, beide filtern.");
             }
         }

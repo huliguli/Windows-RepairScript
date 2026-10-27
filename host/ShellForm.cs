@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
-using System.IO.Compression;
 using System.Linq;
 using System.Net;
 using System.Runtime.InteropServices;
@@ -61,13 +60,27 @@ namespace WartungsToolbox
 
         // 0/1: das In-App-Update laeuft (Download, Pruefung, Austausch; Entwurf, Abschnitt 14,
         // B11/B28). Gesetzt in BeginUpdate per Interlocked.CompareExchange, geloescht im finally
-        // des Update-Threads, NICHT aber nach dem Start von Batch oder Installer (die App
-        // beendet sich dann). Ein zweiter Klick auf "Jetzt aktualisieren" raeumte vorher den
-        // laufenden Download ab (gleicher Arbeitsordner, update.zip mit FileMode.Create).
+        // des Update-Threads, NICHT aber nach dem gelungenen Tausch oder dem Start des Installers
+        // (die App beendet sich dann). Ein zweiter Klick auf "Jetzt aktualisieren" raeumte vorher
+        // den laufenden Download ab (gleicher Arbeitsordner, update.zip mit FileMode.Create).
         int _updateLaeuft;
 
         /// <summary>true, solange das In-App-Update laeuft. Darf von jedem Thread aus gelesen werden.</summary>
         bool UpdateLaeuft { get { return Volatile.Read(ref _updateLaeuft) != 0; } }
+
+        // true nur, waehrend der Plan update.anwenden beim Helfer laeuft (FinishUpdate): das
+        // Fenster laesst sich in diesen Sekunden nicht schliessen (OnClosingWhileBusy), weil das
+        // Ende der Pipe den Tausch abbraeche. Geschrieben im Update-Thread, gelesen im UI-Thread.
+        volatile bool _updateTauschLaeuft;
+
+        /// <summary>
+        /// Voller Pfad der EXE, die Program.Main nach Application.Run startet (M4-Entwurf 4, 10.3):
+        /// gesetzt von FinishUpdate nach dem gelungenen Tausch durch den Helfer (update.anwenden),
+        /// sonst null. Der nicht erhoehte Host startet die neue Fassung selbst mit seinem eigenen
+        /// Token; der erhoehte ueber Shell.OeffneImNutzerkontext, damit sie nicht erhoeht erbt.
+        /// Statisch, weil das Fenster beim Lesen schon verfuegt ist.
+        /// </summary>
+        public static string NeustartNachEnde;
 
         // Das Fenster wurde waehrend eines Runner-Laufs geschlossen (OnClosingWhileBusy, B19):
         // der Abbruch ist durch, Done ist unterwegs; Done schliesst das Fenster dann selbst.
@@ -179,6 +192,23 @@ namespace WartungsToolbox
                         MessageBox.Show(this,
                             "Es wird gerade aufgeräumt. Bitte warten Sie einen Moment, bis der Vorgang " +
                             "abgeschlossen ist. Danach lässt sich das Fenster wie gewohnt schließen.",
+                            "Windows-Wartung", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    }
+                    catch { }
+                    return;
+                }
+
+                // Der Helfer tauscht gerade die Programmdateien (update.anwenden, Sekunden): das
+                // Ende der Pipe braeche den Plan ab, der Helfer rollte zurueck, und das Fenster
+                // schloesse mitten in „Das Programm startet gleich neu“. Also kurz warten lassen.
+                if (_updateTauschLaeuft)
+                {
+                    e.Cancel = true;
+                    try
+                    {
+                        MessageBox.Show(this,
+                            "Das Update tauscht gerade die Programmdateien; das dauert wenige Sekunden. " +
+                            "Danach startet das Programm von selbst neu.",
                             "Windows-Wartung", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     }
                     catch { }
@@ -479,6 +509,9 @@ namespace WartungsToolbox
                         neustart = k.Neustart,
                         dauer = k.DauerSekunden,
                         freischaltbar = k.Freischaltbar,
+                        // Stufe 3 (M4-Entwurf 4): der Satz, was verloren geht, mit Platzhaltern
+                        // ({dateien}, {bytes}); die Vorschau schickt ihn mit den Zahlen des Befunds.
+                        verlust = k.Verlust,
                     }).ToArray(),
                     actions = _actions.Where(a => string.IsNullOrEmpty(a.ErsetztDurch)).Select(a => new
                     {
@@ -564,13 +597,6 @@ namespace WartungsToolbox
                     return new WindowsPrincipal(id).IsInRole(WindowsBuiltInRole.Administrator);
             }
             catch { return false; }
-        }
-
-        /// <summary>Konsolen-Codepage des Systems (cmd.exe und PowerShell schreiben darin).</summary>
-        static Encoding OemEncoding()
-        {
-            try { return Encoding.GetEncoding((int)Native.GetOEMCP()); }
-            catch { return Encoding.Default; }
         }
 
         static string Sha256File(string path)
@@ -691,7 +717,14 @@ namespace WartungsToolbox
             Shell.OeffneImNutzerkontext(_updateUrl);
         }
 
-        // ---------- In-App-Update: herunterladen, entpacken, tauschen, neu starten ----------
+        // ---------- In-App-Update: herunterladen, pruefen, Tausch durch den Helfer, neu starten ----------
+        //
+        // Seit 8.3 (docs/M4-ENTWURF.md 3.6, 4, 10.3) tauscht der erhoehte Helfer die Dateien als Plan
+        // update.anwenden (Pruefsumme, Herausgeber, Version nie kleiner, Startpruefung der neuen
+        // Fassung, Tausch mit .vorher-Rueckweg); der Host laedt nur noch, prueft die Pruefsumme
+        // gegen die Release-.sha256, reicht sie als Parameter und startet danach die neue Fassung
+        // selbst (Program.Main ueber ShellForm.NeustartNachEnde). Eine cmd-Batch per runas gibt es
+        // nicht mehr; StarteErhoeht bleibt allein dem Installer-Weg (setup.exe).
 
         /// <summary>
         /// Was gerade laeuft, als Satzteil fuer eine Absage: „Tiefenprüfung“ (Titel des Runners),
@@ -714,8 +747,8 @@ namespace WartungsToolbox
             if (_runner != null && _runner.Running)
                 return string.IsNullOrEmpty(_runner.Title) ? "eine andere Aufgabe" : "„" + _runner.Title + "“";
             // Ohne Helfer gibt die offene App die geplante Wartung an den --auto-Prozess zurueck;
-            // der ist dieselbe EXE und haelt sie 10 bis 20 Minuten (DISM, SFC). Ein Update
-            // traefe mit robocopy auf die gesperrte Datei und rollte danach zurueck.
+            // der ist dieselbe EXE und haelt sie 10 bis 20 Minuten (DISM, SFC). Ein Tausch
+            // mitten in DISM oder SFC kommt nicht in Frage.
             if (GeplanteWartungLaeuft()) return "die geplante Wartung im Hintergrund";
             if (!ohneUpdate && UpdateLaeuft) return "das Update";
             return null;
@@ -745,10 +778,23 @@ namespace WartungsToolbox
             Post(new { type = "updateError", message = "Das Update läuft bereits.", laeuft = true });
         }
 
-        /// <summary>Flag des laufenden Updates loeschen; mehrfach rufbar (finally und Wiederholungsangebot).</summary>
+        /// <summary>
+        /// Flag des laufenden Updates loeschen; mehrfach rufbar (finally und Wiederholungsangebot).
+        /// Danach der Nachlauf wie am Ende jedes anderen Wegs (CheckFlow, ScanFlow, Done): das
+        /// Update zaehlt seit 8.3 zu EtwasLaeuft, eine geplante Wartung, die waehrend des
+        /// Updates angeklopft hat (_autoRunPending), startet also erst jetzt. Aus dem
+        /// Update-Thread, deshalb BeginInvoke; ohne Vormerkung tut NachlaufPruefen nichts, ohne
+        /// Fenster gibt es nichts nachzuholen.
+        /// </summary>
         void UpdateFreigeben()
         {
             Interlocked.Exchange(ref _updateLaeuft, 0);
+            try
+            {
+                if (IsDisposed || !IsHandleCreated) return;
+                BeginInvoke((Action)NachlaufPruefen);
+            }
+            catch (Exception ex) { AppLog.Warn("Nachlauf nach dem Update ließ sich nicht anstoßen: " + ex.Message); }
         }
 
         /// <summary>
@@ -779,7 +825,7 @@ namespace WartungsToolbox
             //    eigene Flag aus, sonst saehe sich der Update-Weg selbst im Weg.
             if (UpdateLaeuft) { UpdateLaeuftBereits(); return; }
             // Erst pruefen, dann laden: waehrend eines Laufs wird gar nicht erst heruntergeladen.
-            // Vor dem Start von Batch oder Installer wird noch einmal geprueft (FinishUpdate,
+            // Vor dem Plan oder dem Installer wird noch einmal geprueft (FinishUpdate,
             // UpdateViaInstaller): der Download dauert, und in der Zeit kann ein Werkzeug gestartet sein.
             string laeuft = LaufendesWas(true);
             if (laeuft != null) { UpdateWartetAuf(laeuft); return; }
@@ -787,8 +833,8 @@ namespace WartungsToolbox
             Thread t = new Thread(delegate ()
             {
                 string tmp = UpdateWorkDir();
-                // true = Batch oder Installer laufen, die App beendet sich gleich: das Flag
-                // bleibt dann gesetzt, damit kein weiterer Klick mehr durchkommt.
+                // true = der Tausch ist durch oder der Installer laeuft, die App beendet sich
+                // gleich: das Flag bleibt dann gesetzt, damit kein weiterer Klick mehr durchkommt.
                 bool austauschLaeuft = false;
                 try
                 {
@@ -808,7 +854,8 @@ namespace WartungsToolbox
                         return;
                     }
 
-                    string zip = Path.Combine(tmp, "update.zip");
+                    // Genau der Pfad, den der Helfer liest (helfer/Massnahmen/Programm.cs Quelle()).
+                    string zip = Helfer.ProgrammMassnahmen.Quelle();
 
                     SetupTls();
                     UiPost(new { type = "updateStatus", phase = "download" });
@@ -827,15 +874,16 @@ namespace WartungsToolbox
 
                     // Pruefsumme gegen den Download (Unversehrtheit). Frueher war das
                     // fail-open: fehlte die .sha256 oder scheiterte ihr Abruf, wurde ohne
-                    // jede Pruefung installiert. Jetzt bricht jeder dieser Faelle ab.
-                    string pruef = PruefeZip(zip);
+                    // jede Pruefung installiert. Jetzt bricht jeder dieser Faelle ab. Die
+                    // bestaetigte Pruefsumme geht als Parameter sha256 an den Helfer, der sie
+                    // gegen seine eigene Kopie des Pakets noch einmal prueft.
+                    string sha256;
+                    string pruef = PruefeZip(zip, out sha256);
                     if (pruef != null) { UiPost(new { type = "updateError", message = pruef }); return; }
 
-                    UiPost(new { type = "updateStatus", phase = "extract" });
-
-                    // Bleibt auf diesem Hintergrund-Thread: der Start der Austausch-Batch
-                    // zeigt den UAC-Dialog, und der darf den Thread der Oberflaeche nicht halten.
-                    austauschLaeuft = FinishUpdate(tmp, zip);
+                    // Bleibt auf diesem Hintergrund-Thread: der Start des Helfers zeigt den
+                    // UAC-Dialog, und der darf den Thread der Oberflaeche nicht halten.
+                    austauschLaeuft = FinishUpdate(zip, sha256);
                 }
                 catch (Exception ex)
                 {
@@ -915,8 +963,10 @@ namespace WartungsToolbox
         /// Startet datei erhoeht (Verb runas, UseShellExecute, ohne Fenster). Rueckgabe null =
         /// gestartet; sonst der Grund als Satz, abgelehnt = true bei Win32-Fehler 1223 (der
         /// Nutzer hat im UAC-Dialog "Nein" gesagt). Die einzige Stelle in ShellForm, die noch
-        /// einen Prozess startet (Entwurf, Abschnitt 8 Punkt 3: Ausnahme "Update-Batch").
-        /// Blockiert, solange der UAC-Dialog offen ist: nur aus einem Hintergrund-Thread rufen.
+        /// einen Prozess startet (Entwurf, Abschnitt 8 Punkt 3), und seit 8.3 nur noch fuer den
+        /// Installer (UpdateViaInstaller; docs/M4-ENTWURF.md 10.3): der ZIP-Weg laeuft als Plan
+        /// ueber den Helfer, ohne Batch. Blockiert, solange der UAC-Dialog offen ist: nur aus
+        /// einem Hintergrund-Thread rufen.
         /// </summary>
         static string StarteErhoeht(string datei, string argumente, out bool abgelehnt)
         {
@@ -984,11 +1034,14 @@ namespace WartungsToolbox
         }
 
         /// <summary>
-        /// Nur die Pruefsumme des ZIP. Die Signatur sitzt an der EXE IM Paket und wird
-        /// deshalb erst nach dem Entpacken geprueft (siehe FinishUpdate).
+        /// Nur die Pruefsumme des ZIP gegen die Release-.sha256. Die Signatur sitzt an der EXE
+        /// IM Paket und wird vom Helfer geprueft (update.anwenden, Herausgeber und Schluessel).
+        /// sha256 = die bestaetigte Pruefsumme als 64 Hex-Zeichen klein (Parameter des Plans),
+        /// null bei jedem Fehler. Rueckgabe null = in Ordnung, sonst der Satz fuer die Oberflaeche.
         /// </summary>
-        string PruefeZip(string zip)
+        string PruefeZip(string zip, out string sha256)
         {
+            sha256 = null;
             if (string.IsNullOrEmpty(_updateHashUrl))
             {
                 AppLog.Warn("Update abgebrochen: keine Pruefsumme im Release hinterlegt.");
@@ -1009,12 +1062,15 @@ namespace WartungsToolbox
             if (string.IsNullOrEmpty(erwartet))
                 return "Die Prüfsumme konnte nicht geladen werden. Aus Sicherheitsgründen wurde das Update nicht installiert.";
 
-            if (!string.Equals(erwartet, Sha256File(zip), StringComparison.OrdinalIgnoreCase))
+            string ist = Sha256File(zip);
+            if (!string.Equals(erwartet, ist, StringComparison.OrdinalIgnoreCase))
             {
                 AppLog.Error("Update abgebrochen: Pruefsumme weicht ab.");
                 return "Die heruntergeladene Datei ist beschädigt. Aus Sicherheitsgründen wurde die " +
                        "Installation abgebrochen. Bitte versuchen Sie es später erneut.";
             }
+            // Der gemessene Wert (nicht der Text aus dem Netz): er hat sicher 64 Hex-Zeichen.
+            sha256 = ist.ToLowerInvariant();
             return null;
         }
 
@@ -1035,37 +1091,32 @@ namespace WartungsToolbox
         }
 
         /// <summary>
-        /// Arbeitsordner fuer das Update.
+        /// Arbeitsordner des Hosts fuer den Download: IMMER das eigene Profil,
+        /// &lt;LocalApplicationData&gt;\WindowsWartung\update, auch im erhoehten Host (M4-Entwurf 10.3).
+        /// Der Helfer liest update.zip ausschliesslich dort (helfer/Massnahmen/Programm.cs Quelle(),
+        /// Profil des Aufruferkontos, Profilgebunden) und arbeitet in seinem eigenen Ordner unter
+        /// ProgramData, den er beim Lauf leert; laege der Download dort, raeumte er ihn selbst ab.
+        /// Der Pfad kommt aus derselben Funktion wie im Helfer, damit Host und Helfer nie auseinanderlaufen.
         ///
-        /// Erhoeht (EnableLUA=0, eingebauter Administrator, erhoehte Shell): wie bis 8.0 unter
-        /// ProgramData, nur fuer Administratoren und SYSTEM beschreibbar. Ein nicht erhoehter
-        /// Prozess konnte sonst das entpackte Paket oder die Batchdatei zwischen Schreiben und
-        /// Ausfuehren austauschen und damit Code als Administrator ausfuehren.
-        ///
-        /// Nicht erhoeht (Normalfall seit 8.1, Manifest asInvoker): der Host selbst muss den
-        /// Download dort ablegen, ein Ordner nur fuer Administratoren ginge also gar nicht,
-        /// und unter ProgramData\WindowsWartung haben seit 8.1 ALLE Benutzer Aenderungsrecht
-        /// (vererbt), also auch fremde Konten desselben PCs. Deshalb das eigene Profil, mit
-        /// Rechten nur fuer das eigene Konto, Administratoren und SYSTEM (siehe
-        /// CreateAdminOnlyDirectory). Die Batch laeuft danach erhoeht (Verb runas); gegen einen
-        /// Tausch durch einen anderen Prozess DESSELBEN Kontos schuetzt kein Ordner, das ist
-        /// die Grenze des Rechte-Modells B und im Entwurf so hingenommen.
+        /// Unter ProgramData\WindowsWartung haben seit 8.1 ALLE Benutzer Aenderungsrecht (vererbt),
+        /// also auch fremde Konten desselben PCs; im Profil gelten Rechte nur fuer das eigene Konto,
+        /// Administratoren und SYSTEM (CreateAdminOnlyDirectory). Gegen einen Tausch durch einen
+        /// anderen Prozess DESSELBEN Kontos schuetzt kein Ordner; dagegen steht die Pruefsumme, die
+        /// der Helfer an seiner eigenen Kopie des Pakets noch einmal prueft (Parameter sha256).
         /// </summary>
         static string UpdateWorkDir()
         {
-            return Path.Combine(
-                Environment.GetFolderPath(IsElevated()
-                    ? Environment.SpecialFolder.CommonApplicationData
-                    : Environment.SpecialFolder.LocalApplicationData),
-                "WindowsWartung", "update");
+            return Path.GetDirectoryName(Helfer.ProgrammMassnahmen.Quelle());
         }
 
         /// <summary>
         /// Legt den Update-Ordner mit engen Rechten an; vererbte Rechte werden ausdruecklich
-        /// abgeworfen. Erhoeht: nur Administratoren und SYSTEM, Besitzer Administratoren.
-        /// Nicht erhoeht: dazu das eigene Konto (es muss schreiben), Besitzer bleibt das
-        /// eigene Konto (einen anderen darf ein nicht erhoehter Prozess nicht eintragen,
-        /// Windows lehnt das mit Fehler 1307 ab).
+        /// abgeworfen: das eigene Konto (es muss schreiben), Administratoren und SYSTEM. Nicht
+        /// erhoeht bleibt der Besitzer das eigene Konto (einen anderen darf ein nicht erhoehter
+        /// Prozess nicht eintragen, Windows lehnt das mit Fehler 1307 ab); erhoeht wird
+        /// Administratoren Besitzer, das eigene Konto steht trotzdem in der Liste, weil der Ordner
+        /// seit 8.3 auch erhoeht im Profil liegt und der naechste nicht erhoehte Start dieses
+        /// Kontos ihn loeschen und neu anlegen koennen muss.
         /// </summary>
         static void CreateAdminOnlyDirectory(string path)
         {
@@ -1082,17 +1133,11 @@ namespace WartungsToolbox
 
                 sec.AddAccessRule(new FileSystemAccessRule(admins, FileSystemRights.FullControl, inh, PropagationFlags.None, AccessControlType.Allow));
                 sec.AddAccessRule(new FileSystemAccessRule(system, FileSystemRights.FullControl, inh, PropagationFlags.None, AccessControlType.Allow));
-                if (IsElevated())
-                {
-                    sec.SetOwner(admins);
-                }
-                else
-                {
-                    SecurityIdentifier ich;
-                    using (WindowsIdentity id = WindowsIdentity.GetCurrent()) ich = id.User;
-                    if (ich == null) throw new InvalidOperationException("Das eigene Konto ist nicht lesbar.");
-                    sec.AddAccessRule(new FileSystemAccessRule(ich, FileSystemRights.FullControl, inh, PropagationFlags.None, AccessControlType.Allow));
-                }
+                SecurityIdentifier ich;
+                using (WindowsIdentity id = WindowsIdentity.GetCurrent()) ich = id.User;
+                if (ich == null) throw new InvalidOperationException("Das eigene Konto ist nicht lesbar.");
+                sec.AddAccessRule(new FileSystemAccessRule(ich, FileSystemRights.FullControl, inh, PropagationFlags.None, AccessControlType.Allow));
+                if (IsElevated()) sec.SetOwner(admins);
 
                 di.SetAccessControl(sec);
             }
@@ -1159,155 +1204,171 @@ namespace WartungsToolbox
         }
 
         /// <summary>
-        /// ZIP-Weg: entpacken, Herkunft pruefen, Austausch-Batch erhoeht starten (Verb runas,
-        /// UAC-Dialog), dann diese Instanz beenden. Laeuft auf dem Download-Thread; alles
-        /// fuer die Oberflaeche geht ueber UiPost. Rueckgabe true = die Batch laeuft, die App
-        /// beendet sich; false = nichts getauscht, das Update-Flag wird freigegeben.
+        /// ZIP-Weg seit 8.3 (M4-Entwurf 4, 10.3): der Tausch laeuft als Plan update.anwenden ueber
+        /// den Helfer (Pruefsumme an seiner eigenen Kopie, Herausgeber Name und Schluessel, Version
+        /// nie kleiner, Startpruefung der neuen Fassung, Tausch je Datei mit .vorher-Rueckweg);
+        /// entpackt wird hier nichts mehr, und es gibt keine Batch. Ablauf: LaufendesWas(true) →
+        /// Helfer holen (UAC-Dialog nennt WindowsWartung.exe; erhoehter Host: derselbe Plan lokal)
+        /// → Plan mit sha256 ueber PlanAusfuehren (Konsolenzeilen und Protokoll wie beim Hauptweg)
+        /// → Exit 0: Merker, Helfer beenden, Nachricht restart, NeustartNachEnde, Application.Exit;
+        /// Exit 1: updateError mit der letzten bad-Zeile des Helfers, kein Merker, Leiste zurueck;
+        /// Exit 2/3/4: updateError mit dem Satz aus PlanErgebnis (Absage, Fehler, Abbruch), ebenso.
+        /// Laeuft auf dem Download-Thread; alles fuer die Oberflaeche geht ueber UiPost. Rueckgabe
+        /// true = getauscht, die App beendet sich (das Update-Flag bleibt gesetzt); false = nichts
+        /// getauscht, der Aufrufer gibt das Flag frei.
         /// </summary>
-        bool FinishUpdate(string tmp, string zip)
+        bool FinishUpdate(string zip, string sha256)
         {
+            const string kennung = Helfer.ProgrammMassnahmen.Kennung;
+            const string was = "das Update";
             try
             {
-                string newDir = Path.Combine(tmp, "new");
-                if (Directory.Exists(newDir)) Directory.Delete(newDir, true);
-                ZipFile.ExtractToDirectory(zip, newDir);
-
-                string neueExe = Path.Combine(newDir, "WindowsWartung.exe");
-                if (!File.Exists(neueExe))
+                if (string.IsNullOrEmpty(sha256) || sha256.Length != 64)
                 {
-                    UiPost(new { type = "updateError", message = "Das Paket enthält keine WindowsWartung.exe; es wurde nichts verändert." });
+                    UiPost(new { type = "updateError", message = "Die Prüfsumme des Pakets liegt nicht als 64 Zeichen vor; es wurde nichts verändert." });
+                    return false;
+                }
+                if (!File.Exists(zip))
+                {
+                    UiPost(new { type = "updateError", message = "Das heruntergeladene Paket liegt nicht mehr unter " + zip + "; es wurde nichts verändert." });
                     return false;
                 }
 
-                // Herkunft pruefen, BEVOR getauscht wird: die neue Fassung muss vom selben
-                // Herausgeber stammen wie die laufende. Die Pruefsumme allein sagt darueber
-                // nichts, weil sie im selben Release liegt wie die Datei.
-                string herkunft = UpdateTrust.PruefeHerausgeber(neueExe);
-                if (herkunft != null)
-                {
-                    UiPost(new { type = "updateError", message = herkunft });
-                    return false;
-                }
+                string appExe = Path.Combine(AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\'), "WindowsWartung.exe");
 
-                string appDir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
-                string appExe = Path.Combine(appDir, "WindowsWartung.exe");
-                int pid = Process.GetCurrentProcess().Id;
-
-                // Der Helfer bekommt gleich "ende"; bei laufendem Plan waere das ein Baum-Kill.
-                // Waehrend Download und Entpacken kann ein Lauf begonnen haben, deshalb hier
-                // noch einmal, bevor Merker und Batch entstehen.
+                // Der Helfer bekommt gleich einen Plan; waehrend des Downloads kann ein Lauf
+                // begonnen haben, deshalb hier noch einmal (danach sperrt StartAbgelehnt neue
+                // Laeufe, solange UpdateLaeuft gesetzt ist).
                 string laeuft = LaufendesWas(true);
                 if (laeuft != null) { UpdateWartetAuf(laeuft); return false; }
 
-                WriteMarker(_updateTag);
+                // Protokoll wie beim Hauptweg: der erste Blick tauscht _protokoll aus, deshalb
+                // erst ihn abwarten; Anfang und Ende dieses Laufs stehen in derselben Datei.
+                ErstbefundAbwarten();
+                if (_protokoll == null) _protokoll = new Kern.Protokoll(Kern.Protokoll.NeueLaufId());
+                _protokoll.Schreibe(Kern.Protokoll.Host, Kern.Protokoll.Anfang, "update", "Update auf " + (_updateTag ?? "?") + " gestartet (Plan " + kennung + ")",
+                    new { fassung = _updateTag, sha256 = sha256.Substring(0, 16), erhoeht = IsElevated() });
+                // Ein stehengebliebenes Abbruch-Flag eines frueheren Laufs darf den Plan nicht als
+                // „vor dem Start abgebrochen“ enden lassen; kein Hauptweg laeuft (LaufendesWas).
+                _flowCancel = false;
 
-                // Die Batchdatei liegt im abgesicherten Update-Ordner, NICHT in %TEMP%:
-                // sie wird gleich mit Adminrechten ausgefuehrt.
-                //
-                // Die neue Fassung startet ueber explorer.exe, nicht ueber "start": die Batch
-                // laeuft per runas erhoeht, und "start" vererbt das (asInvoker) an die App. Die
-                // liefe dann erhoeht, und ihr Selbststart-Schalter legte die Aufgabe wieder mit
-                // Besitzer Administratoren an, also genau die 8.0-Aufgabe, die der nicht erhoehte
-                // Host nie mehr loswird. Der Explorer startet Programme mit mittlerer Integritaet.
-                string bat = Path.Combine(tmp, "ww_update.cmd");
-                string sicherung = Path.Combine(tmp, "vorher");
-                string neuStarten = "explorer.exe \"" + appExe + "\"\r\n";
-                string content =
-                    "@echo off\r\n" +
-                    ":w\r\n" +
-                    "tasklist /FI \"PID eq " + pid + "\" 2>nul | find \"" + pid + "\" >nul\r\n" +
-                    "if not errorlevel 1 ( timeout /t 1 /nobreak >nul & goto w )\r\n" +
-                    // Nicht nur der Host: Helfer (--helfer) und geplante Wartung (--auto) sind
-                    // dieselbe EXE, und solange einer davon laeuft, kann robocopy die Datei nicht
-                    // ersetzen (/R:3 scheitert, Rueckrollen, "Update rückgängig gemacht" beim
-                    // naechsten Start, obwohl nichts kaputt war; Entwurf Abschnitt 14, B15).
-                    // Deshalb bis 120 s warten, bis kein WindowsWartung.exe mehr laeuft; danach
-                    // geht es weiter, und robocopy meldet den Fehler selbst.
-                    "set /a ww_warte=0\r\n" +
-                    ":w2\r\n" +
-                    "tasklist /FI \"IMAGENAME eq WindowsWartung.exe\" 2>nul | find /I \"WindowsWartung.exe\" >nul\r\n" +
-                    "if errorlevel 1 goto w2ok\r\n" +
-                    "set /a ww_warte+=1\r\n" +
-                    "if %ww_warte% geq 120 goto w2ok\r\n" +
-                    "timeout /t 1 /nobreak >nul\r\n" +
-                    "goto w2\r\n" +
-                    ":w2ok\r\n" +
-                    // Rechte des Laufzeitordners (Entwurf, Abschnitt 14, B34): nach einem
-                    // 8.0-Bestand gehoeren Verlauf, Antworten und app.log der Administratoren-
-                    // gruppe, und der nicht erhoehte Host kann sie nicht mehr ueberschreiben.
-                    // Diese Batch laeuft erhoeht und gibt BUILTIN\Users (S-1-5-32-545, sprach-
-                    // unabhaengig) Aenderungsrecht auf den ganzen Baum, wie Ablage.RechteSichern.
-                    // Ein Fehler hier (Ordner fehlt) bricht das Update nicht ab.
-                    "icacls \"%ProgramData%\\WindowsWartung\" /grant *S-1-5-32-545:(OI)(CI)M /T >nul 2>&1\r\n" +
-                    // Die Zeile davor gibt BUILTIN\Users Aenderungsrecht auf den ganzen Baum, also
-                    // auch auf sicherungen\massnahmen. Dort liegen die Sicherungsdateien der
-                    // Massnahmen (Rueckweg): der Helfer nimmt nur Dateien mit seiner eigenen,
-                    // nicht vererbenden DACL an (docs/M3-ENTWURF.md 8.2). Deshalb bekommt der
-                    // Ordner sie hier sofort zurueck: Vererbung aus, Administratoren und SYSTEM
-                    // Vollzugriff, Benutzer nur Lesen und Ausfuehren. Nur, wenn es ihn schon gibt.
-                    "if exist \"%ProgramData%\\WindowsWartung\\sicherungen\\massnahmen\" icacls \"%ProgramData%\\WindowsWartung\\sicherungen\\massnahmen\" /inheritance:r /grant:r *S-1-5-32-544:(OI)(CI)F *S-1-5-18:(OI)(CI)F *S-1-5-32-545:(OI)(CI)RX /T >nul 2>&1\r\n" +
-                    // Erst die bisherige Fassung zur Seite legen. Ohne diesen Schritt gab es
-                    // keinen Rueckweg: Bricht das Kopieren mittendrin ab, blieb eine halb
-                    // ueberschriebene Installation stehen - neue Oberflaeche, alte Programmdatei
-                    // oder umgekehrt. Scheitert schon die Sicherung, wird gar nichts angefasst.
-                    "rmdir /s /q \"" + sicherung + "\" >nul 2>&1\r\n" +
-                    "robocopy \"" + appDir + "\" \"" + sicherung + "\" /E /NFL /NDL /NJH /NJS /R:1 /W:1 >nul\r\n" +
-                    "if errorlevel 8 (\r\n" +
-                    "  echo Die bisherige Fassung liess sich nicht sichern. Es wurde nichts veraendert.> \"" + Path.Combine(tmp, "fehler.txt") + "\"\r\n" +
-                    "  " + neuStarten +
-                    "  goto ende\r\n" +
-                    ")\r\n" +
-                    "robocopy \"" + newDir + "\" \"" + appDir + "\" /E /NFL /NDL /NJH /NJS /R:3 /W:2 >nul\r\n" +
-                    // Robocopy meldet alles unter 8 als Erfolg. Ist mehr passiert, wurde nicht
-                    // sauber kopiert - dann die gesicherte Fassung zurueckholen, statt eine
-                    // halb ueberschriebene zu starten. /PURGE raeumt dabei weg, was der
-                    // abgebrochene Lauf bereits hineinkopiert hatte.
-                    "if errorlevel 8 (\r\n" +
-                    "  robocopy \"" + sicherung + "\" \"" + appDir + "\" /E /PURGE /NFL /NDL /NJH /NJS /R:2 /W:2 >nul\r\n" +
-                    "  echo Update fehlgeschlagen, die bisherige Fassung wurde wiederhergestellt.> \"" + Path.Combine(tmp, "fehler.txt") + "\"\r\n" +
-                    ")\r\n" +
-                    neuStarten +
-                    ":ende\r\n" +
-                    "rmdir /s /q \"" + sicherung + "\" >nul 2>&1\r\n" +
-                    "rmdir /s /q \"" + Path.Combine(tmp, "new") + "\" >nul 2>&1\r\n" +
-                    "del \"" + Path.Combine(tmp, "update.zip") + "\" >nul 2>&1\r\n" +
-                    "del \"%~f0\" >nul 2>&1\r\n";
-
-                // cmd.exe liest Batchdateien in der OEM-Codepage. Mit Encoding.Default (ANSI)
-                // wurden Umlaute im Pfad verstuemmelt - bei einem Benutzernamen wie "Müller"
-                // schlug das Kopieren fehl und die App startete nach dem Update nicht mehr.
-                File.WriteAllText(bat, content, OemEncoding());
-
-                // Die Batch tauscht Programmdateien unter Program Files: seit 8.1 (asInvoker)
-                // braucht sie dafuer den UAC-Dialog (Verb runas). Der Helfer ist dieselbe EXE
-                // und muss vorher weg, sonst kann robocopy sie nicht ersetzen.
                 UiPost(new { type = "updateStatus", phase = "admin" });
-                AppLog.Info("Update auf " + _updateTag + " wird angewendet (Austausch-Batch per runas).");
-                HelferClient.Beenden();
+                AppLog.Info("Update auf " + (_updateTag ?? "?") + " wird angewendet (Plan " + kennung + " über den Helfer, Paket " + zip + ").");
 
-                bool abgelehnt;
-                string start = StarteErhoeht("cmd.exe", "/c \"" + bat + "\"", out abgelehnt);
-                if (start != null)
+                IAusfuehrer a = UpdateAusfuehrerHolen(was);
+                if (a == null)
                 {
-                    DeleteMarker();
-                    try { File.Delete(bat); } catch { }
-                    if (abgelehnt) { UpdateAbgelehnt("die Austausch-Batch"); return false; }
-                    AppLog.Error("Austausch-Batch ließ sich nicht starten: " + start);
-                    UiPost(new { type = "updateError", message = start });
+                    _protokoll.Schreibe(Kern.Protokoll.Host, Kern.Protokoll.Ende, "update", "Update nicht angewendet: kein Ausführer");
                     return false;
                 }
 
-                UiPost(new { type = "updateStatus", phase = "restart" });
-                BeginInvoke((Action)delegate { Application.Exit(); });
-                return true;
+                Kern.PlanErgebnis erg;
+                _updateTauschLaeuft = true;
+                try { erg = PlanAusfuehren(a, Kern.Plan.Neu("Update").Mit(kennung, "sha256", sha256), kennung); }
+                finally { _updateTauschLaeuft = false; }
+                if (erg.Exit == Kern.PlanErgebnis.Ok && !erg.Problem)
+                {
+                    string neu = erg.Wert("update.version"), alt = erg.Wert("update.vorher");
+                    _protokoll.Schreibe(Kern.Protokoll.Host, Kern.Protokoll.Ende, "update",
+                        "Update eingerichtet: Fassung " + (neu ?? "?") + " statt " + (alt ?? "?") + "; das Programm startet neu",
+                        new { version = neu, vorher = alt, planId = erg.PlanId });
+                    AppLog.Info("Update eingerichtet (Fassung " + (neu ?? "?") + ", davor " + (alt ?? "?") + "); Neustart über " + appExe + ".");
+                    // Der Merker meldet beim naechsten Start „Aktualisiert“; erst schreiben, wenn der
+                    // Tausch durch ist, sonst hiesse es „rueckgaengig gemacht“, obwohl nie einer lief.
+                    WriteMarker(_updateTag);
+                    // Der Helfer ist die alte EXE (jetzt WindowsWartung.exe.vorher); er geht, damit die
+                    // neue Fassung beim naechsten UAC-Dialog frisch startet.
+                    HelferClient.Beenden();
+                    UiPost(new { type = "updateStatus", phase = "restart" });
+                    NeustartNachEnde = appExe;
+                    BeginInvoke((Action)delegate
+                    {
+                        // Eine geplante Wartung, die waehrend des Updates angeklopft hat (das Update
+                        // zaehlt zu EtwasLaeuft, OnScheduledRunRequested hat sie vorgemerkt), faellt
+                        // mit dem Neustart aus: der --auto-Prozess hat uebergeben und ist weg. Das
+                        // steht im Verlauf wie beim uebersprungenen Nachholen (NachlaufPruefen), nie still.
+                        if (_autoRunPending)
+                        {
+                            _autoRunPending = false;
+                            const string grund = "Übersprungen: das Programm startete für das Update neu";
+                            AppLog.Warn("Geplante Wartung nicht nachgeholt: das Programm startet nach dem Update neu; der Termin fällt aus, der nächste läuft wie geplant.");
+                            History.Add("Geplante Wartung", "warn", grund, 0);
+                        }
+                        Application.Exit();
+                    });
+                    return true;
+                }
+
+                // Nicht getauscht: Grund fuer Oberflaeche und Protokoll, kein Merker, Leiste zurueck.
+                string grund = UpdateFehlgeschlagenSatz(erg);
+                _protokoll.Schreibe(Kern.Protokoll.Host, Kern.Protokoll.Ende, "update", "Update nicht angewendet: " + grund,
+                    new { exit = erg.Exit, problem = erg.Problem, abgebrochen = erg.Abgebrochen, grund = erg.Grund, planId = erg.PlanId });
+                AppLog.Warn("Update nicht angewendet (Exit " + erg.Exit + "): " + grund);
+                UiPost(new { type = "updateError", message = grund, exit = erg.Exit });
+                UiPost(new { type = "update", version = _updateTag ?? "", notes = "" });
+                return false;
             }
             catch (Exception ex)
             {
                 AppLog.Error("Update konnte nicht angewendet werden", ex);
                 DeleteMarker();
+                if (_protokoll != null) _protokoll.Schreibe(Kern.Protokoll.Host, Kern.Protokoll.Ende, "update", "Update nicht angewendet: " + ex.Message);
                 UiPost(new { type = "updateError", message = ex.Message });
+                UiPost(new { type = "update", version = _updateTag ?? "", notes = "" });
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Ausfuehrer fuer das Update: HelferClient.Holen wie CheckFlow.AusfuehrerHolen (erhoehter
+        /// Host lokal, lebende Pipe, Abnahme-Pipe, sonst UAC-Dialog), nur mit den Meldungen der
+        /// Update-Leiste statt des Ablaufbildschirms: „Nein“ im UAC-Dialog ist kein Fehler, sondern
+        /// das Angebot, es erneut zu versuchen (UpdateAbgelehnt); jeder andere Grund ist ein
+        /// updateError mit dem Satz des Clients, und die Leiste kommt zurueck. null = nicht zu haben,
+        /// die Meldung ist dann schon draussen. Blockiert bis 60 s plus Dialog: Download-Thread.
+        /// </summary>
+        IAusfuehrer UpdateAusfuehrerHolen(string was)
+        {
+            string grund;
+            IAusfuehrer a = HelferClient.Holen(true, out grund);
+            if (a != null)
+            {
+                AppLog.Info("Ausführer für " + was + ": " + a.Art + ".");
+                return a;
+            }
+            if (grund == Kern.Protokoll.Abgelehnt)
+            {
+                UpdateAbgelehnt("den Helfer");
+                return null;
+            }
+            string g = string.IsNullOrEmpty(grund) ? "ohne Angabe" : grund.TrimEnd('.', ' ');
+            AppLog.Warn("Der Helfer ließ sich nicht starten (" + was + "): " + g + ".");
+            UiPost(new { type = "updateError", message = "Der Helfer ließ sich nicht starten: " + g + ". Es wurde nichts verändert; Sie können es erneut versuchen." });
+            UiPost(new { type = "update", version = _updateTag ?? "", notes = "" });
+            return null;
+        }
+
+        /// <summary>
+        /// Der Satz fuer updateError, wenn der Plan update.anwenden nicht mit Exit 0 endete: bei
+        /// Exit 1 die letzte bad-Zeile des Helfers (Pruefsumme, fremde Datei im Paket, Rueckschritt,
+        /// update.zip fehlt, zurueckgerollt; M4-Entwurf 10.1), sonst der Grund aus PlanErgebnis
+        /// (Exit 2 Absage: Parameter oder fremdes Konto; Exit 3 Fehler; Exit 4 Abbruch). Jeder Satz
+        /// sagt, dass nichts getauscht wurde oder der Rueckweg gelaufen ist.
+        /// </summary>
+        string UpdateFehlgeschlagenSatz(Kern.PlanErgebnis erg)
+        {
+            string grund = string.IsNullOrEmpty(erg.Grund) ? null : erg.Grund.TrimEnd('.', ' ');
+            if (erg.Exit == Kern.PlanErgebnis.AbgebrochenExit || erg.Abgebrochen)
+                return "Das Update wurde abgebrochen, bevor Dateien getauscht wurden; es wurde nichts verändert.";
+            if (erg.Exit == Kern.PlanErgebnis.Abgelehnt)
+                return "Der Helfer hat das Update abgelehnt: " + (grund ?? "ohne Angabe") + ". Es wurde nichts verändert.";
+            if (erg.Exit == Kern.PlanErgebnis.Ausnahme)
+                return "Das Update ist mit einem Fehler abgebrochen: " + (grund ?? "ohne Angabe") + ". Es wurde nichts verändert.";
+            string zeile = _planLetzteBadZeile;
+            if (!string.IsNullOrEmpty(zeile)) return zeile.TrimEnd('.') + ".";
+            string satz = erg.Wert("nachweis.satz");
+            if (!string.IsNullOrEmpty(satz)) return satz.TrimEnd('.') + ".";
+            return "Der Helfer hat das Update nicht abgeschlossen (Exit " + erg.Exit + "); die Programmdateien sind unverändert oder zurückgerollt.";
         }
 
         string ZoomPath()
@@ -1522,13 +1583,19 @@ namespace WartungsToolbox
             // Die Oberflaeche schickt nur Kennung und Befund-Schluessel; Parameter kommen aus
             // dem Befund im Host, nie aus der Nachricht (CheckFlow.MassnahmePruefen).
             else if (type == "massnahmeVorschau") MassnahmeVorschau(Str(m, "kennung"), Str(m, "schluessel"));
-            else if (type == "massnahmeAusfuehren") MassnahmeAusfuehren(Str(m, "kennung"), Str(m, "schluessel"));
+            // bestaetigt (M4-Entwurf 4): nur der Wert true aus dem Haekchen der Vorschau zaehlt;
+            // Stufe 3 laeuft ohne ihn nicht (CheckFlow.MassnahmeAusfuehren lehnt mit Grund ab).
+            else if (type == "massnahmeAusfuehren") MassnahmeAusfuehren(Str(m, "kennung"), Str(m, "schluessel"), ToBool(m, "bestaetigt"));
             // Rueckweg nur mit einem Dateinamen (kein Pfad); der Helfer prueft Ort und Herkunft.
             else if (type == "massnahmeRueckweg") MassnahmeRueckweg(Str(m, "sicherung"));
             // Feste Zuordnung (update.einstellungen.oeffnen), nichts Freies.
             else if (type == "massnahmeAnsicht") MassnahmeAnsicht(Str(m, "kennung"));
             // Freigaben fuer die geplante Wartung (lokal, keine Rechte); Antwort ist freigaben.
             else if (type == "freigabenSetzen") FreigabenSetzen(m);
+            // --- Techniker-Ansicht (Meilenstein 4, docs/M4-ENTWURF.md 4): nur lesen, nichts aendern.
+            else if (type == "technikerAnsicht") TechnikerAnsicht();
+            else if (type == "technikerText") TechnikerTextSenden();
+            else if (type == "technikerSpeichern") TechnikerSpeichern();
             // Ein Editor mit Administratorrechten koennte jede Datei des Systems
             // ueberschreiben - deshalb ueber die Oberflaeche des Nutzers oeffnen.
             else if (type == "openLog") Shell.OeffneImNutzerkontext(AppLog.PfadZumOeffnen());
@@ -1547,8 +1614,10 @@ namespace WartungsToolbox
             // --------------------------------------------------------------------
             // Stoppt alles drei: den Pruef-/Reparaturablauf, eine Einzelaktion aus dem
             // Werkzeugkasten und einen Suchlauf. Die laufen in verschiedenen Threads,
-            // ein Aufruf allein liesse die jeweils anderen weiterlaufen.
-            else if (type == "cancel") { bool lief = EtwasLaeuft; if (_runner != null) _runner.Cancel(); CancelFlow(); CancelScan(); if (!lief) FlowIdle(); }
+            // ein Aufruf allein liesse die jeweils anderen weiterlaufen. Das Update haelt
+            // "cancel" nicht an (AbbrechbarerLauf statt EtwasLaeuft): lief keiner der drei,
+            // wird die Oberflaeche zurueckgesetzt, auch wenn gerade ein Update laeuft.
+            else if (type == "cancel") { bool lief = AbbrechbarerLauf; if (_runner != null) _runner.Cancel(); CancelFlow(); CancelScan(); if (!lief) FlowIdle(); }
             else if (type == "cancelShutdown") CancelShutdown();
             else if (type == "ready") OnReady();
             else if (type == "openUpdate") OpenUpdate();
@@ -1577,7 +1646,7 @@ namespace WartungsToolbox
             else if (type == "historyClear") { History.Clear(); Post(new { type = "history", items = VerlaufFuerOberflaeche() }); }
             else if (type == "restoreList") StartRestoreList();
             else if (type == "restoreCreate") RestoreCreate(Str(m, "desc"));
-            else if (type == "restoreRevert") RestoreRevert(ToInt(m, "seq"));
+            else if (type == "restoreRevert") RestoreRevert(ToInt(m, "seq"), ToBool(m, "bestaetigt"));
             else if (type == "powerList") StartPowerList();
             else if (type == "powerSet") PowerSet(Str(m, "guid"));
             else if (type == "bloatList") StartBloatList();
@@ -1907,10 +1976,12 @@ namespace WartungsToolbox
                 Log("●  Geplante Wartung läuft im Hintergrund (ohne Fenster).", LogKind.Warn);
                 return false;
             }
-            // Dann EtwasLaeuft (Hauptweg, Suchlaeufe, Runner; Entwurf, Abschnitt 13): waehrend
-            // des Hauptwegs laufen DISM und SFC bereits, ein zweiter Plan auf derselben Pipe
-            // bekaeme vom Helfer "beschäftigt". Die Wartung startet direkt danach, das Ende
-            // jedes Wegs ruft NachlaufPruefen.
+            // Dann EtwasLaeuft (Hauptweg, Suchlaeufe, Runner, seit 8.3 das Update; Entwurf,
+            // Abschnitt 13): waehrend des Hauptwegs laufen DISM und SFC bereits, waehrend des
+            // Updates der Plan update.anwenden, ein zweiter Plan auf derselben Pipe bekaeme vom
+            // Helfer "beschäftigt". Die Wartung startet direkt danach, das Ende jedes Wegs ruft
+            // NachlaufPruefen (das Update ueber UpdateFreigeben; gelingt es, startet das Programm
+            // neu, und der Termin faellt mit Verlaufseintrag aus).
             if (EtwasLaeuft)
             {
                 if (!_autoRunPending)
@@ -1986,9 +2057,18 @@ namespace WartungsToolbox
         /// Ablage.Maschinenweit() zusammengesetzten Pfad, davor Ablage.IstAbzweigung, der Ordner
         /// wird nie angelegt; Entwurf 8.10), dazu sicherungTitel = Titel der Hin-Massnahme aus
         /// der Kennung im Dateinamen. Ist die Datei weg, sind beide Felder null: der Eintrag
-        /// bleibt, nur der Knopf „Rückgängig“ fehlt. Eintraege ohne das Feld (bis 8.1) kommen
-        /// unveraendert durch. Die Liste ist eine Kopie; History.List selbst bleibt unangetastet.
+        /// bleibt, nur der Knopf „Rückgängig“ fehlt. Seit 8.3 (M4-Entwurf 4, 10.3) ebenso, wenn
+        /// die Sicherung unter parameter.profilSid ein anderes Profil nennt oder sich nicht lesen
+        /// laesst (CheckFlow.SicherungFuerEigenesProfil, lesend ueber Kern.Json mit der Klasse des
+        /// Helfers): der Verlauf ist maschinenweit, ein HKCU-Vorwert gehoert aber zu einem Konto,
+        /// und der Helfer lehnte den Knopf sonst erst nach Bestaetigung und UAC-Dialog ab.
+        /// Eintraege ohne das Feld (bis 8.1) kommen unveraendert durch. Die Liste ist eine Kopie;
+        /// History.List selbst bleibt unangetastet.
         /// </summary>
+        // Sicherungsdateien, fuer die der Verlauf in dieser Sitzung schon „kein Knopf“ gemeldet hat
+        // (fremdes Profil, unlesbar); nur im Thread der Oberflaeche.
+        readonly HashSet<string> _verlaufOhneKnopfGemeldet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         object[] VerlaufFuerOberflaeche()
         {
             List<object> items = History.List();
@@ -2000,8 +2080,13 @@ namespace WartungsToolbox
                 if (d == null || !d.TryGetValue("sicherung", out s) || !(s is string)) { erg.Add(o); continue; }
                 var kopie = new Dictionary<string, object>(d);
                 string name = SicherungName((string)s);
-                if (name == null || SicherungPfad(name) == null)
+                string pfad = name == null ? null : SicherungPfad(name);
+                string profilGrund = null;
+                if (name == null || pfad == null || !SicherungFuerEigenesProfil(pfad, out profilGrund))
                 {
+                    // Einmal je Datei und Sitzung ins app.log, nicht bei jedem Oeffnen des Verlaufs.
+                    if (profilGrund != null && _verlaufOhneKnopfGemeldet.Add(name))
+                        AppLog.Info("Verlauf: kein „Rückgängig“ für " + name + ": " + profilGrund);
                     kopie["sicherung"] = null;
                     kopie["sicherungTitel"] = null;
                 }
@@ -2186,6 +2271,81 @@ namespace WartungsToolbox
             }
         }
 
+        // ---------- Techniker-Ansicht (Meilenstein 4, docs/M4-ENTWURF.md 4) ----------
+
+        /// <summary>
+        /// Befehl technikerText: der Text fuer die Zwischenablage (CheckFlow.TechnikerText), Antwort
+        /// technikerText {text}. Im Thread der Oberflaeche, weil der Konsolenpuffer dazugehoert.
+        /// Nie stumm: scheitert das Zusammenstellen, kommt ein Text, der den Grund nennt.
+        /// </summary>
+        void TechnikerTextSenden()
+        {
+            string text;
+            try { text = TechnikerText(); }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Techniker-Text nicht erstellt: " + ex.Message);
+                text = "Der Text ließ sich nicht zusammenstellen (" + ex.Message.TrimEnd('.') + "); nach einer neuen Prüfung geht es erneut.";
+            }
+            Post(new { type = "technikerText", text = text });
+        }
+
+        /// <summary>
+        /// Befehl technikerSpeichern: das letzte Systembild als Datei, redigiert wie --aufzeichnen
+        /// (Rechnername, Konto, Seriennummern, Adressen, SIDs), Antwort technikerGespeichert {ok, pfad}
+        /// (dazu grund, wenn nicht ok; abgelehnt = true, wenn der Dialog geschlossen wurde). Der
+        /// Dialog braucht das Fenster, deshalb im Thread der Oberflaeche.
+        ///
+        /// Aufzeichnung.Schreiben redigiert das uebergebene Bild AN ORT UND STELLE. Das Bild des
+        /// Hosts (_bild) traegt aber die Nachweise der naechsten Massnahme (Instanz-Ids, Pfade,
+        /// Konto-SIDs): deshalb geht eine Kopie ueber Json hinein, das Original bleibt, wie es ist.
+        /// Bleibt nach dem Schreiben eine Stelle unredigiert (Aufzeichnung.Verstoesse), steht das
+        /// in der Antwort (hinweis) und im app.log; die Datei bleibt, es ist die Datei des Nutzers.
+        /// </summary>
+        void TechnikerSpeichern()
+        {
+            Kern.Systembild bild = _bild;
+            if (bild == null)
+            {
+                Post(new { type = "technikerGespeichert", ok = false, pfad = (string)null, grund = "Es liegt kein Ergebnis vor; erst prüfen, dann speichern." });
+                return;
+            }
+            using (SaveFileDialog d = new SaveFileDialog())
+            {
+                d.Filter = "Systembild (*.json)|*.json";
+                d.FileName = "Systembild-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".json";
+                if (d.ShowDialog(this) != DialogResult.OK)
+                {
+                    Post(new { type = "technikerGespeichert", ok = false, pfad = (string)null, abgelehnt = true, grund = "Kein Speicherort gewählt; es wurde nichts gespeichert." });
+                    return;
+                }
+                string pfad = d.FileName;
+                try
+                {
+                    Kern.Systembild kopie = Kern.Json.Lesen<Kern.Systembild>(Kern.Json.Schreiben(bild));
+                    Sammler.Aufzeichnung.Schreiben(kopie, pfad, true);
+                    string hinweis = null;
+                    try
+                    {
+                        var v = Sammler.Aufzeichnung.Verstoesse(pfad);
+                        if (v.Count > 0)
+                        {
+                            hinweis = v.Count + " Stelle(n) ließen sich nicht redigieren: " + string.Join(", ", v) + ".";
+                            AppLog.Warn("Systembild " + pfad + ": Redaktion unvollständig (" + string.Join(", ", v) + ").");
+                        }
+                    }
+                    catch (Exception ex) { AppLog.Warn("Redaktionsprüfung von " + pfad + ": " + ex.Message); }
+                    AppLog.Info("Systembild gespeichert (redigiert): " + pfad);
+                    Post(new { type = "technikerGespeichert", ok = true, pfad = pfad, hinweis = hinweis });
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Warn("Systembild nicht gespeichert (" + pfad + "): " + ex.Message);
+                    Post(new { type = "technikerGespeichert", ok = false, pfad = pfad, grund = "Die Datei ließ sich nicht schreiben (" + ex.Message.TrimEnd('.') + ")." });
+                }
+            }
+        }
+
         // ---------- Wiederherstellungspunkte ----------
         void StartRestoreList()
         {
@@ -2219,13 +2379,23 @@ namespace WartungsToolbox
             _runner.RunPlan(titel, plan);
         }
 
-        void RestoreRevert(int seq)
+        // wiederherstellungspunkt.zurueck ist im Kern-Katalog Stufe 3 mit Verlust-Satz (M4-Entwurf
+        // 1); die Regel "Stufe 3 laeuft nur mit bestaetigt = true" (M4-Entwurf 0.1 und 4) gilt
+        // deshalb auch auf diesem Weg, nicht nur fuer massnahmeAusfuehren (Pruefung der Phase 2).
+        // Das Feld kommt nur mit gesetztem Kontrollkaestchen aus der Rueckfrage der Oberflaeche;
+        // ohne JSON-true (alte Oberflaeche, fremde Nachricht) laeuft nichts: kein Plan, kein UAC.
+        void RestoreRevert(int seq, bool bestaetigt)
         {
             const string titel = "Windows auf einen früheren Stand zurücksetzen";
             if (seq <= 0)
             {
                 // Die Folgenummer ist eine reine Zahl; alles andere kann nur ein Fehler der Oberflaeche sein.
                 Abgewiesen(titel, "Die Folgenummer des Wiederherstellungspunkts muss größer als 0 sein, nicht " + seq + ".", "Ungültige Folgenummer");
+                return;
+            }
+            if (!bestaetigt)
+            {
+                Abgewiesen(titel, "Die Bestätigung fehlt; das Zurücksetzen läuft nur nach dem Häkchen in der Rückfrage.", "Bestätigung fehlt");
                 return;
             }
             if (StartAbgelehnt(titel)) return;

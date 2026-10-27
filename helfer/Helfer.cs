@@ -85,6 +85,20 @@ namespace WartungsToolbox.Helfer
                 // oder als Junction ersetzen (Entwurf M3, Abschnitt 8.10). Schreiben schuetzt ihn ohnehin;
                 // hier faellt die Luecke bis zur ersten Stufe-2-Massnahme weg.
                 Sicherungsdatei.OrdnerAbsichern();
+                // Nach einem Programm-Update (update.anwenden, M4) liegen die getauschten Dateien
+                // als *.vorher im Programmordner und das Paket im Arbeitsordner unter ProgramData;
+                // beides raeumt der naechste erhoehte Start weg. Nie ein Grund, den Start abzubrechen.
+                try { ProgrammMassnahmen.Aufraeumen(); }
+                catch (Exception ex) { AppLog.Warn("helfer: Aufräumen nach dem Programm-Update: " + ex.Message); }
+                // Zeitbudget einer bestehenden Wartungsaufgabe (PT2H aus 8.1) auf PT4H auffrischen
+                // (docs/M4-ENTWURF.md, Abschnitt 5; src/Scheduler.cs liefert den Satz, null = keine
+                // Aufgabe); Fehler nur als Warnung.
+                try
+                {
+                    string zeitbudget = Scheduler.ZeitbudgetAuffrischen();
+                    if (zeitbudget != null) AppLog.Info("helfer: zeitbudget: " + zeitbudget);
+                }
+                catch (Exception ex) { AppLog.Warn("helfer: Zeitbudget der Wartungsaufgabe nicht aufgefrischt: " + ex.Message); }
 
                 if (pipe != null) return PipeModus(pipe, sid, rechte);
                 if (plan != null) return PlanModus(plan, trocken);

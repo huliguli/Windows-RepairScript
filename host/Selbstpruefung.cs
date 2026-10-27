@@ -24,6 +24,11 @@ namespace WartungsToolbox
     /// Entscheidung (BeimStart): signierte EXE mit ungueltiger Signatur oder abweichender
     /// Oberflaeche -> false, der Aufrufer (Program.cs) zeigt Meldung() und beendet mit Exit 5.
     /// Unsignierte EXE (Dev-Bau) mit Abweichung -> nur Warnung im Protokoll, Start geht weiter.
+    /// Antwortet WinVerifyTrust gar nicht (DllNotFoundException, EntryPointNotFoundException,
+    /// jede andere Ausnahme), gilt seit 8.3 "signiert, Signatur ungueltig" mit der Abweichung
+    /// "Signaturpruefung nicht moeglich" -> Exit 5 (fail closed, M4-Entwurf 10.3): ohne Antwort
+    /// aus der wintrust.dll in System32 gibt es kein "ok". Den Suchpfad selbst legt das
+    /// Attribut DefaultDllImportSearchPaths in src\AssemblyInfo.cs fest.
     ///
     /// Gemessen wird Unversehrtheit, nicht Kettenvertrauen: Kettenfehler (nicht vertrauter Stamm,
     /// abgelaufenes Zertifikat, Richtlinie) gelten als "signiert, Signatur intakt" - siehe
@@ -138,7 +143,8 @@ namespace WartungsToolbox
         /// <summary>
         /// HRESULT der Authenticode-Pruefung einer Datei: 0 gueltig, TRUST_E_NOSIGNATURE ohne
         /// Signatur, Kettenfehler (IstKettenfehler) bei intakter Signatur ohne vertraute Kette,
-        /// sonst ungueltig. Wirft nur, wenn wintrust.dll selbst fehlt (auf Windows nicht der Fall).
+        /// sonst ungueltig. Wirft nur, wenn wintrust.dll aus System32 nicht antwortet
+        /// (DllNotFoundException, EntryPointNotFoundException); Pruefen wertet das als Abweichung.
         /// </summary>
         public static int SignaturPruefen(string datei)
         {
@@ -250,9 +256,15 @@ namespace WartungsToolbox
                 }
                 catch (Exception ex)
                 {
-                    // Ohne Ergebnis wie unsigniert behandeln: der Start darf daran nicht scheitern,
-                    // aber die Spur bleibt.
-                    e.Signiert = false;
+                    // Ohne Ergebnis gilt die Datei als signiert mit ungueltiger Signatur (fail
+                    // closed, M4-Entwurf 10.3): DllNotFoundException und EntryPointNotFoundException
+                    // heissen hier, dass nicht die wintrust.dll aus System32 geantwortet hat (eine
+                    // gepflanzte DLL neben der EXE, gemessen in der Pruefung der Phase 2), und
+                    // "unbekannt" darf eine signierte Fassung nicht durchwinken. Bis 8.2 zaehlte
+                    // der Fall als "unsigniert" und damit nur als Warnung. Der Dev-Bau ohne
+                    // Signatur ist nicht betroffen: dort antwortet WinVerifyTrust regulaer mit
+                    // TRUST_E_NOSIGNATURE, und dieser Zweig laeuft nicht.
+                    e.Signiert = true;
                     e.SignaturGueltig = false;
                     e.SignaturCode = ex.HResult;
                     e.Abweichungen.Add("Signaturprüfung nicht möglich: " + ex.Message);

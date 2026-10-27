@@ -650,18 +650,25 @@ function rechteCard(n, checks){
    keinen Knopf, statt einen Plan zu versprechen, den der Host ablehnt.
    ===================================================================== */
 
+/* Stufe 3 des Kerns (Massnahme.StufeUnumkehrbar): nicht umkehrbar. Die Vorschau zeigt dann,
+   was verloren geht, und „Jetzt ausführen“ bleibt gesperrt, bis das Kontrollkästchen gesetzt
+   ist; der Host lehnt Stufe 3 ohne bestaetigt = true ab (Vertrag M4 §4, §7). */
+const STUFE_UNUMKEHRBAR = 3;
+
 /* Die Knöpfe, die ein Befund bekommt: „Beheben: <Titel>“ je ausführbarer Maßnahme (in der
-   Reihenfolge des Befunds), „Ansehen“ je Ansicht, nichts bei Rat und nichts, wenn der Nutzer
-   den Zustand als gewollt bestätigt hat. Der Speicherplatz behält seine bewährte Beschriftung,
-   weil derselbe Weg auf der Startseite so heißt. */
+   Reihenfolge des Befunds; eine Karte kann mehrere tragen, etwa Winsock und IP-Stack oder bis zu
+   drei bei einem Update-Fehlschlag), „Ansehen“ je Ansicht, nichts bei Rat und nichts, wenn der
+   Nutzer den Zustand als gewollt bestätigt hat. Stufe-3-Knöpfe tragen das Symbol alert vor dem
+   Titel (Vertrag M4 §10.4). Der Speicherplatz behält seine bewährte Beschriftung, weil derselbe
+   Weg auf der Startseite so heißt. */
 function massnahmenKnoepfe(c){
   const out = [];
   if(!Array.isArray(c.massnahmen) || c.state === 'absicht') return out;
   c.massnahmen.forEach(k => {
     const m = S.massnahmen[k];
     if(!m) return;
-    if(m.art === 'ausfuehren') out.push({ kennung:k, art:'ausfuehren', label:'Beheben: ' + (m.titel || k) });
-    else if(m.art === 'ansicht') out.push({ kennung:k, art:'ansicht', label: k === 'speicher.aufraeumen' ? 'Wo steckt der Platz?' : 'Ansehen' });
+    if(m.art === 'ausfuehren') out.push({ kennung:k, art:'ausfuehren', stufe:Number(m.stufe) || 0, label:'Beheben: ' + (m.titel || k) });
+    else if(m.art === 'ansicht') out.push({ kennung:k, art:'ansicht', stufe:Number(m.stufe) || 0, label: k === 'speicher.aufraeumen' ? 'Wo steckt der Platz?' : 'Ansehen' });
   });
   return out;
 }
@@ -679,12 +686,15 @@ function massnahmeVorschauAnfragen(btn, kennung, schluessel){
 
 /* „Jetzt ausführen“ im Vorschau-Dialog. Umgeschaltet wird erst mit flowStart vom Host;
    bis dahin steht der Knopf der Karte auf „Wird gestartet …“ (Grundsatz: die Oberfläche
-   schaltet auf die Antwort um, nicht auf den Klick). */
-function massnahmeStarten(kennung, schluessel){
+   schaltet auf die Antwort um, nicht auf den Klick). bestaetigt = true reist nur bei Stufe 3
+   mit, und nur, weil das Kontrollkästchen der Vorschau gesetzt war (vorschauModal prüft es
+   vor dem Aufruf); bei Stufe 1 und 2 bleibt das Feld weg (Vertrag M4 §7). */
+function massnahmeStarten(kennung, schluessel, bestaetigt){
   S.busy = true;
   knopfWartet(massnahmeKnopf(kennung, schluessel), 'Wird gestartet …');
   massnahmeKnoepfeSperren();
-  send({type:'massnahmeAusfuehren', kennung:kennung, schluessel:schluessel});
+  if(bestaetigt === true) send({type:'massnahmeAusfuehren', kennung:kennung, schluessel:schluessel, bestaetigt: true});
+  else send({type:'massnahmeAusfuehren', kennung:kennung, schluessel:schluessel});
 }
 
 /* Der Knopf einer Kennung an einer Karte. Über die Datenfelder verglichen statt über einen
@@ -704,7 +714,7 @@ function massnahmeKnoepfeSperren(){
    Text zurück, gesperrte werden frei. Gerufen bei jeder Antwort, die keinen Lauf beginnt. */
 function resKnoepfeFrei(){
   S.busy = false;
-  $$('#res-list [data-wartet-text]').forEach(knopfFrei);
+  $$('#res-list [data-wartet-inhalt]').forEach(knopfFrei);
   $$('#res-list button[data-massnahme], #res-list button[data-rueckweg]').forEach(b => { b.disabled = false; });
 }
 
@@ -857,7 +867,11 @@ function resultCard(c){
   if(knoepfe.length){
     const row = el('div','rbtns');
     knoepfe.forEach(k => {
-      const b = el('button', k.art === 'ausfuehren' ? 'btn btn-primary btn-md' : 'btn btn-ghost', esc(k.label));
+      // Stufe 3 (nicht umkehrbar) trägt das Symbol alert vor dem Titel: der Knopf sagt
+      // schon vor dem Klick, dass die Vorschau ein Kontrollkästchen verlangt.
+      const stufe3 = k.art === 'ausfuehren' && k.stufe === STUFE_UNUMKEHRBAR;
+      const b = el('button', k.art === 'ausfuehren' ? 'btn btn-primary btn-md' + (stufe3 ? ' btn-stufe3' : '') : 'btn btn-ghost',
+                   (stufe3 ? svg('alert') : '') + esc(k.label));
       b.type = 'button';
       b.dataset.massnahme = k.kennung;
       b.dataset.schluessel = c.key || '';
@@ -1344,6 +1358,8 @@ const SUBS = {
   apps:      { title:'Vorinstallierte Apps', lead:'Apps, die ab Werk auf dem PC waren und die viele nie benutzen. Aus Sicherheit bieten wir nur Apps an, deren Entfernen bekanntermaßen unbedenklich ist.' },
   power:     { title:'Energie',              lead:'Der Energieplan steuert das Verhältnis von Leistung und Stromverbrauch. Mehr Leistung heißt mehr Strom und bei Laptops weniger Akkulaufzeit.' },
   settings:  { title:'Einstellungen',        lead:'Aussehen und Verhalten des Programms.' },
+  // v8.3 (Vertrag M4 §7): alle Befunde der letzten Prüfung als Tabellen, auch „in Ordnung“.
+  techniker: { title:'Für den Techniker',    lead:'Alle Messwerte, Quellen und Schwellen dieser Prüfung; nichts wird geändert.' },
 };
 function openSub(key){
   const s = SUBS[key];
@@ -1364,6 +1380,7 @@ function openSub(key){
   if(key === 'schedule') send({type:'scheduleStatus'});
   if(key === 'autostart'){ send({type:'autostartList'}); send({type:'selfStartGet'}); }
   if(key === 'settings') renderSettings();
+  if(key === 'techniker') send({type:'technikerAnsicht'});
 }
 
 function renderSettings(){
@@ -1429,6 +1446,16 @@ function renderSettings(){
   ob.onclick = () => send({type:'openLog'});
   r4.appendChild(ob);
   p4.appendChild(r4);
+  // v8.3: der zweite Einstieg in die Techniker-Ansicht (der erste steht im Fuß des
+  // Ergebnisses); ohne Prüfung zeigt sie den leeren Stand mit „Jetzt prüfen“.
+  const r5 = el('div','row');
+  r5.innerHTML = '<span class="row-b"><span class="row-t">Messwerte der letzten Prüfung</span>' +
+    '<span class="row-s">Jeder Befund mit Messwert, Schwelle, Quelle und Kennung als Tabelle, dazu die Fehlerliste ' +
+    'und die letzten 10 Protokolle; nichts wird geändert.</span></span>';
+  const tk = el('button','btn btn-ghost','Für den Techniker');
+  tk.onclick = () => go('techniker');
+  r5.appendChild(tk);
+  p4.appendChild(r5);
   body.appendChild(p4);
 }
 
@@ -1578,6 +1605,9 @@ const MARKE_SICHERUNG = {
   'werte-merken':'die bisherigen Werte werden gemerkt',
   'wiederherstellungspunkt':'Wiederherstellungspunkt',
   'reg-export':'Export der Registrierung',
+  // v8.3: Firewall-Export und Treiber-Export liegen als Datei bzw. Ordner unter
+  // sicherungen\massnahmen\export (Vertrag M4 §1, §7).
+  'export':'eine Kopie als Datei unter den Sicherungen',
 };
 const MARKE_RUECKWEG = { 'von selbst':'nicht nötig', 'sicherung':'über die angelegte Sicherung', 'keiner':'keiner' };
 function marke(tabelle, wert){ return tabelle[wert] || (wert ? String(wert) : 'unbekannt'); }
@@ -1596,7 +1626,13 @@ function dauerText(sekunden){
    mit Sicherung, Rückweg und Dauer, Hinweise, dann „Jetzt ausführen“. Ist die Maßnahme
    gerade nicht ausführbar, steht der Grund des Hosts da und nur „Schließen“: ein Knopf, der
    auf eine Ablehnung zuläuft, wäre ein Versprechen. Liefert den Start-Knopf (null, wenn es
-   keinen gibt), damit die Belegaufnahme ihn drücken kann. */
+   keinen gibt), damit die Belegaufnahme ihn drücken kann.
+
+   v8.3, Stufe 3 (Vertrag M4 §7): unter dem Risiko steht der Kasten „Was verloren geht“ mit
+   dem Satz des Kerns (v.verlust, darf „?“ enthalten, wenn die Regel eine Zahl nicht liefert)
+   und dem Kontrollkästchen „Ich habe verstanden, was verloren geht“. „Jetzt ausführen“ ist
+   gesperrt, bis es gesetzt ist, und schickt dann bestaetigt = true; der Host lehnt Stufe 3
+   ohne dieses Feld ab. Das Kästchen trägt data-verlust, damit die Belegaufnahme es findet. */
 function vorschauModal(v){
   const m = buildModal({ title: v.titel || 'Maßnahme', lead:'Was passiert', body: v.wasPassiert || '', icon:'wrench' });
   const teil = (label, text) => {
@@ -1605,12 +1641,27 @@ function vorschauModal(v){
   };
   teil('Was bleibt', v.wasBleibt);
   teil('Risiko', v.risiko);
+  const stufe3 = Number(v.stufe) === STUFE_UNUMKEHRBAR;
+  let kasten = null;
+  if(stufe3){
+    const box = el('div','modal-verlust');
+    box.setAttribute('role','group');
+    box.setAttribute('aria-label','Was verloren geht');
+    box.innerHTML =
+      '<span class="mv-ico" aria-hidden="true">' + svg('alert') + '</span>' +
+      '<div class="mv-b"><div class="lead">Was verloren geht</div>' +
+      '<p>' + esc(v.verlust || 'Diese Maßnahme lässt sich nicht rückgängig machen; der Kern nennt keinen Satz dazu.') + '</p>' +
+      '<label class="mv-check"><input type="checkbox" data-verlust="1" /> ' +
+      '<span>Ich habe verstanden, was verloren geht</span></label></div>';
+    kasten = box.querySelector('input');
+    m.box.insertBefore(box, m.btns);
+  }
   m.box.insertBefore(el('p','modal-meta',
     'Sicherung: ' + esc(marke(MARKE_SICHERUNG, v.sicherung)) +
     ' · Rückweg: ' + esc(marke(MARKE_RUECKWEG, v.rueckweg)) +
     ' · Dauer: etwa ' + esc(dauerText(v.dauer))), m.btns);
   const hinweise = [];
-  if(v.neustart === true) hinweise.push('Nach der Maßnahme ist ein Neustart nötig, damit sie vollständig wirkt.');
+  if(v.neustart === true) hinweise.push('Danach ist ein Neustart nötig; das Programm startet ihn nicht selbst.');
   hinweise.push(UAC_SATZ);
   if(v.rueckweg === 'sicherung') hinweise.push('Rückgängig geht über die angelegte Sicherung.');
   m.box.insertBefore(el('p','modal-meta', esc(hinweise.join(' '))), m.btns);
@@ -1620,6 +1671,9 @@ function vorschauModal(v){
 
   if(v.ausfuehrbar === false){
     m.box.insertBefore(el('p','modal-grund', esc(v.grund || 'Diese Maßnahme lässt sich gerade nicht ausführen.')), m.btns);
+    // Ohne Weg zum Ausführen ist auch das Kästchen ohne Sinn; es bleibt sichtbar (der Satz
+    // dazu gilt weiter), aber gesperrt.
+    if(kasten) kasten.disabled = true;
     const zu = el('button','btn btn-primary btn-md','Schließen');
     zu.onclick = m.close;
     m.btns.appendChild(zu);
@@ -1630,12 +1684,23 @@ function vorschauModal(v){
   const cancel = el('button','btn btn-ghost','Abbrechen');
   cancel.onclick = m.close;
   const ok = el('button','btn btn-primary btn-md','Jetzt ausführen');
-  ok.onclick = () => { m.close(); massnahmeStarten(v.kennung, v.schluessel); };
+  if(stufe3){
+    ok.disabled = true;
+    kasten.onchange = () => { ok.disabled = !kasten.checked; };
+    // Auch ein Klick, der die Sperre umgeht (etwa über die Belegaufnahme ohne Häkchen),
+    // startet nichts: das Feld bestaetigt gibt es nur mit gesetztem Kästchen.
+    ok.onclick = () => { if(!kasten.checked){ ok.disabled = true; return; } m.close(); massnahmeStarten(v.kennung, v.schluessel, true); };
+  } else {
+    ok.onclick = () => { m.close(); massnahmeStarten(v.kennung, v.schluessel, false); };
+  }
   m.btns.appendChild(cancel);
   m.btns.appendChild(ok);
   // Die einzige Einwilligung vor einem Eingriff: Titel und „Was passiert“ stehen beim Öffnen
   // im Bild, der Fokus liegt trotzdem auf „Jetzt ausführen“ (die Knopfzeile klebt unten).
-  ok.focus({preventScroll:true});
+  // Bei Stufe 3 liegt er auf dem Kontrollkästchen: der gesperrte Knopf nimmt keinen Fokus,
+  // und die Einwilligung ist hier das Häkchen, nicht der Knopf.
+  if(stufe3) kasten.focus({preventScroll:true});
+  else ok.focus({preventScroll:true});
   m.box.scrollTop = 0;
   return ok;
 }
@@ -1694,6 +1759,9 @@ function onHost(m){
       // Belegaufnahme: gewuenschte Ansicht direkt oeffnen
       ['tools','history','restore','schedule','autostart','apps','power','settings','storage','registry']
         .forEach(k => { if(HASH.indexOf(k) >= 0) go(k); });
+      // „techniker“ allein zeigt den leeren Stand („Erst prüfen …“); mit „check“ öffnet der
+      // flowResult-Zweig die Ansicht erst nach der Prüfung (--view check,techniker).
+      if(HASH.indexOf('techniker') >= 0 && HASH.indexOf('check') < 0) go('techniker');
       // Nur fuer Belegaufnahmen (der Host meldet shot = true nur im --shot-Modus): die
       // Pruefung von selbst starten. Der Adresszusatz kommt ausschliesslich ueber --view.
       S.shot = !!m.shot;
@@ -1833,6 +1901,11 @@ function onHost(m){
           setTimeout(() => { const ok = $('.modal .modal-btns .btn-primary'); if(ok) ok.click(); }, 800);
         }, 800);
       }
+      // Belegaufnahme der Techniker-Ansicht (--view check,techniker): nach der Prüfung die
+      // Ansicht öffnen; der Host antwortet mit techniker {…} zu genau diesem Ergebnis.
+      if(S.shot && m.mode === 'check' && HASH.indexOf('techniker') >= 0){
+        setTimeout(() => go('techniker'), 800);
+      }
       // Belegaufnahme des unteren Teils (Karte „so gewollt“, Gruppen, Empfehlung).
       if(S.shot && HASH.indexOf('unten') >= 0) requestAnimationFrame(() => { $('#s-result').scrollTop = 1e6; });
       break;
@@ -1937,13 +2010,39 @@ function onHost(m){
       resKnoepfeFrei();
       if(S.screen !== 'result') break;
       const ok = vorschauModal(m);
-      // Belegaufnahme (--view check,massnahme:<kennung>): „Jetzt ausführen“ drücken.
+      // Belegaufnahme (--view check,massnahme:<kennung>): „Jetzt ausführen“ drücken. Bei
+      // Stufe 3 vorher das Kontrollkästchen setzen (mit change-Ereignis, das den Knopf
+      // freigibt), sonst bliebe der Klick an der Sperre hängen (Vertrag M4 §7).
       if(S.shot && S.shotAusfuehren){
         S.shotAusfuehren = false;
-        if(ok) setTimeout(() => ok.click(), 800);
+        if(ok) setTimeout(() => {
+          const kasten = document.querySelector('.modal input[data-verlust]');
+          if(kasten && !kasten.checked){ kasten.checked = true; kasten.dispatchEvent(new Event('change')); }
+          ok.click();
+        }, 800);
       }
       break;
     }
+
+    // --- Für den Techniker (v8.3, Vertrag M4 §4, §7) ---
+    case 'techniker':
+      // Nur in der Ansicht selbst; ein verspätetes Bild schreibt sonst in eine fremde Liste.
+      if(S.sub === 'techniker' && S.screen === 'sub') renderTechniker(m);
+      break;
+    case 'technikerText':
+      subKnoepfeFrei();
+      technikerKopieren(m.text);
+      break;
+    case 'technikerGespeichert':
+      // Der Host schickt neben ok und pfad den grund (nicht ok; abgelehnt = Dialog geschlossen)
+      // und einen hinweis (ok, aber N Stellen blieben unredigiert); beide stehen wörtlich da.
+      subKnoepfeFrei();
+      if(m.ok === true) toast('Gespeichert', 'Das Systembild liegt unter ' + (m.pfad || 'dem gewählten Pfad') +
+        (m.hinweis ? '. ' + m.hinweis : ' (redigiert wie bei --aufzeichnen).'), m.hinweis ? 'warn' : 'good');
+      else toast('Nicht gespeichert', m.grund || (m.pfad
+        ? 'Die Datei ' + m.pfad + ' ließ sich nicht schreiben; die Tabellen hier bleiben stehen.'
+        : 'Es wurde keine Datei gewählt; die Tabellen hier bleiben stehen.'), 'warn');
+      break;
 
     case 'freigaben':
       // Antwort auf freigabenSetzen: die Schalter zeigen den gespeicherten Stand, nicht
@@ -2169,11 +2268,14 @@ function onHost(m){
         : 'Neue Fassung wird geladen …';
       break;
     case 'updateStatus':
-      // 'admin' schickt der Host unmittelbar vor dem UAC-Dialog des Austauschs (Entwurf
-      // Abschnitt 13); vorher stand hier solange „Wird geladen …“, obwohl nichts mehr lud.
+      // v8.3 (Vertrag M4 §4, §7): das ZIP-Update läuft als Plan update.anwenden über den
+      // erhöhten Helfer. 'admin' schickt der Host, wenn er den Helfer verbindet und den Plan
+      // übergibt (der UAC-Dialog kommt nur, wenn der Helfer in dieser Sitzung noch nicht
+      // verbunden war); 'restart' nach Exit 0, unmittelbar vor dem Neustart des Programms.
+      // 'extract' gibt es seit 8.3 nicht mehr; ein älterer Host bekommt einen ehrlichen Satz.
       $('#ub-get').disabled = true;
-      $('#ub-text').textContent = m.phase === 'extract' ? 'Wird ausgepackt …'
-        : m.phase === 'admin' ? 'Windows fragt gleich nach Administratorrechten …'
+      $('#ub-text').textContent = m.phase === 'extract' ? 'Das Paket wird vorbereitet …'
+        : m.phase === 'admin' ? 'Der Helfer prüft Prüfsumme, Signatur und Inhalt und tauscht die Dateien …'
         : (m.phase === 'restart' ? 'Das Programm startet gleich neu …' : 'Wird geladen …');
       break;
     case 'updateError': {
@@ -2181,17 +2283,25 @@ function onHost(m){
       // Verneinter UAC-Dialog: kein Fehler, kein Dialog, kein Rat zum Herunterladen von
       // Hand. Die Leiste bleibt stehen, der zweite Klick ist der Weg (Entwurf Abschnitt 14).
       // Das Feld abgelehnt ist der Vertrag, der Satzanfang der Rückfall.
-      if(m.abgelehnt === true || /^Ohne Administratorrechte/.test(m.message || '')){
+      const leisteZurueck = () => {
         $('#ub-text').textContent = 'Es gibt eine neue Fassung' + (S.updateVersion ? ' (' + S.updateVersion + ')' : '') + '.';
         $('#update-bar').classList.add('show');
+      };
+      if(m.abgelehnt === true || /^Ohne Administratorrechte/.test(m.message || '')){
+        leisteZurueck();
         toast('Nicht installiert', /erneut versuchen/.test(m.message || '')
           ? m.message : m.message + ' Sie können es erneut versuchen.', 'warn');
         break;
       }
-      $('#update-bar').classList.remove('show');
+      // v8.3 (Vertrag M4 §10.4): meldet der Helfer ein Problem (Exit 1: Prüfsumme, Herausgeber,
+      // fremde Datei im Paket, Tausch zurückgerollt), schickt der Host dessen letzte Zeile als
+      // message; sie steht wörtlich im Dialog. Die Leiste kommt zurück: nichts wurde geändert,
+      // der zweite Klick ist ein neuer Versuch, der Browser der Weg von Hand.
+      leisteZurueck();
       const dlg = buildModal({
         title: 'Die Aktualisierung hat nicht geklappt',
-        body: m.message + '\n\nSie können die neue Fassung stattdessen im Browser ' +
+        body: m.message + '\n\nNichts wurde getauscht, das Programm läuft in der bisherigen Fassung weiter. ' +
+              'Sie können es über die Leiste unten erneut versuchen oder die neue Fassung im Browser ' +
               'herunterladen und von Hand installieren.',
         icon: 'alert', tone: 'warn' });
       const zu = el('button','btn btn-ghost','Schließen');
@@ -2274,10 +2384,14 @@ function renderHistory(items){
    mit Zwischentext. Ein zweiter Klick startete sonst einen zweiten Plan, den der Host als
    „läuft schon“ abweist (flowBusy-Dialog). Frei werden sie mit 'done' (Ende des Laufs),
    'flowBusy' (Start abgewiesen, kein 'done' folgt) oder wenn die Liste neu gezeichnet wird
-   (der Host schickt sie nach 'done' erneut) (B26). */
+   (der Host schickt sie nach 'done' erneut) (B26).
+   Gemerkt wird der Inhalt, nicht der Text: ein Stufe-3-Knopf trägt das Symbol alert vor
+   dem Titel (Vertrag M4 §10.4), und textContent sieht vom svg nichts; nach dem ersten
+   Abbruch in der Vorschau stand der Knopf sonst wie einer der Stufe 2 da. Der Inhalt ist
+   eigener, beim Bauen schon über esc() und svg() gesetzter Text, nie Host-Text. */
 function knopfWartet(btn, text){
   if(!btn || btn.disabled) return;
-  btn.dataset.wartetText = btn.textContent;
+  btn.dataset.wartetInhalt = btn.innerHTML;
   // Ein eigener Name für Vorlesehilfen („Rückgängig: …“) ruht, solange der Zwischentext
   // steht; sonst hieße der Knopf anders, als er aussieht.
   if(btn.hasAttribute('aria-label')){
@@ -2289,15 +2403,15 @@ function knopfWartet(btn, text){
 }
 function knopfFrei(b){
   b.disabled = false;
-  b.textContent = b.dataset.wartetText;
-  delete b.dataset.wartetText;
+  b.innerHTML = b.dataset.wartetInhalt;
+  delete b.dataset.wartetInhalt;
   if(b.dataset.wartetLabel){
     b.setAttribute('aria-label', b.dataset.wartetLabel);
     delete b.dataset.wartetLabel;
   }
 }
 function subKnoepfeFrei(){
-  $$('#sub-body [data-wartet-text]').forEach(knopfFrei);
+  $$('#sub-body [data-wartet-inhalt]').forEach(knopfFrei);
 }
 
 function renderRestore(items){
@@ -2342,14 +2456,57 @@ function renderRestore(items){
         'Windows wird auf diesen früheren Stand zurückgesetzt und der PC startet dabei neu.\n\n' +
         'Ihre persönlichen Dateien bleiben erhalten. Programme, Treiber und Einstellungen, die Sie ' +
         'seitdem geändert haben, gehen verloren.\n\n' + UAC_SATZ,
-        'Weiter', () => confirmModal('Wirklich? Letzte Nachfrage',
-          'Bitte speichern Sie jetzt Ihre Arbeit. Der PC startet gleich neu.',
-          'Jetzt zurücksetzen', () => {
-            alleSperren(btn, 'Wird zurückgesetzt …');
-            send({type:'restoreRevert', seq:seq});
-          }, true), true);
+        'Weiter', () => zuruecksetzenModal(() => {
+          alleSperren(btn, 'Wird zurückgesetzt …');
+          send({type:'restoreRevert', seq:seq, bestaetigt:true});
+        }), true);
     };
   });
+}
+
+/* Der Verlust-Satz des Kerns zu wiederherstellungspunkt.zurueck (Katalogeintrag aus der
+   catalog-Nachricht, Feld verlust). Fehlt der Eintrag oder das Feld (Katalog einer anderen
+   Fassung), steht ein fester Satz mit demselben Inhalt da; verschwiegen wird der Verlust nie. */
+function zuruecksetzenVerlust(){
+  const k = S.massnahmen && S.massnahmen['wiederherstellungspunkt.zurueck'];
+  const v = k && typeof k.verlust === 'string' ? k.verlust.trim() : '';
+  return v || 'Programme und Treiber, die nach dem gewählten Punkt installiert wurden, sind danach ' +
+    'weg und müssen neu installiert werden; eigene Dateien (Dokumente, Bilder) bleiben, keine davon geht verloren.';
+}
+
+/* Letzte Nachfrage vor dem Zurücksetzen (Ansicht Sicherungspunkte). wiederherstellungspunkt.zurueck
+   ist im Kern Stufe 3 (nicht umkehrbar ohne den Punkt, den Windows selbst anlegt): wie im
+   vorschauModal steht der Kasten „Was verloren geht“ mit dem Satz des Kerns und dem
+   Kontrollkästchen „Ich habe verstanden, was verloren geht“; „Jetzt zurücksetzen“ bleibt
+   gesperrt, bis es gesetzt ist, und der Host lehnt restoreRevert ohne bestaetigt = true ab
+   (Vertrag M4 §0.1, §4; Prüfung der Phase 2). onOk läuft nur mit gesetztem Kästchen. */
+function zuruecksetzenModal(onOk){
+  const m = buildModal({ title:'Wirklich? Letzte Nachfrage',
+                         body:'Bitte speichern Sie jetzt Ihre Arbeit. Der PC startet gleich neu.',
+                         icon:'alert', tone:'warn' });
+  const box = el('div','modal-verlust');
+  box.setAttribute('role','group');
+  box.setAttribute('aria-label','Was verloren geht');
+  box.innerHTML =
+    '<span class="mv-ico" aria-hidden="true">' + svg('alert') + '</span>' +
+    '<div class="mv-b"><div class="lead">Was verloren geht</div>' +
+    '<p>' + esc(zuruecksetzenVerlust()) + '</p>' +
+    '<label class="mv-check"><input type="checkbox" data-verlust="1" /> ' +
+    '<span>Ich habe verstanden, was verloren geht</span></label></div>';
+  const kasten = box.querySelector('input');
+  m.box.insertBefore(box, m.btns);
+  const cancel = el('button','btn btn-ghost','Abbrechen');
+  cancel.onclick = m.close;
+  const ok = el('button','btn btn-danger','Jetzt zurücksetzen');
+  ok.disabled = true;
+  kasten.onchange = () => { ok.disabled = !kasten.checked; };
+  // Auch ein Klick, der die Sperre umgeht, startet nichts: bestaetigt gibt es nur mit Häkchen.
+  ok.onclick = () => { if(!kasten.checked){ ok.disabled = true; return; } m.close(); onOk(); };
+  m.btns.appendChild(cancel);
+  m.btns.appendChild(ok);
+  // Der Fokus liegt auf dem sicheren Weg, wie bei jeder riskanten Nachfrage (confirmModal).
+  cancel.focus({preventScroll:true});
+  m.box.scrollTop = 0;
 }
 function rpType(t){
   t = parseInt(t, 10);
@@ -2637,6 +2794,301 @@ function freigabenAnzeigen(liste){
     i.checked = liste.indexOf(i.dataset.kennung) >= 0;
     i.disabled = false;
   });
+}
+
+/* =====================================================================
+   Für den Techniker (v8.3, Vertrag M4 §4, §7)
+
+   Die Antwort techniker {…} des Hosts ist das ganze Ergebnis der letzten Prüfung ohne
+   Auslese: je Bereich eine Tabelle mit jedem Befund (auch „in Ordnung“), dazu die
+   Fehlerliste des Systembilds, was nicht geprüft wurde, die letzten Protokolle und der
+   Laufzeitordner. Nichts hier startet einen Eingriff; die zwei Knöpfe kopieren einen Text
+   und schreiben eine Datei. Jeder Text vom Host läuft über esc().
+   ===================================================================== */
+
+/* Das Wort und die Farbe der Plakette zu einem Zustand des Kerns; ein unbekanntes Wort
+   steht wörtlich da, statt als „in Ordnung“ durchzugehen. */
+function tkZustand(z){
+  const bekannt = ['ok','warn','bad','unknown','absicht','frage'];
+  const k = bekannt.indexOf(z) >= 0 ? z : 'unknown';
+  const wort = STATE_WORD[z] || (z ? String(z) : 'keine Daten');
+  return '<span class="pill ' + k + '">' + esc(wort) + '</span>';
+}
+
+/* Eine Zelle in Schreibmaschinenschrift; leer bleibt leer (kein „null“ in der Tabelle).
+   klasse ergänzt die Zelle, etwa tk-key für den Schlüssel (darf bei 360 px umbrechen). */
+function tkMono(text, klasse){
+  return '<td class="mono' + (klasse ? ' ' + klasse : '') + '">' + esc(text == null ? '' : text) + '</td>';
+}
+
+/* Der Messwert als eine Zelle: „14,2 GB“ oder leer. Der Host schickt messwert und einheit
+   getrennt (Vertrag M4 §4); ein Objekt {wert, einheit} wie im Ergebnis wird auch verstanden. */
+function tkMesswert(b){
+  if(b.messwert && typeof b.messwert === 'object'){
+    return b.messwert.wert == null ? '' : String(b.messwert.wert) + (b.messwert.einheit ? ' ' + b.messwert.einheit : '');
+  }
+  if(b.messwert == null || b.messwert === '') return '';
+  return String(b.messwert) + (b.einheit ? ' ' + b.einheit : '');
+}
+
+/* Größe eines Protokolls: der Host darf Bytes (Zahl) oder einen fertigen Text schicken. */
+function tkGroesse(g){
+  if(typeof g === 'number') return groesse(g);
+  return g == null ? '' : String(g);
+}
+
+function renderTechniker(m){
+  const b = $('#sub-body');
+  b.innerHTML = '';
+  $('#sub-foot').innerHTML = '';
+  // Zurück zum Ergebnis, aus dem der Nutzer kam; der Knopf „Zurück“ oben führt in den Werkzeugkasten.
+  if(S.result){
+    const zurueck = el('button','link','Zurück zum Ergebnis');
+    zurueck.type = 'button';
+    zurueck.onclick = () => show('result');
+    $('#sub-foot').appendChild(zurueck);
+  }
+
+  // Ohne Ergebnis gibt es 0 Zeilen; der eine Weg hier ist die Prüfung. Kam der Host mit dem
+  // Zusammenstellen nicht zurecht, schickt er leer mit fehler: der Satz steht dann statt des
+  // Standardsatzes da, der Weg ist derselbe (neu prüfen).
+  if(!m || m.leer === true){
+    const leer = el('div','panel');
+    leer.innerHTML = '<div class="empty">' + (m && m.fehler ? esc(m.fehler) : 'Erst prüfen, dann gibt es hier etwas zu sehen.') + '<br>' +
+      'Die Tabellen entstehen aus der letzten Prüfung; ohne Prüfung liegen 0 Befunde vor.</div>';
+    const row = el('div','row tk-mitte');
+    const los = el('button','btn btn-primary btn-md','Jetzt prüfen');
+    los.onclick = () => startFlow('check');
+    row.appendChild(los);
+    leer.appendChild(row);
+    b.appendChild(leer);
+    return;
+  }
+
+  const bereiche = Array.isArray(m.bereiche) ? m.bereiche : [];
+  const fehlerliste = Array.isArray(m.fehlerliste) ? m.fehlerliste : [];
+  const protokolle = Array.isArray(m.protokolle) ? m.protokolle : [];
+  const win = m.windows || {};
+  const hw = m.hardware || {};
+  const befundeGesamt = bereiche.reduce((n, br) => n + (Array.isArray(br.befunde) ? br.befunde.length : 0), 0);
+
+  /* ---- Kopf: Prüfung, Fassung, Rechte, Windows, Hardware; die zwei Knöpfe; das Suchfeld ---- */
+  const kopf = el('div','panel');
+  const kopfZeilen = [];
+  kopfZeilen.push('Fassung ' + (m.version || S.version || 'unbekannt') +
+    (m.erhoeht === true ? ', gemessen mit Administratorrechten' : ', gemessen ohne Administratorrechte'));
+  const winTeile = [win.produkt, win.build ? 'Build ' + win.build : null, win.sprache].filter(Boolean);
+  if(winTeile.length) kopfZeilen.push('Windows: ' + winTeile.join(', '));
+  const hwTeile = [hw.system, hw.cpu, hw.ramGb != null ? String(hw.ramGb) + ' GB RAM' : null].filter(Boolean);
+  if(hwTeile.length) kopfZeilen.push('Hardware: ' + hwTeile.join(', '));
+  kopf.innerHTML = '<div class="panel-h"><div class="panel-t">' +
+    (m.aufgezeichnet ? 'Prüfung vom ' + esc(m.aufgezeichnet) : 'Letzte Prüfung') +
+    ' <span class="tk-count">' + befundeGesamt + (befundeGesamt === 1 ? ' Befund' : ' Befunde') + ' in ' +
+    bereiche.length + (bereiche.length === 1 ? ' Bereich' : ' Bereichen') + '</span></div>' +
+    '<div class="panel-d">' + kopfZeilen.map(esc).join('<br>') + '</div></div>';
+  const knoepfe = el('div','row tk-knoepfe');
+  knoepfe.innerHTML = '<span class="row-b"><span class="row-s">Der Text ist der Bericht aus „Bericht speichern“ plus 2 Abschnitte ' +
+    '(Systembild-Fehler, Protokolle); die Datei ist das Systembild als JSON, redigiert wie bei --aufzeichnen.</span></span>';
+  const kopieren = el('button','btn btn-ghost','Als Text kopieren');
+  kopieren.type = 'button';
+  kopieren.onclick = () => { knopfWartet(kopieren, 'Wird geholt …'); send({type:'technikerText'}); };
+  const speichern = el('button','btn btn-ghost','Systembild speichern');
+  speichern.type = 'button';
+  speichern.onclick = () => { knopfWartet(speichern, 'Wird gespeichert …'); send({type:'technikerSpeichern'}); };
+  knoepfe.appendChild(kopieren);
+  knoepfe.appendChild(speichern);
+  kopf.appendChild(knoepfe);
+  const suche = el('div','row tk-suche');
+  suche.innerHTML = '<label class="row-b" for="tk-suche"><span class="row-t">Zeilen filtern</span>' +
+    '<span class="row-s">Schlüssel, Titel, Satz, Quelle, Kennung oder Wert; Groß und Klein sind egal.</span></label>' +
+    '<input type="text" id="tk-suche" spellcheck="false" placeholder="Zum Beispiel firewall" />' +
+    '<span class="row-m" id="tk-treffer"></span>';
+  kopf.appendChild(suche);
+  b.appendChild(kopf);
+
+  /* ---- Je Bereich eine Tabelle ---- */
+  bereiche.forEach(br => {
+    const befunde = Array.isArray(br.befunde) ? br.befunde : [];
+    const fehlend = Array.isArray(br.fehlend) ? br.fehlend : [];
+    const p = el('div','panel tk-bereich');
+    p.innerHTML = '<div class="panel-h"><div class="panel-t">' + tkZustand(br.zustand) + ' ' + esc(br.titel || br.bereich || '') +
+      ' <span class="tk-count">' + befunde.length + (befunde.length === 1 ? ' Befund' : ' Befunde') + '</span></div>' +
+      (fehlend.length ? '<div class="panel-d">Nicht geprüft: <span class="fach">' + esc(fehlend.join(', ')) + '</span></div>' : '') +
+      '</div>';
+    if(!befunde.length){
+      p.appendChild(el('div','empty','Dieser Bereich hat 0 Befunde' + (fehlend.length ? '; ' + fehlend.length + (fehlend.length === 1 ? ' Quelle fehlt.' : ' Quellen fehlen.') : '.')));
+      b.appendChild(p);
+      return;
+    }
+    const wrap = el('div','tk-wrap');
+    const t = el('table','tk-table');
+    t.innerHTML = '<thead><tr><th class="tk-th-toggle"><span class="sr-only">Details</span></th><th>Zustand</th>' +
+      '<th>Schlüssel</th><th>Titel</th><th>Messwert</th><th>Schwelle</th><th>Quelle</th></tr></thead>';
+    const tb = el('tbody','');
+    befunde.forEach(f => {
+      const kennungen = Array.isArray(f.massnahmen) ? f.massnahmen : [];
+      const param = f.parameter && typeof f.parameter === 'object' ? f.parameter : {};
+      const detail = Array.isArray(f.detail) ? f.detail : (f.detail ? [String(f.detail)] : []);
+      const frageText = f.frage && typeof f.frage === 'object' ? f.frage.text : f.frage;
+      // Alles, wonach das Suchfeld fragt, hängt als Text an der Zeile, auch das Zugeklappte.
+      const suchText = [f.schluessel, f.titel, f.satz, f.rat, tkMesswert(f), f.schwelle, f.quelle, f.zustand,
+                        STATE_WORD[f.zustand], kennungen.join(' '), parameterText(param), detail.join(' '), frageText, f.antwort]
+                       .filter(Boolean).join(' ').toLowerCase();
+      const tr = el('tr','tk-row');
+      tr.dataset.tkText = suchText;
+      tr.innerHTML = '<td class="tk-td-toggle"><button type="button" class="tk-toggle" aria-expanded="false" aria-label="' +
+        esc('Details zu ' + (f.titel || f.schluessel || 'diesem Befund')) + '">' + svg('chevron') + '</button></td>' +
+        '<td>' + tkZustand(f.zustand) + '</td>' + tkMono(f.schluessel, 'tk-key') + '<td>' + esc(f.titel || '') + '</td>' +
+        tkMono(tkMesswert(f)) + tkMono(f.schwelle) + tkMono(f.quelle);
+      const dr = el('tr','tk-detail');
+      dr.hidden = true;
+      const zeilen = [];
+      if(f.satz) zeilen.push('<div>' + esc(f.satz) + '</div>');
+      if(f.rat) zeilen.push('<div><b>Rat:</b> ' + esc(f.rat) + '</div>');
+      if(frageText) zeilen.push('<div><b>Frage:</b> ' + esc(frageText) +
+        (f.antwort ? ' <b>Antwort:</b> ' + esc(f.antwort === 'absicht' ? 'so gewollt' : (f.antwort === 'reparieren' ? 'beheben' : f.antwort)) : ' <b>Antwort:</b> offen') + '</div>');
+      if(kennungen.length) zeilen.push('<div><b>Kennungen:</b> <span class="fach">' + kennungen.map(k => {
+        const mk = S.massnahmen[k];
+        return esc(k + (mk ? ' (' + (mk.titel || '') + ', Stufe ' + (mk.stufe != null ? mk.stufe : '?') + ')' : ' (nicht im Katalog)'));
+      }).join('; ') + '</span></div>');
+      if(Object.keys(param).length) zeilen.push('<div><b>Parameter:</b> <span class="fach">' +
+        esc(Object.keys(param).map(k => k + '=' + param[k]).join(' ')) + '</span></div>');
+      if(detail.length) zeilen.push('<div class="fach tk-detail-zeilen">' + detail.map(esc).join('<br>') + '</div>');
+      if(!zeilen.length) zeilen.push('<div>Zu diesem Befund liegen 0 weitere Zeilen vor.</div>');
+      dr.innerHTML = '<td colspan="7"><div class="tk-detail-b">' + zeilen.join('') + '</div></td>';
+      const toggle = tr.querySelector('.tk-toggle');
+      const umschalten = () => {
+        dr.hidden = !dr.hidden;
+        toggle.setAttribute('aria-expanded', String(!dr.hidden));
+      };
+      toggle.onclick = e => { e.stopPropagation(); umschalten(); };
+      // Ein Klick auf die Zeile klappt auf; wer gerade Text markiert, will nichts umschalten.
+      tr.onclick = () => { if(String(window.getSelection && window.getSelection()).length) return; umschalten(); };
+      tb.appendChild(tr);
+      tb.appendChild(dr);
+    });
+    t.appendChild(tb);
+    wrap.appendChild(t);
+    p.appendChild(wrap);
+    p.appendChild(el('div','empty tk-keine','0 Zeilen passen zum Suchtext.'));
+    b.appendChild(p);
+  });
+
+  /* ---- Nicht geprüft: je Bereich die Quellen ohne Wert ---- */
+  const nicht = bereiche.filter(br => Array.isArray(br.fehlend) && br.fehlend.length);
+  const pn = el('div','panel');
+  const quellen = nicht.reduce((n, br) => n + br.fehlend.length, 0);
+  pn.innerHTML = '<div class="panel-h"><div class="panel-t">Nicht geprüft</div>' +
+    '<div class="panel-d">' + (quellen === 0
+      ? 'Jede Quelle hat geliefert; 0 Quellen fehlen.'
+      : quellen + (quellen === 1 ? ' Quelle hat' : ' Quellen haben') + ' keinen Wert geliefert' +
+        (m.erhoeht === true ? '; die Messung lief schon mit Administratorrechten.' : '; ein Teil davon braucht Administratorrechte.')) +
+    '</div></div>';
+  nicht.forEach(br => {
+    const row = el('div','row');
+    row.innerHTML = '<span class="row-b"><span class="row-t">' + esc(br.titel || br.bereich || '') + '</span>' +
+      '<span class="row-s fach">' + esc(br.fehlend.join(', ')) + '</span></span>';
+    pn.appendChild(row);
+  });
+  b.appendChild(pn);
+
+  /* ---- Fehler beim Messen: die Fehlerliste des Systembilds ---- */
+  const pf = el('div','panel');
+  pf.innerHTML = '<div class="panel-h"><div class="panel-t">Fehler beim Messen <span class="tk-count">' +
+    fehlerliste.length + (fehlerliste.length === 1 ? ' Eintrag' : ' Einträge') + '</span></div>' +
+    '<div class="panel-d">Was der Sammler nicht lesen konnte, mit Quelle und Art; 0 Einträge heißt, jede Quelle war lesbar.</div></div>';
+  if(fehlerliste.length){
+    const wrap = el('div','tk-wrap');
+    wrap.innerHTML = '<table class="tk-table tk-table-3"><thead><tr><th>Quelle</th><th>Art</th><th>Text</th></tr></thead><tbody>' +
+      fehlerliste.map(f => '<tr class="tk-row" data-tk-text="' + esc([f.quelle, f.art, f.text].filter(Boolean).join(' ').toLowerCase()) + '">' +
+        tkMono(f.quelle) + tkMono(f.art) + '<td>' + esc(f.text || '') + '</td></tr>').join('') +
+      '</tbody></table>';
+    pf.appendChild(wrap);
+    pf.appendChild(el('div','empty tk-keine','0 Zeilen passen zum Suchtext.'));
+  }
+  b.appendChild(pf);
+
+  /* ---- Protokolle: die jüngsten Dateien unter <Laufzeitordner>\protokolle ---- */
+  const pp = el('div','panel');
+  pp.innerHTML = '<div class="panel-h"><div class="panel-t">Protokolle <span class="tk-count">' +
+    protokolle.length + (protokolle.length === 1 ? ' Datei' : ' Dateien') + '</span></div>' +
+    '<div class="panel-d">Die 10 jüngsten Laufprotokolle; jede Zeile eines Laufs steht dort mit Zeit und Stufe.</div></div>';
+  if(protokolle.length){
+    const wrap = el('div','tk-wrap');
+    wrap.innerHTML = '<table class="tk-table tk-table-3"><thead><tr><th>Name</th><th>Zeit</th><th>Größe</th></tr></thead><tbody>' +
+      protokolle.map(p => '<tr class="tk-row" data-tk-text="' + esc([p.name, p.zeit].filter(Boolean).join(' ').toLowerCase()) + '">' +
+        tkMono(p.name) + '<td>' + esc(p.zeit || '') + '</td><td class="tk-zahl">' + esc(tkGroesse(p.groesse)) + '</td></tr>').join('') +
+      '</tbody></table>';
+    pp.appendChild(wrap);
+    pp.appendChild(el('div','empty tk-keine','0 Zeilen passen zum Suchtext.'));
+  } else {
+    pp.appendChild(el('div','empty','Es liegen 0 Protokolle im Laufzeitordner.'));
+  }
+  b.appendChild(pp);
+
+  /* ---- Laufzeitordner ---- */
+  const pl = el('div','panel');
+  const sich = Number(m.sicherungen);
+  pl.innerHTML = '<div class="panel-h"><div class="panel-t">Laufzeitordner</div>' +
+    '<div class="panel-d">Protokolle, Verlauf, Zeitplan und Sicherungen liegen hier; die Sicherungen der Maßnahmen ' +
+    'unter sicherungen\\massnahmen (' + (isFinite(sich) ? sich + (sich === 1 ? ' Datei' : ' Dateien') : 'Zahl nicht gelesen') + ').</div></div>' +
+    '<div class="row"><span class="row-b"><span class="row-s fach tk-pfad">' + esc(m.laufzeitordner || 'nicht gemeldet') + '</span></span></div>';
+  b.appendChild(pl);
+
+  /* ---- Suchfeld: filtert jede Tabellenzeile nach Text, die Zähler laufen mit ---- */
+  const feld = $('#tk-suche');
+  const treffer = $('#tk-treffer');
+  const alleZeilen = $$('#sub-body tr.tk-row');
+  const filtern = () => {
+    const q = (feld.value || '').trim().toLowerCase();
+    let sichtbar = 0;
+    alleZeilen.forEach(tr => {
+      const passt = !q || (tr.dataset.tkText || '').indexOf(q) >= 0;
+      tr.hidden = !passt;
+      // Die Detailzeile folgt ihrer Zeile: weg, wenn die Zeile weg ist; sonst wie aufgeklappt.
+      const dr = tr.nextElementSibling;
+      if(dr && dr.classList.contains('tk-detail')){
+        const auf = tr.querySelector('.tk-toggle').getAttribute('aria-expanded') === 'true';
+        dr.hidden = !passt || !auf;
+      }
+      if(passt) sichtbar++;
+    });
+    $$('#sub-body .tk-keine').forEach(k => {
+      const tabelle = k.parentNode.querySelector('table');
+      const offen = tabelle ? Array.prototype.some.call(tabelle.querySelectorAll('tr.tk-row'), tr => !tr.hidden) : true;
+      k.hidden = offen;
+    });
+    treffer.textContent = q ? sichtbar + ' von ' + alleZeilen.length + ' Zeilen' : alleZeilen.length + ' Zeilen';
+  };
+  feld.oninput = filtern;
+  filtern();
+}
+
+/* „Als Text kopieren“: der Bericht kommt als technikerText {text} vom Host und geht in die
+   Zwischenablage. navigator.clipboard.writeText braucht ein Dokument mit Fokus und eine
+   frische Nutzerhandlung (der Klick liegt höchstens einige Sekunden zurück); scheitert es,
+   bleibt der Weg über ein markiertes Textfeld und execCommand, danach eine ehrliche Meldung. */
+function technikerKopieren(text){
+  const t = String(text == null ? '' : text);
+  if(!t){ toast('Nichts kopiert', 'Der Host hat 0 Zeichen geschickt; erst prüfen, dann kopieren.', 'warn'); return; }
+  const gut = () => toast('Kopiert', 'Der Bericht liegt in der Zwischenablage (' + t.length + ' Zeichen).', 'good');
+  const schlecht = () => toast('Nicht kopiert', 'Die Zwischenablage ließ sich nicht beschreiben; „Systembild speichern“ schreibt stattdessen eine Datei.', 'bad');
+  const ersatz = () => {
+    try{
+      const ta = document.createElement('textarea');
+      ta.value = t;
+      ta.setAttribute('aria-hidden','true');
+      ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;-webkit-user-select:text;user-select:text';
+      document.body.appendChild(ta);
+      ta.focus(); ta.select();
+      const ok = document.execCommand && document.execCommand('copy');
+      ta.remove();
+      if(ok) gut(); else schlecht();
+    }catch(_){ schlecht(); }
+  };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(t).then(gut, ersatz);
+  } else ersatz();
 }
 
 /* Wartezeiten in Alltagssprache. „in 1800 Sekunden“ rechnet niemand im Kopf um. */

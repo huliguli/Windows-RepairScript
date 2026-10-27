@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace WartungsToolbox.Kern.Regeln
 {
@@ -222,8 +223,10 @@ namespace WartungsToolbox.Kern.Regeln
 
         // Kennungen aus kern/Massnahmen.cs (docs/M3-ENTWURF.md, Abschnitt 1 und 8.5). Die Sammelkarte
         // leistung.autostart.anzahl traegt keine Kennung (ihre Detailzeile verweist auf die
-        // Einzelkarten); ausfuehrbar sind nur die drei Kennungen unten, je Eintrag eine eigene Karte.
-        // leistung.winlogon.zuruecksetzen ist Rat (Stufe 3) an den Winlogon-Befunden.
+        // Einzelkarten); ausfuehrbar sind die drei Autostart-Kennungen je Eintrag auf einer eigenen
+        // Karte und seit M4 leistung.winlogon.zuruecksetzen (Stufe 2, docs/M4-ENTWURF.md, Abschnitt 2.4)
+        // an den Winlogon-Befunden; der Helfer setzt genau die Werte, die WinlogonShellStandard und
+        // WinlogonUserinitStandard verlangen.
         public const string MAutostartDeaktivieren = "leistung.autostart.deaktivieren";
         public const string MAufgabeDeaktivieren = "leistung.aufgabe.deaktivieren";
         public const string MDienstStartart = "leistung.dienst.startart";
@@ -742,18 +745,70 @@ namespace WartungsToolbox.Kern.Regeln
 
         // ---------------------------------------------------------------- Winlogon
 
-        /// <summary>Erwartetes Ende des einzigen erlaubten Userinit-Teils; deckt %SystemRoot%, C:\Windows und D:\Windows ab, nicht die gleichnamige Kopie in einem fremden Ordner.</summary>
+        /// <summary>Erwartetes Ende des einzigen erlaubten Userinit-Teils (nur fuer die Detailzeile); das Urteil faellt UserinitMuster.</summary>
         const string UserinitEnde = @"\system32\userinit.exe";
+        /// <summary>
+        /// Der einzige erlaubte Userinit-Teil, am Anfang verankert: %SystemRoot% oder ein Laufwerk
+        /// A bis Z mit \Windows, dann \system32\userinit.exe, sonst nichts. Ein blosses EndsWith
+        /// liess bis 18.09.2026 C:\Users\Public\system32\userinit.exe, \\server\share\system32\userinit.exe
+        /// und C:\Windows\system32\..\..\evil\system32\userinit.exe als Standard durch (gemessen);
+        /// ein fremder Ordner namens system32, ein UNC-Pfad und ".." fallen jetzt durch. Seit Vista
+        /// heisst der Windows-Ordner immer Windows, der Helfer schreibt &lt;SystemDirectory&gt;\userinit.exe,
+        /// (C:\WINDOWS\system32\userinit.exe,) und erfuellt das Muster.
+        /// </summary>
+        static readonly Regex UserinitMuster = new Regex(@"^(%SystemRoot%|[A-Za-z]:\\Windows)\\system32\\userinit\.exe$", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        const string ShellStandard = "explorer.exe";
+
+        /// <summary>
+        /// Ob Winlogon\Shell der Standard ist (docs/M4-ENTWURF.md, Abschnitt 2.4): null oder leer
+        /// (Wert nicht gesetzt, Windows nimmt explorer.exe) oder genau explorer.exe, Gross/Klein
+        /// egal, Leerraum getrimmt. Ein abschliessendes Komma ohne weiteren Eintrag (explorer.exe,)
+        /// zaehlt wie bisher als Standard: Winlogon ignoriert den leeren Teil. Regel, Nachweis und
+        /// Helfer (leistung.winlogon.zuruecksetzen) rufen genau diese Funktion. Reine Funktion.
+        /// </summary>
+        public static bool WinlogonShellStandard(string shell)
+        {
+            if (string.IsNullOrWhiteSpace(shell)) return true;
+            return string.Equals(shell.Trim().TrimEnd(',').Trim(), ShellStandard, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Ob Winlogon\Userinit der Standard ist (docs/M4-ENTWURF.md, Abschnitt 2.4): null oder leer,
+        /// oder genau EIN Teil, der dem UserinitMuster entspricht (Anfuehrungszeichen und Leerraum
+        /// getrimmt), optional mit abschliessendem Komma, ohne weiteren Eintrag nach dem Komma. Der
+        /// Pfad ist nicht beliebig: die gleichnamige Kopie in einem fremden Ordner ist der Austausch,
+        /// den die Regel seit v8.0 meldet (Doku "cannot-log-on-windows"); der Helfer schreibt
+        /// &lt;SystemDirectory&gt;\userinit.exe, und erfuellt damit dieselbe Bedingung. Reine Funktion.
+        /// </summary>
+        public static bool WinlogonUserinitStandard(string userinit)
+        {
+            if (string.IsNullOrWhiteSpace(userinit)) return true;
+            var teile = UserinitTeile(userinit);
+            return teile.Count == 1 && UserinitTeilStandard(teile[0]);
+        }
+
+        /// <summary>Ein einzelner, schon getrimmter Userinit-Teil gegen das verankerte Muster; UNC, ".." und fremde Ordner namens system32 fallen durch.</summary>
+        static bool UserinitTeilStandard(string teil)
+        {
+            return !string.IsNullOrEmpty(teil) && UserinitMuster.IsMatch(teil);
+        }
+
+        /// <summary>Die durch Komma getrennten Teile von Userinit, je ohne Leerraum und Anfuehrungszeichen; leere Teile (abschliessendes Komma) fallen weg.</summary>
+        static List<string> UserinitTeile(string userinit)
+        {
+            return (userinit ?? "").Split(',').Select(t => t.Trim().Trim('"').Trim()).Where(t => t.Length > 0).ToList();
+        }
 
         /// <summary>
         /// Shell muss "explorer.exe" sein, Userinit genau "...\system32\userinit.exe," (Doku
         /// "cannot-log-on-windows"). Jeder weitere, durch Komma getrennte Teil wird beim Anmelden
-        /// zusaetzlich gestartet: die uebliche Persistenz-Manipulation.
+        /// zusaetzlich gestartet: die uebliche Persistenz-Manipulation. Beide Befunde entscheiden
+        /// ueber WinlogonShellStandard/WinlogonUserinitStandard, nie ueber eine zweite Pruefung.
         /// </summary>
         static void Winlogon(Kontext ctx, BereichErgebnis e)
         {
             var A = ctx.S.Autostart;
-            if (A.Shell != null && !string.Equals(A.Shell.Trim().TrimEnd(','), "explorer.exe", StringComparison.OrdinalIgnoreCase))
+            if (!WinlogonShellStandard(A.Shell))
             {
                 e.Befunde.Add(new Befund
                 {
@@ -764,17 +819,16 @@ namespace WartungsToolbox.Kern.Regeln
                     Quelle = "HKLM\\...\\Winlogon\\Shell",
                     Titel = "Windows-Oberfläche wurde ausgetauscht",
                     Satz = "Beim Anmelden startet „" + A.Shell + "“ statt „explorer.exe“; das ist nicht die normale Windows-Oberfläche.",
-                    Rat = "Das kann Absicht sein (Kiosk-PC), sonst ein Zeichen für Schadsoftware: mit einem aktuellen Virenscanner prüfen und den Wert auf „explorer.exe“ zurücksetzen.",
+                    Rat = "Das kann Absicht sein (Kiosk-PC), sonst ein Zeichen für Schadsoftware: mit einem aktuellen Virenscanner prüfen und den Wert auf „explorer.exe“ zurücksetzen lassen (Maßnahme an dieser Karte, der alte Wert bleibt in der Sicherung).",
                     Detail = new List<string> { "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\Shell = " + A.Shell },
                     Massnahmen = new List<string> { MWinlogonZuruecksetzen },
                 });
             }
-            if (A.Userinit != null)
+            if (!WinlogonUserinitStandard(A.Userinit))
             {
-                var teile = A.Userinit.Split(',').Select(t => t.Trim().Trim('"').Trim()).Where(t => t.Length > 0).ToList();
-                int echt = teile.FindIndex(t => t.EndsWith(UserinitEnde, StringComparison.OrdinalIgnoreCase));
+                var teile = UserinitTeile(A.Userinit);
+                int echt = teile.FindIndex(UserinitTeilStandard);
                 var weitere = teile.Where((t, i) => i != echt).ToList();
-                if (echt >= 0 && weitere.Count == 0) return;
                 bool ergaenzt = echt >= 0;
                 e.Befunde.Add(new Befund
                 {
@@ -787,11 +841,11 @@ namespace WartungsToolbox.Kern.Regeln
                     Satz = ergaenzt
                         ? "Neben „userinit.exe“ startet der Anmeldevorgang zusätzlich " + string.Join(" und ", weitere.Select(w => "„" + w + "“")) + "; das gehört nicht zu Windows und führt bei jeder Anmeldung fremden Code aus."
                         : "Der Anmeldevorgang startet „" + A.Userinit + "“ statt „userinit.exe“ aus dem Windows-Ordner; ohne dieses Programm schlägt die Anmeldung fehl oder läuft über fremden Code.",
-                    Rat = "Mit einem aktuellen Virenscanner prüfen und den Wert auf „C:\\Windows\\system32\\userinit.exe,“ zurücksetzen.",
+                    Rat = "Mit einem aktuellen Virenscanner prüfen und den Wert auf „C:\\Windows\\system32\\userinit.exe,“ zurücksetzen lassen (Maßnahme an dieser Karte, der alte Wert bleibt in der Sicherung).",
                     Detail = new List<string>
                     {
                         "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\Userinit = " + A.Userinit,
-                        "Erlaubt ist genau ein Teil, der auf " + UserinitEnde + " endet; " + (ergaenzt ? "zusätzliche Teile: " + string.Join(", ", weitere) : "kein Teil erfüllt das"),
+                        "Erlaubt ist genau ein Teil %SystemRoot%" + UserinitEnde + " oder <Laufwerk>:\\Windows" + UserinitEnde + " (kein fremder Ordner, kein Netzpfad, kein „..“); " + (ergaenzt ? "zusätzliche Teile: " + string.Join(", ", weitere) : "kein Teil erfüllt das"),
                     },
                     Massnahmen = new List<string> { MWinlogonZuruecksetzen },
                 });

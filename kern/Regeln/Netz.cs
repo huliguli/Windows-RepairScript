@@ -11,6 +11,9 @@ namespace WartungsToolbox.Kern.Regeln
     /// (3) Router antwortet, (4) Namensdienst antwortet richtig, (5) Internet-Testseite,
     /// (6) TCP 443. Gemeldet wird die ERSTE Stufe, die versagt; alles dahinter ist Folge und
     /// bekommt keinen eigenen Befund (sonst stuenden bei einem gezogenen Kabel vier Alarme).
+    /// Versagen (5) und (6) zusammen, waehrend (3) und (4) antworten und kein Proxy im Weg
+    /// steht, ist das der gestoerte Netzwerk-Stack (netz.stack.gestoert, seit M4 mit Winsock-
+    /// und IP-Reset), nicht die Testseite allein.
     ///
     /// Unabhaengig davon: fest eingetragene DNS-Server auf einem DHCP-Anschluss (Info, kann
     /// gewollt sein), Proxy auf dem eigenen Rechner (Warnung), Proxy-Skript (Warnung mit
@@ -26,11 +29,14 @@ namespace WartungsToolbox.Kern.Regeln
     /// </summary>
     public static class Netz
     {
-        // Massnahmen-Kennungen (Katalog kern/Massnahmen.cs seit Meilenstein 3; netz.hosts.pruefen bleibt Rat bis M4).
+        // Massnahmen-Kennungen (Katalog kern/Massnahmen.cs seit Meilenstein 3; Stufe 3 seit M4,
+        // docs/M4-ENTWURF.md, Abschnitt 1 und 2.4).
         public const string MDhcpErneuern = "netz.dhcp.erneuern";
         public const string MDnsCacheLeeren = "netz.dnscache.leeren";
         public const string MDnsZuruecksetzen = "netz.dns.zuruecksetzen";
-        public const string MHostsPruefen = "netz.hosts.pruefen";
+        public const string MHostsBereinigen = "netz.hosts.bereinigen";
+        public const string MWinsockZuruecksetzen = "netz.winsock.zuruecksetzen";
+        public const string MIpZuruecksetzen = "netz.ip.zuruecksetzen";
 
         /// <summary>
         /// Parameter fuer den Plan (docs/M3-ENTWURF.md, Abschnitt 1): der Adapter-Index
@@ -98,6 +104,10 @@ namespace WartungsToolbox.Kern.Regeln
             if (physischUp.Count > 0 && s.FehlerVon("wmi.netz.profil").Any()) e.Fehlend.Add(MitArt(s, "wmi.netz.profil", "Verbindungsprofil"));
             if (s.FehlerVon("sonde.netz").Any()) e.Fehlend.Add("Teile der Verbindungsprobe");
             if (s.FehlerVon("datei.netz.hosts").Any()) e.Fehlend.Add("hosts-Datei");
+            // DataBasePath (seit M4): scheitert das Lesen, bleibt HostsPfadAbweichend null, und null
+            // saehe sonst wie "Standardort" aus; deshalb hier nennen und unten keine Massnahme anhaengen.
+            bool hostsPfadGelesen = !s.FehlerVon("registry.netz.hostspfad").Any();
+            if (!hostsPfadGelesen) e.Fehlend.Add("Ort der hosts-Datei (DataBasePath)");
             if (s.FehlerVon("api.netz.proxy").Any()) e.Fehlend.Add("Proxy-Einstellungen");
             if (s.FehlerVon("registry.netz.tcpip").Any()) e.Fehlend.Add("DNS-Herkunft (statisch oder automatisch)");
 
@@ -126,8 +136,24 @@ namespace WartungsToolbox.Kern.Regeln
                         : "Kein Netzwerkanschluss mit Kabel oder WLAN ist verbunden.";
                     b.Rat = "Netzwerkkabel an PC und Router prüfen oder WLAN einschalten und mit dem Netz verbinden.";
                 }
+                if (n.NachgemessenMs.HasValue)
+                    b.Detail.Add("Nach " + Sekunden(n.NachgemessenMs.Value) + " erneut gemessen: weiterhin kein Anschluss verbunden.");
                 e.Befunde.Add(b);
                 ursacheGefunden = true;
+            }
+            else if (n.NachgemessenMs.HasValue)
+            {
+                // Die erste Messung fand keinen Anschluss Up, die Nachmessung schon: die Verbindung war
+                // nur kurz weg (Linkabriss, z. B. bei der Anmeldung). Kein Problem, aber sichtbar, damit
+                // sich haeufende Abrisse auffallen.
+                var kurz = Neu("netz.verbindung.kurzweg", "MSFT_NetAdapter.InterfaceOperationalStatus (zweite Messung)");
+                kurz.Zustand = Zustand.Ok;
+                kurz.Titel = "Verbindung war kurz unterbrochen";
+                kurz.Satz = "Beim ersten Messen war keiner der " + n.Adapter.Count(a => a.Physisch) + " Netzwerkanschlüsse verbunden; nach "
+                            + Sekunden(n.NachgemessenMs.Value) + " stand die Verbindung wieder.";
+                kurz.Messwert = Messwert.Von(n.NachgemessenMs.Value, "ms bis zur Verbindung", null);
+                kurz.Detail.Add("Häufen sich solche Unterbrechungen, lohnt ein Blick auf Kabel, Router-Anschluss und den Treiber des Netzwerkadapters.");
+                e.Befunde.Add(kurz);
             }
 
             // ---------------------------------------------------------- (2) APIPA
@@ -325,6 +351,29 @@ namespace WartungsToolbox.Kern.Regeln
                 if (n.Proxy.WinInetAktiv == true) b.Detail.Add("WinINet-Proxy aktiv: " + n.Proxy.WinInetServer);
                 e.Befunde.Add(b);
             }
+            else if (!ursacheGefunden && !s.FehlerVon("api.netz.proxy").Any() && StackGestoert(so, n.Proxy) && physischUp.Count > 0)
+            {
+                // Router und Namensdienst antworten, Testseite (HTTP) und TCP 443 scheitern beide,
+                // kein Proxy sitzt dazwischen: der Netzwerk-Stack selbst (Winsock-Katalog, IP-Stack)
+                // ist die einzige Stufe, die noch uebrig ist. Beide Kennungen in der Reihenfolge, in
+                // der sie zu versuchen sind; die Karte ersetzt netz.sonde.ncsi und netz.verbindung.
+                // Ein Fehlereintrag der Proxy-Quelle (api.netz.proxy.*) sperrt den Zweig: dann ist
+                // "kein Proxy" nicht belegt, und es bleibt bei netz.sonde.ncsi (warn), dessen Satz
+                // nichts ueber den Proxy behauptet.
+                var b = Neu("netz.stack.gestoert", "Sonden (Ping, DNS, HTTP, TCP 443), WinHttpGetIEProxyConfigForCurrentUser");
+                b.Zustand = Zustand.Bad;
+                b.Titel = "Netzwerk-Stack von Windows gestört";
+                b.Satz = "Der Router antwortet und der Namensdienst antwortet, aber die Internet-Testseite (HTTP) und der verschlüsselte Zugriff (TCP 443) scheitern beide, obwohl kein Proxy eingerichtet ist; so verhält sich ein beschädigter Netzwerk-Stack (Winsock oder IP), nicht der Anschluss.";
+                b.Rat = "Erst Winsock zurücksetzen (braucht einen Neustart); bleibt es dabei, den IP-Stack zurücksetzen.";
+                b.Messwert = Messwert.Von(2, "von 4 Sonden bestanden", "4");
+                b.Detail.Add("Sonden: Router ja, Namensdienst ja, Testseite nein, TCP 443 nein (" + so.DauerMs + " ms)");
+                b.Detail.Add("Proxy: WinINet " + (n.Proxy.WinInetAktiv == true ? "aktiv" : n.Proxy.WinInetAktiv == false ? "aus" : "nicht gelesen") + ", WinHTTP-Typ " + (n.Proxy.WinHttpTyp.HasValue ? n.Proxy.WinHttpTyp.Value.ToString(System.Globalization.CultureInfo.InvariantCulture) : "nicht gelesen") + ", AutoConfigURL " + (string.IsNullOrEmpty(n.Proxy.PacUrl) ? "keine" : n.Proxy.PacUrl) + "; ein Proxy wäre die einfachere Erklärung, es gibt keinen");
+                b.Detail.Add("Winsock-Reset entfernt Netzwerkkomponenten von Drittprogrammen (LSP); der IP-Reset setzt feste Adressen auf Automatisch, die gemerkten Werte stehen in der Sicherung.");
+                b.Massnahmen.Add(MWinsockZuruecksetzen);
+                b.Massnahmen.Add(MIpZuruecksetzen);
+                e.Befunde.Add(b);
+                ursacheGefunden = true;
+            }
             else if (!ursacheGefunden && so.Ncsi == false && (so.Dns == true || dnsAndere))
             {
                 var b = Neu("netz.sonde.ncsi", "HTTP GET ActiveWebProbeHost/ActiveWebProbePath");
@@ -461,7 +510,7 @@ namespace WartungsToolbox.Kern.Regeln
             // Titel und Folge kommen aus den tatsaechlich getroffenen Klassen: eine umgeleitete
             // NCSI-Sonde (in Privatsphaere-Sperrlisten ueblich) blockiert keinen Update-Server,
             // sie laesst Windows faelschlich "Kein Internet" anzeigen.
-            var treffer = n.Hosts.Where(h => !string.IsNullOrEmpty(h.Host) && HostsKlasse(h.Host) != null).ToList();
+            var treffer = n.Hosts.Where(h => HostsZeileUmleitung(h.Ip, h.Host)).ToList();
             if (treffer.Count > 0)
             {
                 var klassen = treffer.Select(h => HostsKlasse(h.Host)).Distinct().ToList();
@@ -481,13 +530,28 @@ namespace WartungsToolbox.Kern.Regeln
                 b.Satz = treffer.Count == 1
                     ? "Die Adresse " + treffer[0].Host + " wird in der hosts-Datei auf " + treffer[0].Ip + " umgeleitet; " + folge + "."
                     : treffer.Count + " Einträge in der hosts-Datei leiten Adressen für " + Aufzaehlung(dienste) + " um (z. B. " + treffer[0].Host + " auf " + treffer[0].Ip + "); " + folge + ".";
-                b.Rat = "Die Zeilen aus der hosts-Datei entfernen (vorher eine Kopie sichern) und danach einen Virenscan laufen lassen.";
+                // Die Massnahme (netz.hosts.bereinigen, Stufe 2) entfernt genau die Zeilen, fuer die
+                // HostsZeileUmleitung wahr ist, und merkt den alten Text als Rueckweg. Sie haengt nur
+                // an der Karte, wenn die hosts-Datei nachweislich am Standardpfad liegt: bei abweichendem
+                // DataBasePath lehnt der Helfer ab, und ein Knopf, der mit Exit 2 endet, ist keiner.
+                // Ein nicht gelesener DataBasePath (Fehlerliste registry.netz.hostspfad) zaehlt nicht als
+                // Standard: null hiesse dann "nicht gemessen", nicht "am Standardort" (fail closed).
+                bool abweichend = !string.IsNullOrEmpty(n.HostsPfadAbweichend);
+                bool standardpfad = !abweichend && hostsPfadGelesen;
+                b.Rat = standardpfad
+                    ? "Die Zeilen aus der hosts-Datei entfernen lassen (Beheben legt vorher eine Kopie des Inhalts in der Sicherung ab) und danach einen Virenscan laufen lassen."
+                    : abweichend
+                    ? "Die Zeilen von Hand aus der hosts-Datei unter „" + n.HostsPfadAbweichend + "“ entfernen (vorher eine Kopie sichern) und danach einen Virenscan laufen lassen; das Programm bereinigt nur die Datei am Standardpfad."
+                    : "Die Zeilen von Hand aus der hosts-Datei entfernen (vorher eine Kopie sichern) und danach einen Virenscan laufen lassen; das Programm bereinigt nur, wenn der Ort der Datei (DataBasePath) lesbar ist und dem Standard entspricht.";
                 b.Messwert = Messwert.Von(treffer.Count, "umgeleitete Einträge", "0");
                 foreach (var h in treffer) b.Detail.Add(h.Ip + "  " + h.Host + "  [" + KlasseText(HostsKlasse(h.Host)) + "]");
-                // Bis M4 gibt es keine Massnahme, die die Datei anfasst oder sichert (netz.hosts.pruefen ist
-                // Rat, Stufe 3): die Kopie legt der Nutzer selbst an. Sobald M4 die Massnahme baut, den Satz drehen.
-                b.Detail.Add("Nur gemeldet, nie automatisch bereinigt: die Zeilen stehen oben; eine Kopie der Datei legen Sie vor dem Bearbeiten selbst an (etwa hosts.<datum>.bak im selben Ordner), dieses Programm schreibt keine.");
-                b.Massnahmen.Add(MHostsPruefen);
+                if (standardpfad)
+                {
+                    b.Detail.Add("Beheben entfernt genau die " + treffer.Count + " Zeilen oben und legt vorher eine Kopie des ganzen Inhalts in der Sicherung ab; Rückgängig schreibt sie zurück.");
+                    b.Massnahmen.Add(MHostsBereinigen);
+                }
+                else if (abweichend) b.Detail.Add("DataBasePath weicht vom Standard ab (" + n.HostsPfadAbweichend + "): keine Maßnahme, der Helfer schreibt nur unter %SystemRoot%\\System32\\drivers\\etc.");
+                else b.Detail.Add("Ort der hosts-Datei nicht prüfbar (DataBasePath nicht gelesen): keine Maßnahme, nur der Rat; der Helfer schreibt nur unter %SystemRoot%\\System32\\drivers\\etc.");
                 e.Befunde.Add(b);
             }
 
@@ -499,6 +563,13 @@ namespace WartungsToolbox.Kern.Regeln
         static Befund Neu(string schluessel, string quelle)
         {
             return new Befund { Bereich = Bereich.Netz, Schluessel = schluessel, Quelle = quelle };
+        }
+
+        /// <summary>"1 Sekunde" / "3 Sekunden" aus Millisekunden, mindestens 1 (nie "0 Sekunden").</summary>
+        static string Sekunden(int ms)
+        {
+            int s = Math.Max(1, (int)Math.Round(ms / 1000.0));
+            return s == 1 ? "1 Sekunde" : s + " Sekunden";
         }
 
         /// <summary>Adapter-Index als Planparameter: immer invariant, nie mit Tausenderzeichen.</summary>
@@ -589,6 +660,36 @@ namespace WartungsToolbox.Kern.Regeln
         public static bool IstGeschuetzt(string host)
         {
             return HostsKlasse(host) != null;
+        }
+
+        /// <summary>
+        /// Ob eine hosts-Zeile (IP, Hostname) eine Umleitung ist, die netz.hosts.umleitung zaehlt und
+        /// netz.hosts.bereinigen entfernt (docs/M4-ENTWURF.md, Abschnitt 1 und 2.4): genau dann, wenn
+        /// der Host eine Klasse hat (HostsKlasse ungleich null). Die Zieladresse entscheidet nicht:
+        /// ein geschuetzter Host gehoert in keine hosts-Datei, gleich ob er auf 0.0.0.0, 127.0.0.1
+        /// oder einen fremden Server zeigt. Der Helfer ruft diese Funktion, keine Kopie; eine Zeile
+        /// ohne Host (Kommentar, Leerzeile) ist nie eine Umleitung. Reine Funktion.
+        /// </summary>
+        public static bool HostsZeileUmleitung(string ip, string host)
+        {
+            return !string.IsNullOrWhiteSpace(host) && HostsKlasse(host) != null;
+        }
+
+        /// <summary>
+        /// Netzwerk-Stack gestoert (docs/M4-ENTWURF.md, Abschnitt 2.4): Router-Sonde wahr, DNS-Sonde
+        /// wahr, Testseite (HTTP) falsch UND TCP 443 falsch, und ein GELESENER Proxy-Stand ohne Proxy
+        /// (WinINet aktiv == false, WinHTTP-Typ gelesen und nicht 3, keine AutoConfigURL). Mit Proxy
+        /// erklaert der Proxy die beiden versagenden Sonden, dann ist es netz.sonde.ncsi. Ein nicht
+        /// gemessener Wert (null) zaehlt nie als Beleg: ohne Proxy-Objekt oder mit WinINet null bzw.
+        /// WinHTTP-Typ null ist "kein Proxy" nicht belegt, und die Funktion liefert false (bis
+        /// 18.09.2026 lieferte sie hier true und schloss "kein Proxy" aus dem Fehlen der Messung).
+        /// Reine Funktion.
+        /// </summary>
+        public static bool StackGestoert(Sonden so, Proxy proxy)
+        {
+            if (so == null || proxy == null) return false;
+            if (so.Gateway != true || so.Dns != true || so.Ncsi != false || so.Tcp443 != false) return false;
+            return proxy.WinInetAktiv == false && proxy.WinHttpTyp.HasValue && proxy.WinHttpTyp.Value != 3 && string.IsNullOrEmpty(proxy.PacUrl);
         }
 
         /// <summary>

@@ -67,6 +67,12 @@ namespace WartungsToolbox.Sammler.Quellen
             var guids = new Dictionary<int, string>();
 
             Sammler.Versuch(s, "wmi.netz.adapter", () => Adapter(s, n, guids));
+            // Kein physischer Anschluss Up, obwohl einer da ist: nachmessen, bevor die Regel "keine
+            // Netzwerkverbindung" meldet. Gemessen 30.09.2026: der Link riss bei der Anmeldung 3 s ab,
+            // genau waehrend des Pruefens (e2fnexpress 27 um 20:55:10, 32 um 20:55:13). Die Adressen,
+            // Routen und Sonden danach lesen den Stand NACH der Nachmessung.
+            if (n.Adapter.Any(a => a.Physisch) && !n.Adapter.Any(a => a.Physisch && a.OpStatus == 1))
+                Sammler.Versuch(s, "wmi.netz.nachmessung", () => Nachmessen(s, n, guids));
             Sammler.Versuch(s, "wmi.netz.ipadresse", () => IpAdressen(s, n));
             Sammler.Versuch(s, "wmi.netz.route", () => Routen(s, n));
             Sammler.Versuch(s, "wmi.netz.dns", () => DnsServer(s, n));
@@ -75,6 +81,7 @@ namespace WartungsToolbox.Sammler.Quellen
             Sammler.Versuch(s, "registry.netz.tcpip", () => DnsRegistry(s, n, guids));
             Sammler.Versuch(s, "api.netz.proxy.wininet", () => ProxyWinInet(n));
             Sammler.Versuch(s, "api.netz.proxy.winhttp", () => ProxyWinHttp(n));
+            Sammler.Versuch(s, "registry.netz.hostspfad", () => HostsPfad(n));
             Sammler.Versuch(s, "datei.netz.hosts", () => Hosts(s, n));
             Sammler.Versuch(s, "sonde.netz", () => Sonden(s, n));
         }
@@ -130,6 +137,33 @@ namespace WartungsToolbox.Sammler.Quellen
 
             if (n.Adapter.Count == 0)
                 Sammler.Fehler(s, "wmi.netz.adapter", Fehler.Fehlt, "MSFT_NetAdapter lieferte keinen sichtbaren Adapter");
+        }
+
+        // Geduld der Nachmessung (keine Regel-Schwelle): hoechstens 10 s, jede Sekunde ein neuer Blick.
+        // Sie laeuft nur, wenn die erste Messung keinen physischen Anschluss Up fand.
+        const int NachmessMs = 10000;
+        const int NachmessSchrittMs = 1000;
+
+        /// <summary>
+        /// Liest die Adapter erneut, bis ein physischer Anschluss Up ist oder die Geduld aufgebraucht
+        /// ist. Steht einer Up, ersetzt die neue Messung die alte; sonst bleibt die erste. In beiden
+        /// Faellen haelt NachgemessenMs die Wartezeit fest, damit die Regel sagen kann, dass nachgemessen wurde.
+        /// </summary>
+        static void Nachmessen(Systembild s, Netz n, Dictionary<int, string> guids)
+        {
+            var uhr = Stopwatch.StartNew();
+            while (uhr.ElapsedMilliseconds < NachmessMs)
+            {
+                Thread.Sleep(NachmessSchrittMs);
+                var neu = new Netz();
+                var neueGuids = new Dictionary<int, string>();
+                Adapter(s, neu, neueGuids);
+                if (!neu.Adapter.Any(a => a.Physisch && a.OpStatus == 1)) continue;
+                n.Adapter.Clear(); n.Adapter.AddRange(neu.Adapter);
+                guids.Clear(); foreach (var kv in neueGuids) guids[kv.Key] = kv.Value;
+                break;
+            }
+            n.NachgemessenMs = (int)uhr.ElapsedMilliseconds;
         }
 
         static int Rang(Adapter a)
@@ -356,6 +390,46 @@ namespace WartungsToolbox.Sammler.Quellen
         }
 
         // ---------------------------------------------------------------- hosts
+
+        const string TcpipParameter = @"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters";
+
+        /// <summary>
+        /// Wo Windows die hosts-Datei wirklich liest: Tcpip\Parameters\DataBasePath (REG_EXPAND_SZ;
+        /// GetValue loest %SystemRoot% auf, ExpandEnvironmentVariables faengt einen als REG_SZ
+        /// gespeicherten Platzhalter). Weicht der Pfad vom Standard %SystemRoot%\System32\drivers\etc
+        /// ab (Vergleich aufgeloest ueber Path.GetFullPath, ohne abschliessenden Backslash, Gross/Klein
+        /// egal), steht er in n.HostsPfadAbweichend; sonst bleibt das Feld null. Die Regel
+        /// netz.hosts.umleitung haengt dann keine Massnahme an, der Katalog-Nachweis ist unlesbar, und
+        /// der Helfer (helfer\Massnahmen\Netz.cs HostsPfadPruefen) lehnt mit derselben Rechnung ab:
+        /// beide Seiten verwerfen genau denselben Fall (M4-Entwurf 10.2). Ein fehlender Wert ist der
+        /// dokumentierte Standard; ein leerer oder nicht als Pfad lesbarer Wert zaehlt als abweichend
+        /// (fail closed, der Helfer lehnt ihn ebenso ab), ein fehlender Schluessel als Lesefehler.
+        /// Hosts() liest weiter die Datei am Standardort: sie ist die, die die Massnahme anfasst.
+        /// </summary>
+        static void HostsPfad(Netz n)
+        {
+            n.HostsPfadAbweichend = null;
+            string ist;
+            using (var k = Registry.LocalMachine.OpenSubKey(TcpipParameter, false))
+            {
+                if (k == null) throw new InvalidOperationException("Schlüssel " + TcpipParameter + " fehlt");
+                object roh = k.GetValue("DataBasePath");
+                if (roh == null) return;
+                ist = Environment.ExpandEnvironmentVariables(Convert.ToString(roh, CultureInfo.InvariantCulture) ?? "").Trim();
+            }
+            if (ist.Length == 0) { n.HostsPfadAbweichend = "(leer)"; return; }
+            string soll = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"drivers\etc");
+            string a, b;
+            try
+            {
+                a = Path.GetFullPath(ist).TrimEnd(Path.DirectorySeparatorChar);
+                b = Path.GetFullPath(soll).TrimEnd(Path.DirectorySeparatorChar);
+            }
+            catch (ArgumentException) { n.HostsPfadAbweichend = ist; return; }
+            catch (NotSupportedException) { n.HostsPfadAbweichend = ist; return; }
+            catch (PathTooLongException) { n.HostsPfadAbweichend = ist; return; }
+            if (!string.Equals(a, b, StringComparison.OrdinalIgnoreCase)) n.HostsPfadAbweichend = ist;
+        }
 
         static void Hosts(Systembild s, Netz n)
         {

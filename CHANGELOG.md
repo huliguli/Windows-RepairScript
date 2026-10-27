@@ -1,5 +1,176 @@
 # Changelog
 
+## [8.3.0] - 2026-10-27
+
+Auch die Eingriffe, die sich nicht rückgängig machen lassen (Stufe 3), laufen jetzt an der
+Karte: mit Vorschau, einem Kasten „Was verloren geht“ und einem Häkchen, ohne das nichts
+startet. Dazu eine Ansicht für den Techniker, das Programm-Update ohne Batch, und DISM über die
+Windows-Schnittstelle statt über Konsolentext.
+
+### Neu
+
+- **13 weitere Maßnahmen an der Karte, darunter 10 der Stufe 3.** Was bis 8.2 nur ein Hinweis
+  war, hat jetzt eine Schaltfläche: hosts-Datei bereinigen, Winsock zurücksetzen, IP-Stack
+  zurücksetzen, Eingehende Verbindungen wieder blockieren, Firewall auf Werkseinstellung
+  zurücksetzen, Dateisystem kurz reparieren (Spot-Fix), Dateisystem vollständig reparieren,
+  Treiber neu installieren, Anmeldeprogramm zurücksetzen, Papierkorb leeren,
+  Arbeitsspeicher-Test planen, Windows Update zurücksetzen und die Reparatur der
+  Windows-Dateien (DISM und SFC). Damit hängen 30 Maßnahmen an Karten. Drei davon sind Stufe 2
+  mit „Rückgängig“ (hosts-Datei, Eingehende Verbindungen, Anmeldeprogramm); die übrigen 10 sind
+  Stufe 3. Als Hinweis ohne Schaltfläche bleibt nur „Vorherigen Treiber wiederherstellen“
+  (Geräte-Manager).
+- **Stufe 3 nur mit Häkchen.** Bei jeder Maßnahme der Stufe 3 (nicht umkehrbar) zeigt die
+  Vorschau unter dem Risiko den Kasten „Was verloren geht“ mit einem Satz, der die Folgen nennt
+  (beim Papierkorb mit Zahl der Dateien und GB), und das Kontrollkästchen „Ich habe verstanden,
+  was verloren geht“. „Jetzt ausführen“ bleibt gesperrt, bis es gesetzt ist; ohne das Häkchen
+  lehnt das Programm den Start ab. Die Schaltfläche an der Karte trägt ein Warnsymbol. Ein
+  nötiger Neustart allein löst den Kasten nicht aus („Benutzerkontensteuerung wieder
+  einschalten“ ist Stufe 2 mit Neustart und bleibt ohne Kasten); braucht eine Maßnahme einen
+  Neustart, sagt die Vorschau „Danach ist ein Neustart nötig; das Programm startet ihn nicht
+  selbst.“ Dasselbe Häkchen verlangt jetzt
+  auch „Windows auf einen früheren Stand zurücksetzen“ in der Ansicht „Sicherungspunkte“.
+  Keine Maßnahme der Stufe 3 läuft in der geplanten Wartung; freischaltbar bleiben die sechs
+  Maßnahmen der Stufe 1 aus 8.2.
+- **Sicherung als Datei.** „Firewall auf Werkseinstellung zurücksetzen“ exportiert vorher alle
+  Regeln in eine Datei (`.wfw`), „Rückgängig“ spielt sie zurück. „Treiber neu installieren“
+  exportiert einen Herstellertreiber vorher in einen Ordner (Windows-eigene Treiber brauchen
+  keinen Export). Beides liegt unter `C:\ProgramData\WindowsWartung\sicherungen\massnahmen\export`
+  und gehört dem Programm wie die Sicherungsdateien. „Windows Update zurücksetzen“ sichert die
+  verborgenen Updates vorher und verbirgt sie danach wieder; „Winsock zurücksetzen“ legt den
+  alten Katalog als Beleg ab. Wo es keinen Rückweg gibt, sagt es die Vorschau.
+- **Ansicht „Für den Techniker“.** Im Fuß des Ergebnisses und in den Einstellungen („Messwerte
+  der letzten Prüfung“). Sie zeigt jeden Befund der letzten Prüfung, auch die in Ordnung, mit
+  Messwert, Schwelle, Quelle, Einzelheiten, Kennungen und Parametern, dazu, was nicht geprüft
+  wurde, die Fehler beim Messen, die 10 jüngsten Protokolle und den Laufzeitordner; ein
+  Suchfeld filtert alle Zeilen. „Als Text kopieren“ legt den Bericht in die Zwischenablage,
+  „Systembild speichern“ schreibt es als Datei (Rechnername, Benutzername, Seriennummern und
+  Adressen entfernt, wie bei `--aufzeichnen`). Nichts wird geändert.
+- **Programm-Update ohne Batch.** Beim ZIP-Update prüft der Helfer das Paket selbst
+  (Prüfsumme, Herausgeber mit Name und Schlüssel, Version nie kleiner, Startprüfung der neuen
+  Fassung gegen ihre eigene Liste, nur die erwarteten Dateien) und tauscht dann die Dateien.
+  Der Dialog von Windows nennt dabei `WindowsWartung.exe`, nicht mehr `cmd.exe`. Danach
+  startet das Programm von selbst neu, ohne Administratorrechte. Scheitert ein Schritt, wird
+  nichts getauscht, und der Dialog nennt den Grund. Der Installer-Weg ist unverändert.
+- **DISM über die Windows-Schnittstelle.** Tiefenprüfung und Reparatur rufen DISM als
+  Programmbaustein (`dismapi.dll`) statt `dism.exe` und lesen das Ergebnis als Wert (in
+  Ordnung, reparierbar, nicht reparierbar, Fehler) statt aus dem Konsolentext. Das Urteil hängt
+  damit nicht mehr an der Anzeigesprache. SFC bleibt ein Prozess; sein Ergebnis kommt aus den
+  `[SR]`-Zeilen der `CBS.log`. Die Reparatur meldet jetzt getrennt, was DISM und was SFC
+  fanden, und ob ein Neustart nötig ist.
+- **Papierkorb als Befund.** Liegen 1 GB oder mehr im Papierkorb, meldet „Freier
+  Speicherplatz“ das mit Zahl der Dateien und Größe und bietet „Papierkorb leeren“ an
+  (Stufe 3, keine Umkehr); darunter steht nur die Zahl. Gezählt wird der Papierkorb des
+  angemeldeten Kontos.
+- **Firewall: ausgehende Verbindungen.** Blockiert ein Profil alles nach draußen, ist das ein
+  Befund mit „Firewall auf Werkseinstellung zurücksetzen“; die Karte „an“ sagt „und lässt
+  ausgehende Verbindungen zu“ nur, wenn das in allen 3 Profilen so ist. Ist eine fremde
+  Firewall registriert, gibt es das Zurücksetzen nur als Hinweis.
+- **Netzwerk: gestörter Stack.** Antworten Router und Namensauflösung, aber weder die
+  Testseite von Windows noch TCP 443, ohne dass ein Proxy eingetragen ist, heißt die Karte
+  „Netzwerk-Stack von Windows gestört“ und bietet erst „Winsock zurücksetzen“ und dann „IP-Stack
+  zurücksetzen“ an (beide mit Neustart).
+- **Windows Update: 26 gedeutete Fehlercodes statt 15.** Bei 12 Codes (etwa 0x80070002,
+  0x80244022, 0x80070490) bietet die Karte „Windows Update zurücksetzen“ an, bei 6 Codes des
+  Komponentenspeichers (etwa 0x800F081F, 0x80073712) die Reparatur der Windows-Dateien.
+  Schlagen 2 oder mehr verschiedene Updates wiederholt fehl, gibt es dafür eine Sammelkarte mit
+  „Windows Update zurücksetzen“. Ein Programmabsturz mit einem Windows-Baustein
+  (`System32`, `SysWOW64`) bietet die Reparatur der Windows-Dateien an.
+
+### Behoben
+
+- **„Firewall einschalten“ neben einer fremden Firewall.** Ist ein anderes Firewall-Produkt
+  bei Windows registriert, lehnt der Helfer das Einschalten der Windows-Firewall ab und nennt
+  das Produkt; bis 8.2 hätte er sie daneben eingeschaltet, was nicht hilft. Prüfung und
+  Maßnahme erkennen die Windows-eigene Firewall an derselben Namensliste.
+- **Geplante Aufgaben mit einer Microsoft-signierten Startdatei zählen jetzt als
+  Microsoft-Aufgabe,** auch wenn Name oder Autor es nicht sagen; bis 8.2 entschieden nur Pfad
+  und Autor, und eine Windows-Aufgabe mit fremdem Namen zählte als fremder Autostart. Pfad
+  (`\Microsoft\`) und Autor bleiben als zweites Kriterium; eine Aufgabe ohne lesbare Startdatei
+  wird weiter danach beurteilt.
+- **Ein Gerät ohne lesbaren Problemcode ist kein Freispruch mehr.** Liefert Windows für ein
+  Gerät keinen Code, steht es als eigene Karte „Problemcode nicht lesbar“ ohne Schaltfläche, und
+  der Sammelsatz „Alle Geräte laufen ohne Fehlercode“ entfällt; bis 8.2 zählte ein fehlender
+  Wert als 0.
+- **„Rückgängig“ nur für eigene Sicherungen.** Eine Sicherung, die unter einem anderen Konto
+  angelegt wurde (Kennwort eines anderen Administrators im Dialog), zeigt im Verlauf und auf
+  der Nachweiskarte keine Schaltfläche mehr; bis 8.2 erschien sie und der Helfer lehnte erst
+  nach dem Dialog ab.
+- **Zeitbudget einer bestehenden Wartungsaufgabe.** Eine Aufgabe aus 8.1 mit 2 Stunden wird
+  beim nächsten Start des Helfers auf 4 Stunden angehoben, sofern sie auf dieses Programm
+  zeigt; jeder andere Wert bleibt.
+- **Der Zeitplan mit den Freigaben wird nicht mehr von zwei Seiten gleichzeitig geschrieben.**
+  Programm, Helfer und die geplante Wartung teilen sich eine Sperre (5 s Wartezeit); ist sie
+  belegt, wird nichts geschrieben, und das Protokoll sagt es. „Zeitplan löschen“ meldet, wenn
+  die gespeicherte Auswahl wegen der Sperre stehen blieb.
+- **Ort der hosts-Datei.** Zeigt Windows für die hosts-Datei auf einen anderen Ordner als den
+  Standard, bereinigt das Programm nichts und sagt den Grund; die Prüfung liest den Ort jetzt
+  mit. Bis 8.2 galt immer der Standardort.
+- **Startprüfung ohne Signaturprüfung startet nicht.** Kann die Signatur der Programmdatei
+  nicht geprüft werden (die Windows-Bibliothek fehlt oder antwortet nicht), gilt die signierte
+  Fassung als verändert und startet nicht (Exit 5); bis 8.2 lief sie mit Warnung weiter. Die
+  Windows-Bibliotheken, die das Programm ruft, kommen jetzt nur noch aus `System32`, nie aus
+  dem Programmordner (eine dort abgelegte Datei gleichen Namens wird nicht geladen).
+- **Zurücksetzen auf einen Sicherungspunkt ohne PowerShell.** Der Helfer ruft Windows dafür
+  direkt (WMI `SystemRestore.Restore`) und startet dann neu; es entsteht kein
+  PowerShell-Fenster mehr.
+- **Der Sicherungsordner der Maßnahmen wird auch beim erhöhten Start des Programms
+  geschützt,** nicht nur beim Start des Helfers.
+- **„Kein Wiederherstellungspunkt“, obwohl Windows 11 welche hatte.** Die
+  Zeitpunktwiederherstellung legt eigene Punkte an, die die klassische Liste nicht zeigt. Das
+  Programm zählt sie jetzt mit, sofern die zugehörige Windows-Aufgabe vorhanden ist, und meldet
+  dann einen Rückweg statt einer Warnung.
+- **Verworfene Wiederherstellungspunkte werden sichtbar.** Hat Windows in den letzten 30 Tagen
+  alle Punkte eines Laufwerks gelöscht, weil der Speicher dafür nicht reichte, erscheint eine
+  Warnung mit Laufwerk und Zeitpunkt; wie oft der älteste Punkt verdrängt wurde, steht im Detail.
+- **„Keine Netzwerkverbindung“ nach einem kurzen Abriss.** Findet die Prüfung keinen verbundenen
+  Anschluss, misst sie bis zu 10 Sekunden nach. Steht die Verbindung dann, heißt es „Verbindung
+  war kurz unterbrochen“ statt eines Fehlers.
+- **Temporäre Dateien: nur noch ältere als einen Tag.** Werkzeugkasten und geplante Wartung
+  löschten bisher alles in den Temp-Ordnern, auch Arbeitsdateien laufender Programme und
+  Installationen. Jetzt bleiben jüngere Dateien liegen, und Abzweigungen werden nicht betreten.
+- **Programmordner, den jedes Konto ändern darf.** Liegt die Windows-Wartung in einem Ordner, in
+  dem Konten ohne Administratorrechte Dateien ändern dürfen (etwa auf einem zweiten Laufwerk),
+  meldet die Prüfung das, denn die Datei startet auch mit Administratorrechten. Das
+  Installationsprogramm bietet deshalb keine freie Ordnerwahl mehr an und entfernt beim
+  Deinstallieren die geplanten Aufgaben der App.
+
+### Gut zu wissen
+
+- **Stufe 3 läuft nie von selbst.** Nicht in der geplanten Wartung, nicht ohne Vorschau, nicht
+  ohne Häkchen; läuft gerade eine Prüfung, eine Wartung oder ein Update, bietet die Vorschau nur
+  „Schließen“.
+- **Winsock zurücksetzen entfernt Zusatzkomponenten von Drittprogrammen** (VPN- und
+  Schutzprogramme, die sich in den Netzwerkstapel einhängen); die arbeiten danach nicht mehr,
+  bis sie neu installiert sind. Der IP-Stack-Reset setzt feste IP-Adressen, Gateways und
+  DNS-Einträge auf Automatisch; „Rückgängig“ schreibt sie je Anschluss aus der Sicherung zurück.
+  Beides braucht einen Neustart.
+- **Windows Update zurücksetzen leert den Update-Verlauf** in den Windows-Einstellungen
+  (0 Einträge), laufende Downloads beginnen von vorn; verborgene Updates werden vorher
+  gesichert und danach wieder verborgen, keines geht verloren. Ist der Update-Dienst
+  deaktiviert, läuft die Maßnahme nicht (erst „Update-Dienst wieder einschalten“). Neustart
+  empfohlen.
+- **Papierkorb leeren gilt nur für das eigene Konto.** Wird im Dialog das Kennwort eines
+  anderen Kontos eingegeben, lehnt der Helfer ab; es gibt keinen Rückweg, die Vorschau nennt
+  Zahl und Größe.
+- **Treiber neu installieren:** das Gerät ist 5 bis 30 Sekunden weg (Bild, Netz, Ton); ein
+  Herstellertreiber liegt vorher als Export unter `sicherungen\massnahmen\export`, ein
+  Zurückspielen geht über `pnputil /add-driver` von Hand. „Vorheriger Treiber“ bleibt ein
+  Hinweis auf den Geräte-Manager.
+- **Dateisystem reparieren auf dem Windows-Laufwerk** läuft erst beim nächsten Start (vor der
+  Anmeldung); auf einem anderen Laufwerk sofort, das Laufwerk ist dabei 5 bis 60 Minuten nicht
+  benutzbar. Dateien in beschädigten Bereichen können nach `found.000` wandern oder verloren
+  gehen.
+- **Der Arbeitsspeicher-Test gilt genau für den nächsten Start** (10 bis 30 Minuten, der PC ist
+  solange nicht benutzbar); danach startet Windows normal, der Eintrag löscht sich von selbst.
+- **Nach dem Programm-Update liegen `.vorher`-Dateien im Programmordner** (die alte Fassung)
+  bis zum nächsten Start mit Administratorrechten; dann räumt der Helfer sie weg. Während des
+  Dateitauschs (Sekunden) lässt sich das Fenster nicht schließen; danach startet das Programm
+  von selbst neu (Argument `--vorgaenger`, nur für diesen Neustart).
+- **Die Werkzeuge im Werkzeugkasten bleiben.** „Windows-Dateien prüfen und reparieren“, „Alle
+  Interneteinstellungen zurücksetzen“, „Papierkorb endgültig leeren“ und „Arbeitsspeicher
+  beim Neustart prüfen“ laufen dort weiter ohne Befund; die Maßnahmen an der Karte erscheinen nur mit
+  passendem Befund. Es sind weiter 27 sichtbare Einträge.
+
 ## [8.2.0] - 2026-09-18
 
 Was die Prüfung findet, lässt sich jetzt an Ort und Stelle beheben: mit einer Vorschau vor dem

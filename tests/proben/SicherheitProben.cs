@@ -403,7 +403,16 @@ namespace WartungsToolbox.Proben
                     var erg2 = h.Pruefen(s);
                     alleBefunde.AddRange(Sicherheit(erg2));
                     var eingehend2 = Harness.Einer(erg2, "sicherheit.firewall.eingehend.2");
-                    h.Ist("Gegenprobe: 'eingehend erlaubt' traegt weder Massnahme noch Parameter profil (nur melden)", eingehend2 != null && eingehend2.Massnahmen.Count == 0 && !eingehend2.Parameter.ContainsKey(WartungsToolbox.Kern.Regeln.Sicherheit.ParamProfil));
+                    // M4 (docs/M4-ENTWURF.md, Abschnitt 2.4): erst eingehend.blockieren (Stufe 2, mit Profil), dann der
+                    // Firewall-Reset (Stufe 3) als zweite Kennung; bis M3 trug die Karte keine Kennung.
+                    h.Ist("'eingehend erlaubt' traegt eingehend.blockieren mit Parameter profil = 2 und danach firewall.zuruecksetzen",
+                        eingehend2 != null && eingehend2.Massnahmen.Count == 2
+                        && eingehend2.Massnahmen[0] == WartungsToolbox.Kern.Regeln.Sicherheit.MassnahmeEingehendBlockieren
+                        && eingehend2.Massnahmen[1] == WartungsToolbox.Kern.Regeln.Sicherheit.MassnahmeFirewallReset
+                        && eingehend2.Parameter.ContainsKey(WartungsToolbox.Kern.Regeln.Sicherheit.ParamProfil) && eingehend2.Parameter[WartungsToolbox.Kern.Regeln.Sicherheit.ParamProfil] == "2",
+                        eingehend2 == null ? "fehlt" : string.Join(",", eingehend2.Massnahmen) + " " + string.Join(",", eingehend2.Parameter.Select(kv => kv.Key + "=" + kv.Value)));
+                    h.Ist("Konstanten tragen die Katalog-Kennungen", WartungsToolbox.Kern.Regeln.Sicherheit.MassnahmeEingehendBlockieren == "sicherheit.firewall.eingehend.blockieren" && WartungsToolbox.Kern.Regeln.Sicherheit.MassnahmeFirewallReset == "sicherheit.firewall.zuruecksetzen");
+                    h.Ist("'eingehend erlaubt': Rat nennt die Maßnahme an der Karte und den Auslieferungszustand", eingehend2 != null && (eingehend2.Rat ?? "").Contains("Maßnahme an dieser Karte") && eingehend2.Rat.Contains("Auslieferungszustand"), eingehend2 == null ? "fehlt" : eingehend2.Rat);
                     // Zwei Profile aus: zwei Befunde, jeder mit seinem eigenen Profil als Parameter.
                     s.Sicherheit.Firewall.Single(p => p.Profil == 4).An = false;
                     s.Sicherheit.Firewall.Single(p => p.Profil == 1).An = false;
@@ -514,6 +523,129 @@ namespace WartungsToolbox.Proben
                     s.Sicherheit.Firewall.Clear();
                     var ergL = h.Pruefen(s);
                     h.Ist("Fremd-Firewall registriert, keine Profile -> Fehlend 'Firewall-Status', kein Befund, DatenVorhanden", Harness.Einer(ergL, "sicherheit.firewall") == null && Harness.Bereich(ergL, B).Fehlend.Contains("Firewall-Status") && Harness.Bereich(ergL, B).DatenVorhanden);
+                }
+            }
+
+            // ---------------------------------------------------------------- (e3) Standardaktion ausgehend (M4)
+            // docs/M4-ENTWURF.md, Abschnitt 2.4: DefaultOutboundAction 0 (Block) in einem Profil -> bad
+            // sicherheit.firewall.ausgehend.<profil> mit dem Firewall-Reset (Stufe 3, Export); bei registrierter
+            // Fremd-Firewall haengt der Reset an keinem Befund. Die 'an'-Karte sagt "laesst ausgehende
+            // Verbindungen zu" nur, wenn alle Profile Ausgehend 1 tragen. Gepflanzt im Speicher aus dem
+            // gesunden Bild, dessen Aufzeichnung das Feld noch nicht kennt (null = nicht gelesen).
+            h.Gruppe("Sicherheit (e3): Standardaktion ausgehend Block -> bad mit Firewall-Reset; Fremd-Firewall -> kein Reset");
+            {
+                var s = h.Bild("gepflanzt-sicherheit-gesund.json");
+                if (Grundmenge(h, s, "gesund"))
+                {
+                    const string Reset = WartungsToolbox.Kern.Regeln.Sicherheit.MassnahmeFirewallReset;
+                    h.Ist("Grundmenge: Ausgehend im Bild nicht gelesen (null), alle 3 Profile an mit Eingehend 0", s.Sicherheit.Firewall.All(p => !p.Ausgehend.HasValue && p.An && p.Eingehend == 0));
+                    var ergN = h.Pruefen(s);
+                    var anN = Harness.Einer(ergN, "sicherheit.firewall.an");
+                    h.Ist("Ausgehend null -> kein ausgehend-Befund, 'Firewall an' ohne 'ausgehende Verbindungen zu', Detail nennt 'nicht gelesen'",
+                        Harness.Einer(ergN, "sicherheit.firewall.ausgehend") == null && anN != null && !anN.Satz.Contains("ausgehende Verbindungen zu") && anN.Detail.Any(d => d.Contains("Standardaktion ausgehend nicht gelesen")), anN == null ? "fehlt" : anN.Satz);
+                    // Alle drei Profile Allow (1): die an-Karte sagt es, kein Befund.
+                    foreach (var p in s.Sicherheit.Firewall) p.Ausgehend = 1;
+                    var ergZ = h.Pruefen(s);
+                    var anZ = Harness.Einer(ergZ, "sicherheit.firewall.an");
+                    h.Ist("alle Ausgehend 1 -> 'Firewall an' sagt 'blockiert eingehende Verbindungen und lässt ausgehende Verbindungen zu'", anZ != null && anZ.Satz.Contains("blockiert eingehende Verbindungen und lässt ausgehende Verbindungen zu"), anZ == null ? "fehlt" : anZ.Satz);
+                    h.Ist("alle Ausgehend 1 -> kein ausgehend-Befund", Harness.Einer(ergZ, "sicherheit.firewall.ausgehend") == null);
+                    if (anZ != null) alleBefunde.Add(anZ);
+                    // Profil 2 (privat) auf Block: bad mit Reset, Titel und Satz nennen das Profil.
+                    s.Sicherheit.Firewall.Single(p => p.Profil == 2).Ausgehend = 0;
+                    var erg = h.Pruefen(s);
+                    var aus = Harness.AlleMit(erg, "sicherheit.firewall.ausgehend").ToList();
+                    h.Ist("genau ein bad-Befund sicherheit.firewall.ausgehend.2", aus.Count == 1 && aus[0].Schluessel == "sicherheit.firewall.ausgehend.2" && aus[0].Zustand == Zustand.Bad, string.Join(" | ", aus.Select(b => b.Schluessel + "=" + b.Zustand)));
+                    if (aus.Count == 1)
+                    {
+                        var b = aus[0];
+                        h.Ist("Titel: blockiert im Profil „Privat“ alles nach draußen", b.Titel == "Die Firewall blockiert im Profil „Privat“ alles nach draußen", b.Titel);
+                        h.Ist("Satz nennt „Privat“, „Blockieren“ statt „Zulassen“ und die Folge fuer Browser und Windows Update", b.Satz.Contains("„Privat“") && b.Satz.Contains("„Blockieren“ statt „Zulassen“") && b.Satz.Contains("Windows Update"), b.Satz);
+                        h.Ist("genau eine Kennung: sicherheit.firewall.zuruecksetzen, kein Parameter", b.Massnahmen.Count == 1 && b.Massnahmen[0] == Reset && b.Parameter.Count == 0, string.Join(",", b.Massnahmen));
+                        h.Ist("Quelle INetFwPolicy2.DefaultOutboundAction[2], Messwert 0, Schwelle 1 = Allow", b.Quelle == "INetFwPolicy2.DefaultOutboundAction[2]" && b.Messwert.Wert == "0" && b.Messwert.Schwelle == "1 = Allow", b.Quelle);
+                        h.Ist("Rat nennt den Auslieferungszustand, den Export und den Verlust der eigenen Regeln", (b.Rat ?? "").Contains("Auslieferungszustand") && b.Rat.Contains("Export") && b.Rat.Contains("selbst angelegte Regeln"), b.Rat);
+                        alleBefunde.Add(b);
+                    }
+                    var anB = Harness.Einer(erg, "sicherheit.firewall.an");
+                    h.Ist("'Firewall an' bleibt (Profile an), sagt aber nicht mehr 'ausgehende Verbindungen zu'", anB != null && !anB.Satz.Contains("ausgehende Verbindungen zu"), anB == null ? "fehlt" : anB.Satz);
+                    h.Ist("Bereich bad", Harness.Bereich(erg, B).Zustand == Zustand.Bad);
+                    // Profil aus UND ausgehend Block (Nachbesserung 18.09.2026): der Wert ruht, die Firewall blockiert
+                    // dort nichts; also warn, Titel und Satz tragen die Bedingung, die Kennung bleibt; die aus-Karte
+                    // (warn, einschalten) steht daneben als die wirksame Luecke.
+                    s.Sicherheit.Firewall.Single(p => p.Profil == 2).An = false;
+                    var ergA = h.Pruefen(s);
+                    var ausA = Harness.Einer(ergA, "sicherheit.firewall.ausgehend.2");
+                    h.Ist("Profil aus + ausgehend Block -> warn (nicht bad), Satz nennt die Bedingung 'sobald ... eingeschaltet wird', Reset bleibt", ausA != null && ausA.Zustand == Zustand.Warn && ausA.Satz.Contains("sobald die Firewall in diesem Profil eingeschaltet wird") && ausA.Massnahmen.SequenceEqual(new[] { Reset }), ausA == null ? "fehlt" : ausA.Zustand + " " + ausA.Satz);
+                    h.Ist("Profil aus + ausgehend Block -> Titel traegt die Bedingung, nicht 'blockiert ... alles nach draußen'", ausA != null && ausA.Titel == "Standardaktion ausgehend im Profil „Privat“ steht auf Blockieren (Firewall dort aus)" && !ausA.Titel.Contains("blockiert"), ausA == null ? "fehlt" : ausA.Titel);
+                    h.Ist("Profil aus + ausgehend Block -> aus-Karte (warn, einschalten) steht daneben", Harness.Einer(ergA, "sicherheit.firewall.aus.2") != null && Harness.Einer(ergA, "sicherheit.firewall.aus.2").Zustand == Zustand.Warn && Harness.Einer(ergA, "sicherheit.firewall.aus.2").Massnahmen.Contains(WartungsToolbox.Kern.Regeln.Sicherheit.MassnahmeFirewall));
+                    if (ausA != null) alleBefunde.Add(ausA);
+                    s.Sicherheit.Firewall.Single(p => p.Profil == 2).An = true;
+                    // Eingehend Allow im selben Profil: die Reset-Kennung haengt an beiden Karten, blockieren nur an der eingehend-Karte.
+                    s.Sicherheit.Firewall.Single(p => p.Profil == 2).Eingehend = 1;
+                    var ergE = h.Pruefen(s);
+                    var ein = Harness.Einer(ergE, "sicherheit.firewall.eingehend.2");
+                    h.Ist("eingehend Allow daneben -> eingehend-Karte mit blockieren + Reset, ausgehend-Karte nur mit Reset",
+                        ein != null && ein.Massnahmen.SequenceEqual(new[] { WartungsToolbox.Kern.Regeln.Sicherheit.MassnahmeEingehendBlockieren, Reset })
+                        && Harness.Einer(ergE, "sicherheit.firewall.ausgehend.2") != null && Harness.Einer(ergE, "sicherheit.firewall.ausgehend.2").Massnahmen.SequenceEqual(new[] { Reset }));
+                    s.Sicherheit.Firewall.Single(p => p.Profil == 2).Eingehend = 0;
+                    // Fremd-Firewall registriert: kein Reset an keiner Karte, der Rat nennt das Programm.
+                    s.Sicherheit.DrittFirewall.Add("Fremd Smart Firewall");
+                    s.Sicherheit.Firewall.Single(p => p.Profil == 4).Eingehend = 1;
+                    var ergF = h.Pruefen(s);
+                    var ausF = Harness.Einer(ergF, "sicherheit.firewall.ausgehend.2");
+                    var einF = Harness.Einer(ergF, "sicherheit.firewall.eingehend.4");
+                    h.Ist("Fremd-Firewall: ausgehend-Befund bleibt bad, aber ohne Kennung, Rat nennt „Fremd Smart Firewall“", ausF != null && ausF.Zustand == Zustand.Bad && ausF.Massnahmen.Count == 0 && (ausF.Rat ?? "").Contains("„Fremd Smart Firewall“"), ausF == null ? "fehlt" : ausF.Rat);
+                    h.Ist("Fremd-Firewall: eingehend-Befund traegt nur blockieren mit Profil 4, keinen Reset, Detail nennt den Grund", einF != null && einF.Massnahmen.SequenceEqual(new[] { WartungsToolbox.Kern.Regeln.Sicherheit.MassnahmeEingehendBlockieren }) && einF.Parameter[WartungsToolbox.Kern.Regeln.Sicherheit.ParamProfil] == "4" && einF.Detail.Any(d => d.Contains("Kein Firewall-Reset")), einF == null ? "fehlt" : string.Join(",", einF.Massnahmen));
+                    h.Ist("Fremd-Firewall: kein Befund im Bereich traegt sicherheit.firewall.zuruecksetzen", !Sicherheit(ergF).Any(b => b.Massnahmen.Contains(Reset)));
+                    if (ausF != null) alleBefunde.Add(ausF);
+                    if (einF != null) alleBefunde.Add(einF);
+                    // Fremd-Firewall und Profil aus: der aus-Zweig ueberspringt das Profil ganz (kein ausgehend-Befund, FremdFirewall-Karte).
+                    s.Sicherheit.Firewall.Single(p => p.Profil == 2).An = false;
+                    var ergFA = h.Pruefen(s);
+                    h.Ist("Fremd-Firewall + Profil 2 aus -> kein ausgehend.2 (wirkt nicht), fremd-Karte statt dessen", Harness.Einer(ergFA, "sicherheit.firewall.ausgehend.2") == null && Harness.Einer(ergFA, "sicherheit.firewall.fremd") != null);
+                }
+            }
+
+            // ---------------------------------------------------------------- (e4) Windows-Firewall-Namen
+            // docs/M4-ENTWURF.md, Abschnitt 10.2: die Namen, unter denen Windows seine eigene Firewall in
+            // SecurityCenter2 FirewallProduct fuehrt, stehen an EINER Stelle (Kern); der Sammler
+            // (DrittFirewall) und der Helfer (FremdFirewall) rufen dasselbe Praedikat. Ein Fremdname
+            // muss false liefern, sonst zaehlte ein echtes Fremdprodukt als Windows und der Reset liefe
+            // neben einer Suite; ein Windows-Name muss true liefern, sonst wuerde die Windows-Firewall
+            // selbst als Fremdprodukt registriert und "Firewall einschalten" verschwaende von der Karte.
+            h.Gruppe("Sicherheit (e4): IstWindowsFirewallName (eine Zeichenmenge fuer Sammler und Helfer)");
+            {
+                var windows = new[]
+                {
+                    "Windows Defender Firewall", "Microsoft Defender Firewall", "Windows-Firewall", "Windows Firewall",
+                    "  Windows Firewall  ", "windows defender firewall", "MICROSOFT DEFENDER FIREWALL", "Windows-Firewall mit erweiterter Sicherheit",
+                };
+                var fremd = new[]
+                {
+                    "Norton 360", "Fremd Smart Firewall", "ESET Firewall", "Kaspersky Internet Security", "ZoneAlarm",
+                    "Defender Windows", "Firewall Windows", "Microsoft Windows Firewall", "Windows", "Microsoft",
+                    "Windows  Firewall", "Windows_Firewall", "McAfee Firewall for Windows Defender",
+                };
+                h.Ist("Grundmenge: 8 Windows-Namen und 13 Fremdnamen", windows.Length == 8 && fremd.Length == 13);
+                foreach (string name in windows)
+                    h.Ist("Windows-Name -> true: „" + name + "“", WartungsToolbox.Kern.Regeln.Sicherheit.IstWindowsFirewallName(name));
+                foreach (string name in fremd)
+                    h.Ist("Fremdname -> false: „" + name + "“", !WartungsToolbox.Kern.Regeln.Sicherheit.IstWindowsFirewallName(name));
+                h.Ist("null -> false", !WartungsToolbox.Kern.Regeln.Sicherheit.IstWindowsFirewallName(null));
+                h.Ist("leer -> false", !WartungsToolbox.Kern.Regeln.Sicherheit.IstWindowsFirewallName(""));
+                h.Ist("nur Leerraum -> false", !WartungsToolbox.Kern.Regeln.Sicherheit.IstWindowsFirewallName("   \t"));
+                // Beziehung zur Regel: was das Praedikat als Fremdname wertet, macht als DrittFirewall-Eintrag
+                // die fremd-Karte; ein Windows-Name gehoert nie in die Liste (der Sammler filtert ihn vorher).
+                var s = h.Bild("gepflanzt-sicherheit-gesund.json");
+                if (Grundmenge(h, s, "gesund"))
+                {
+                    string fremdname = fremd.First(x => !WartungsToolbox.Kern.Regeln.Sicherheit.IstWindowsFirewallName(x));
+                    s.Sicherheit.DrittFirewall.Add(fremdname);
+                    foreach (var p in s.Sicherheit.Firewall) p.An = false;
+                    s.Sicherheit.FirewallGesundheit = Schwellen.VirenschutzGesundheitGut;
+                    var erg = h.Pruefen(s);
+                    var karte = Harness.Einer(erg, "sicherheit.firewall.fremd");
+                    h.Ist("Fremdname als DrittFirewall -> fremd-Karte nennt ihn, kein 'Firewall einschalten'", karte != null && karte.Satz.Contains("„" + fremdname + "“") && Harness.Einer(erg, "sicherheit.firewall.aus") == null, karte == null ? "fehlt" : karte.Satz);
+                    h.Ist("keiner der 8 Windows-Namen steht in der Fremdliste (Sammler filtert ueber das Praedikat)", s.Sicherheit.DrittFirewall.All(x => !WartungsToolbox.Kern.Regeln.Sicherheit.IstWindowsFirewallName(x)));
                 }
             }
 
@@ -808,6 +940,45 @@ namespace WartungsToolbox.Proben
                     h.Ist("kein Befund Virenschutz (weder an noch aus)", Harness.Einer(erg, "sicherheit.virenschutz") == null);
                     h.Ist("Fehlend nennt Schutzstatus und Firewall", ber.Fehlend.Contains("Schutzstatus nicht lesbar") && ber.Fehlend.Contains("Firewall-Status"), string.Join("; ", ber.Fehlend));
                     h.Ist("kein warn/bad-Befund aus Konten/UAC allein macht den Bereich nicht bad", ber.Zustand != Zustand.Bad);
+                }
+            }
+
+            // ---------------------------------------------------------------- Programmordner beschreibbar
+            // Gemessen im PC-Audit vom 30.09.2026: Installation in D:\Tools, Datei und Ordner erbten
+            // "Authentifizierte Benutzer: Aendern", zwei Aufgaben starten die EXE mit hoechsten Rechten.
+            // Wirksamkeit 2026-10-01: "if (n == 0) return;" auf "if (n >= 0) return;" gesetzt -> "warn mit
+            // 2 Eintraegen" rot; zurueck.
+            h.Gruppe("Sicherheit: Programmordner fuer Konten ohne Adminrechte beschreibbar");
+            {
+                var s = h.Bild("gepflanzt-sicherheit-gesund.json");
+                if (Grundmenge(h, s, "gesund"))
+                {
+                    h.Ist("Grundmenge: Feld nicht gelesen (aeltere Aufzeichnung)", s.Sicherheit.ProgrammOrdnerBeschreibbar == null);
+                    var erg0 = h.Pruefen(s);
+                    h.Ist("null ohne Fehlereintrag: kein Befund, keine Fehlend-Zeile", Harness.Einer(erg0, "sicherheit.programmordner") == null && !Harness.Bereich(erg0, B).Fehlend.Any(f => f.Contains("Programmordner")));
+
+                    s.Sicherheit.ProgrammOrdner = @"D:\Tools";
+                    s.Sicherheit.ProgrammOrdnerBeschreibbar = new List<string> { "Ordner: Authentifizierte Benutzer", "Programmdatei: Authentifizierte Benutzer" };
+                    var erg = h.Pruefen(s);
+                    var b = Harness.Einer(erg, "sicherheit.programmordner.beschreibbar");
+                    h.Ist("2 Eintraege -> warn sicherheit.programmordner.beschreibbar", b != null && b.Zustand == Zustand.Warn, b == null ? null : b.Zustand);
+                    h.Ist("Satz nennt den Ordner und 2 Eintraege", b != null && b.Satz.Contains(@"„D:\Tools“") && b.Satz.Contains("2 Einträge"), b == null ? null : b.Satz);
+                    h.Ist("Rat nennt Ausschalten, Neuinstallation und Program Files", b != null && b.Rat.Contains("aus,") && b.Rat.Contains("installieren Sie sie neu") && b.Rat.Contains("Program Files"), b == null ? null : b.Rat);
+                    h.Ist("Detail listet beide Eintraege", b != null && b.Detail.Contains("Ordner: Authentifizierte Benutzer") && b.Detail.Contains("Programmdatei: Authentifizierte Benutzer"));
+                    h.Ist("keine Massnahme (Umzug braucht die Neuinstallation)", b != null && b.Massnahmen.Count == 0);
+                    if (b != null) alleBefunde.Add(b);
+
+                    // Gegenproben: leer -> kein Befund; null mit Fehlereintrag -> Fehlend-Zeile, kein Befund.
+                    s.Sicherheit.ProgrammOrdnerBeschreibbar = new List<string>();
+                    h.Ist("Gegenprobe: leer (Program Files) -> kein Befund", Harness.Einer(h.Pruefen(s), "sicherheit.programmordner") == null);
+                    s.Sicherheit.ProgrammOrdnerBeschreibbar = null;
+                    s.Fehlerliste.Add(new Fehler { Quelle = "datei.programmordner", Art = Fehler.Ausnahme, Text = "UnauthorizedAccessException" });
+                    var erg2 = h.Pruefen(s);
+                    h.Ist("Gegenprobe: null mit Fehlereintrag -> Fehlend 'Schreibrechte am Programmordner', kein Befund", Harness.Einer(erg2, "sicherheit.programmordner") == null && Harness.Bereich(erg2, B).Fehlend.Contains("Schreibrechte am Programmordner"), string.Join("; ", Harness.Bereich(erg2, B).Fehlend));
+                    s.Sicherheit.ProgrammOrdnerBeschreibbar = new List<string> { "Ordner: Jeder" };
+                    s.Fehlerliste.Clear();
+                    var b3 = Harness.Einer(h.Pruefen(s), "sicherheit.programmordner.beschreibbar");
+                    h.Ist("Einzahl: 'erlaubt 1 Eintrag'", b3 != null && b3.Satz.Contains("erlaubt 1 Eintrag"), b3 == null ? null : b3.Satz);
                 }
             }
 

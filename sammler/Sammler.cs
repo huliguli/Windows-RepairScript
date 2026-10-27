@@ -47,6 +47,7 @@ namespace WartungsToolbox.Sammler
             Schritt(s, "System", "system", () => Grundlagen.Erfassen(s));
             Schritt(s, "Geräte", "geraete", () => Geraete.Erfassen(s));
             Schritt(s, "Festplatten", "datentraeger", () => DatentraegerQuelle.Erfassen(s));
+            Schritt(s, "Papierkorb", "speicher", () => Speicherquelle.Erfassen(s));
             Schritt(s, "Ereignisse", "ereignisse", () => Ereignisquelle.Erfassen(s));
             Schritt(s, "Startprogramme", "autostart", () => Autostartquelle.Erfassen(s));
             Schritt(s, "Windows-Updates", "windowsupdate", () => Updatequelle.Erfassen(s));

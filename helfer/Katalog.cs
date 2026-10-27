@@ -41,9 +41,12 @@ namespace WartungsToolbox.Helfer
     /// <summary>
     /// Kennungen -> Massnahme (docs/M2-ENTWURF.md, Abschnitt 3). Der Helfer baut jeden
     /// Schritt aus Kennung und geprueften Parametern SELBST (src/Schritte.cs); File+Args
-    /// von aussen gibt es nicht. Das Verhalten der Tiefenpruefung und der Reparatur ist
-    /// 1:1 aus host/CheckFlow.cs (DeepWorker, FixWorker, LetzteSicherungsnummer) uebernommen,
-    /// das der Werkzeuge aus host/ShellForm.cs (ueber Schritte).
+    /// von aussen gibt es nicht. Hier stehen nur noch die Anmeldungen der M2-Kennungen und der
+    /// Wiederherstellungspunkt (LetzteSicherungsnummer wie host/CheckFlow.cs bis 8.0); die
+    /// Tiefenpruefung, die Reparatur und das Zuruecksetzen auf einen Punkt laufen seit M4 in
+    /// helfer\Massnahmen\System.cs (DISM-API statt des DISM-Werkzeugs, SFC ueber Werkzeuge.Lauf, WMI statt
+    /// PowerShell), die Werkzeuge ueber Schritte (src/Schritte.cs). Die M3- und M4-Massnahmen
+    /// melden sich ueber MassnahmenM3.Alle() an.
     ///
     /// Trockenlauf (kontext.Trocken): Pruefen laeuft, Lesezugriffe (SequenceNumber, Registry-
     /// Suche) laufen, kein Prozess, kein WMI- oder Registry-Schreibzugriff; jede uebersprungene
@@ -52,22 +55,16 @@ namespace WartungsToolbox.Helfer
     /// Ein Problem (ExitCode != 0 ohne IgnoreExit, Zeitgrenze und "nicht gestartet" immer,
     /// fehlgeschlagene Eintraege) meldet die Massnahme ueber den internen Schluessel
     /// Werte["problem"] = "1"; Ausfuehrung macht daraus Exit 1 und entfernt den Schluessel vor
-    /// der Rueckgabe wieder (nach aussen zaehlt PlanErgebnis.Problem). Ausnahme: tiefenpruefung
-    /// und dateien.reparieren liefern einen DISM-/SFC-Fehlercode nur als Wert dism.exit/sfc.exit,
-    /// der Host deutet die Ausgabe wie bisher (siehe Werte()); -1/-2 zaehlen auch dort als Problem.
+    /// der Rueckgabe wieder (nach aussen zaehlt PlanErgebnis.Problem).
     /// </summary>
     public static class Katalog
     {
         /// <summary>Signal zwischen Massnahme und Ausfuehrung, nie Teil des Ergebnisses fuer den Host.</summary>
         public const string ProblemSchluessel = "problem";
 
-        // Zeitgrenzen wie bisher in host/CheckFlow.cs.
-        const int DismScanMs = 20 * 60 * 1000;
-        const int SfcVerifyMs = 30 * 60 * 1000;
-        const int DismRestoreMs = 40 * 60 * 1000;
-        const int SfcScanMs = 40 * 60 * 1000;
+        // Zeitgrenze des Wiederherstellungspunkts wie bisher in host/CheckFlow.cs; die Grenzen fuer
+        // DISM, SFC und die Wiederherstellung stehen seit M4 in helfer\Massnahmen\System.cs.
         const int RestorePointMs = 5 * 60 * 1000;
-        const int RestoreComputerMs = 10 * 60 * 1000;
 
         static readonly List<Massnahme> _alle = Bauen();
 
@@ -142,13 +139,13 @@ namespace WartungsToolbox.Helfer
             {
                 Kennung = "tiefenpruefung", Titel = "Tiefenprüfung der Windows-Dateien", Stufe = 0,
                 Pruefen = s => null,
-                Ausfuehren = Tiefenpruefung,
+                Ausfuehren = SystemMassnahmen.Tiefenpruefung,   // helfer\Massnahmen\System.cs (DISM-API, SFC)
             });
             l.Add(new Massnahme
             {
                 Kennung = "dateien.reparieren", Titel = "Reparatur der Windows-Dateien", Stufe = 3,
                 Pruefen = s => null,
-                Ausfuehren = DateienReparieren,
+                Ausfuehren = SystemMassnahmen.DateienReparieren,   // helfer\Massnahmen\System.cs
             });
             l.Add(new Massnahme
             {
@@ -168,7 +165,7 @@ namespace WartungsToolbox.Helfer
                         ? null
                         : "Die Folgenummer muss eine ganze Zahl größer 0 sein, nicht „" + (s.Wert("folge") ?? "") + "“.";
                 },
-                Ausfuehren = WiederherstellungspunktZurueck,
+                Ausfuehren = SystemMassnahmen.WiederherstellungspunktZurueck,   // helfer\Massnahmen\System.cs (WMI, kein PowerShell)
             });
             l.Add(new Massnahme
             {
@@ -304,55 +301,6 @@ namespace WartungsToolbox.Helfer
             return l;
         }
 
-        // ------------------------------------------------------------------ Tiefenpruefung / Reparatur
-
-        static void Tiefenpruefung(PlanSchritt s, Ausfuehrungskontext k)
-        {
-            string tail;
-            k.Melde(1, 2, "Die Grundbestandteile von Windows werden geprüft");
-            int dism = Werkzeuge.Lauf(k, "DISM.exe", "/Online /Cleanup-Image /ScanHealth", DismScanMs, null, true, out tail);
-            Werte(k, "dism", dism, tail);
-            if (k.IstAbgebrochen) return;
-
-            k.Melde(2, 2, "Die Dateien von Windows werden auf Beschädigungen geprüft");
-            int sfc = Werkzeuge.Lauf(k, "sfc.exe", "/verifyonly", SfcVerifyMs, Encoding.Unicode, true, out tail);
-            Werte(k, "sfc", sfc, tail);
-        }
-
-        static void DateienReparieren(PlanSchritt s, Ausfuehrungskontext k)
-        {
-            string tail;
-            // Sicherungspunkt zuerst (Grundsatz 2). Erfolg wird an der Folgenummer gemessen,
-            // nicht am Rueckgabewert: CreateRestorePoint meldet 0 auch dann, wenn die
-            // 24-Stunden-Drossel nichts anlegt (Widerlegungsrunde). Die Drossel bleibt hier
-            // bewusst stehen, deshalb passt der zweite der drei Saetze.
-            k.Melde(1, 4, "Ein Sicherungspunkt wird angelegt");
-            Wiederherstellungspunkt(k, "Vor der Wartung", false, "die Reparatur läuft ohne Rückweg über einen Punkt");
-            if (k.IstAbgebrochen) return;
-
-            k.Melde(2, 4, "Fehlende Windows-Bausteine werden neu geholt");
-            int dism = Werkzeuge.Lauf(k, "DISM.exe", "/Online /Cleanup-Image /RestoreHealth", DismRestoreMs, null, true, out tail);
-            Werte(k, "dism", dism, tail);
-            if (k.IstAbgebrochen) return;
-
-            k.Melde(3, 4, "Beschädigte Windows-Dateien werden ersetzt");
-            int sfc = Werkzeuge.Lauf(k, "sfc.exe", "/scannow", SfcScanMs, Encoding.Unicode, true, out tail);
-            Werte(k, "sfc", sfc, tail);
-            // Schritt 4 von 4 ("Das Ergebnis wird zusammengestellt") ist die Messung im Host.
-        }
-
-        // Exit-Code und Ausgabe fuer den Host. Bewusst KEIN Problem-Schluessel bei einem
-        // Windows-Exit-Code != 0: wie bisher in CheckFlow entscheidet der Host ueber
-        // EvaluateFiles(dism.ausgabe, sfc.ausgabe), ob die Windows-Dateien in Ordnung sind; ein
-        // DISM-Fehlercode steht in dism.exit/sfc.exit und in der Ausgabe. Nur -1 (nicht gestartet)
-        // und -2 (Zeitgrenze) setzt Werkzeuge.Starten selbst als Problem (Nachtrag B6): der Plan
-        // endet dann mit Exit 1, der Host wertet die Werte trotzdem aus (Exit 0 und 1).
-        static void Werte(Ausfuehrungskontext k, string praefix, int exit, string tail)
-        {
-            k.Werte[praefix + ".exit"] = exit.ToString(CultureInfo.InvariantCulture);
-            k.Werte[praefix + ".ausgabe"] = tail ?? "";
-        }
-
         // ------------------------------------------------------------------ Wiederherstellungspunkt
 
         static void WiederherstellungspunktAnlegen(PlanSchritt s, Ausfuehrungskontext k)
@@ -361,26 +309,6 @@ namespace WartungsToolbox.Helfer
             bool angelegt = Wiederherstellungspunkt(k, beschreibung, true, null);
             // Hier IST der Punkt die Massnahme: ohne neuen Punkt hat sie nichts bewirkt.
             if (!angelegt && !k.Trocken) Problem(k);
-        }
-
-        static void WiederherstellungspunktZurueck(PlanSchritt s, Ausfuehrungskontext k)
-        {
-            int folge;
-            Schritte.GanzeZahl(s.Wert("folge"), 1, int.MaxValue, out folge);
-            // Folgenummer ist eine reine Zahl -> keine Einschleusung moeglich. PowerShell bleibt hier bis M4.
-            // Der catch endet mit exit 1: sonst meldete PowerShell 0, der Plan endete "Fertig",
-            // und die fehlgeschlagene Wiederherstellung stuende nur als Text in der Ausgabe.
-            string cmd =
-                "try { Restore-Computer -RestorePoint " + folge + " -Confirm:$false -EA Stop; 'Wiederherstellung gestartet, der PC startet neu.' } " +
-                "catch { 'Wiederherstellung fehlgeschlagen: ' + $_.Exception.Message; exit 1 }";
-            string tail;
-            int exit = Werkzeuge.Lauf(k, "powershell.exe", "-NoProfile -ExecutionPolicy Bypass -Command \"" + cmd + "\"",
-                                      RestoreComputerMs, null, false, out tail);
-            if (exit != 0)
-            {
-                k.Schreibe("   Windows wurde nicht auf den Stand Nr. " + folge + " zurückgesetzt (Exit " + exit + ").", "bad");
-                Problem(k);
-            }
         }
 
         /// <summary>
@@ -392,7 +320,7 @@ namespace WartungsToolbox.Helfer
         /// SystemRestorePointCreationFrequency auf 0 (Registry, kein PowerShell).
         /// Trockenlauf: nur lesen, nichts anlegen, nichts setzen.
         /// </summary>
-        static bool Wiederherstellungspunkt(Ausfuehrungskontext k, string beschreibung, bool drosselAufheben, string ohneNachsatz)
+        internal static bool Wiederherstellungspunkt(Ausfuehrungskontext k, string beschreibung, bool drosselAufheben, string ohneNachsatz)
         {
             int? vorher = LetzteSicherungsnummer();
             string vorherText = vorher.HasValue ? vorher.Value.ToString(CultureInfo.InvariantCulture) : "";
@@ -713,13 +641,18 @@ namespace WartungsToolbox.Helfer
                 return;
             }
             Scheduler.Delete();
-            Scheduler.Clear();
+            // Die gespeicherte Auswahl (zeitplan.json) haengt an der Sperre Global\WindowsWartung.zeitplan:
+            // false heisst, sie war binnen 5 s nicht frei oder die Datei liess sich nicht schreiben, mode
+            // und time stehen dann weiter darin (src/Scheduler.cs Clear, M4-Entwurf 10.2). Die Aufgabe
+            // selbst ist davon unabhaengig geloescht; der Nutzer erfaehrt es als warn, nicht als Problem.
+            bool geloescht = Scheduler.Clear();
             if (Scheduler.Exists())
             {
                 k.Schreibe("   Die Aufgabe „" + Scheduler.TaskName + "“ besteht nach dem Löschen noch.", "bad");
                 Problem(k);
                 return;
             }
+            if (!geloescht) k.Schreibe("   Die Aufgabe ist gelöscht, die gespeicherte Auswahl ließ sich binnen 5 s nicht löschen; sie erscheint bis zum nächsten Abschalten weiter.", "warn");
             k.Schreibe("   Zeitplan gelöscht: Aufgabe „" + Scheduler.TaskName + "“ ist nicht mehr vorhanden.", "good");
         }
 

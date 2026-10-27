@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
+using System.Text.RegularExpressions;
 using WartungsToolbox.Kern;
 
 namespace WartungsToolbox
@@ -46,6 +47,22 @@ namespace WartungsToolbox
     ///       wie wartung.massnahmen per Objektinitialisierer angemeldet wird (Gegenlesen 18.09.2026:
     ///       eine so eingebaute Kennung blieb der Suite verborgen); die Laufzeitmenge ist genau das,
     ///       was der Helfer kennt.
+    ///   (i) Export-Herkunft (docs/M4-ENTWURF.md 3.2, 8.2 Punkt 4): eine Datei oder ein Ordner, den
+    ///       netsh oder pnputil unter sicherungen\massnahmen\export angelegt hat, gilt erst nach
+    ///       Sicherungsdatei.ExportSchuetzen (Besitzer Administratoren, genau die geschuetzte DACL);
+    ///       ExportOeffnen prueft wie Lesen am Handle (Besitzer, DACL, genau ein Name, kein
+    ///       Reparse-Punkt, Name ohne Pfad, verlangte Endung). Erhoeht (CI) wird das an echten
+    ///       Dateien gemessen (frisch angelegt = abgelehnt, geschuetzt = angenommen, fremder Besitzer,
+    ///       vierter Eintrag, Hardlink, Symlink = abgelehnt); nicht erhoeht daran, dass ExportOrdner
+    ///       wirft. Dazu die Firewall-Sicherung: export nur nach Muster und nur mit vorhandener,
+    ///       geschuetzter Datei (ZurueckSicherheitPruefen), sonst abgelehnt.
+    ///   (j) Rueckweg-Inhalt M4 (8.2 Punkt 4 und Punkt 2): eine Startprogramm-Sicherung unter HKCU
+    ///       mit fremder oder fehlender profilSid wird abgelehnt, mit der eigenen angenommen; die
+    ///       hosts-Sicherung nur mit druckbarem Inhalt bis 256 KB (NUL, Steuerzeichen, zu lang =
+    ///       abgelehnt); die IP-Sicherung nur mit GUID, IPv4-Adressen, Masken, Gateways und DNS je
+    ///       Zeile (IP=evil, 5 Felder, doppelte SettingID = abgelehnt); Firewall eingehend nur mit
+    ///       DefaultInboundAction 0|1 und Profil 1|2|4; Winlogon nur mit beiden Vorwerten ohne
+    ///       Steuerzeichen; Winsock, Update-Reset und Treiber-Neuinstallation haben keinen Rueckweg.
     ///
     /// Uebersetzt wird mit allem ausser host\ (Pipe.cs zieht Messung und Ausfuehrung nach sich),
     /// siehe tests\run-tests.ps1. Ausgabe [ok]/[FEHL] je Teilpruefung, Exit 1 bei mindestens einem Rot.
@@ -55,10 +72,11 @@ namespace WartungsToolbox
         static int fehler = 0;
         static int geprueft = 0;
 
-        // Die Gruppen (a) bis (h) mit ihrem Namen auf der Kommandozeile. Ohne Argument laufen alle
-        // (Probe 7 der Suite); mit Namen nur diese, damit die Suite Sicherungsdatei, Rueckweg-Inhalt
-        // und Kennungen in eigenen Pruefungen zaehlen kann (docs/M3-ENTWURF.md 10.1, Punkte 1, 3 und 4).
-        static readonly string[] Gruppen = { "pipe", "rechte", "uebernahme", "abschluss", "laufid", "sicherung", "rueckweg", "kennungen" };
+        // Die Gruppen (a) bis (j) mit ihrem Namen auf der Kommandozeile. Ohne Argument laufen alle
+        // (Probe 7 der Suite); mit Namen nur diese, damit die Suite Sicherungsdatei, Rueckweg-Inhalt,
+        // Kennungen, Export-Herkunft und den M4-Rueckweg-Inhalt in eigenen Pruefungen zaehlen kann
+        // (docs/M3-ENTWURF.md 10.1, Punkte 1, 3 und 4; docs/M4-ENTWURF.md 8.2, Punkt 4).
+        static readonly string[] Gruppen = { "pipe", "rechte", "uebernahme", "abschluss", "laufid", "sicherung", "rueckweg", "kennungen", "export", "m4rueckweg" };
 
         static void Ist(string was, bool bedingung, string detail)
         {
@@ -94,6 +112,8 @@ namespace WartungsToolbox
                 if (laeuft("sicherung")) PruefeSicherungsdatei(ordner);
                 if (laeuft("rueckweg")) PruefeRueckwegInhalt();
                 if (laeuft("kennungen")) PruefeKennungen(nur.Contains("kennungen"));
+                if (laeuft("export")) PruefeExportHerkunft(ordner);
+                if (laeuft("m4rueckweg")) PruefeRueckwegInhaltM4(ordner);
             }
             catch (Exception ex)
             {
@@ -613,6 +633,363 @@ namespace WartungsToolbox
                     (form ? "" : "Form; ") + (m.Pruefen == null ? "Pruefen fehlt; " : "") + (m.Ausfuehren == null ? "Ausfuehren fehlt; " : "") + (einmalig ? "" : "doppelt"));
                 if (form && listen) Console.WriteLine("         kennung: " + k);
             }
+        }
+
+        // ---- (i) Export-Herkunft: Datei oder Ordner eines Fremdprozesses unter export\ ----------
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool CreateSymbolicLinkW(string lpSymlinkFileName, string lpTargetFileName, uint dwFlags);
+
+        const uint SymlinkOrdner = 1;
+
+        /// <summary>ExportOeffnen muss ablehnen; "" = angenommen, sonst Typ (bei Nicht-ArgumentException in Klammern) und Text.</summary>
+        static string OeffnenAbgelehnt(string name, string endung)
+        {
+            try { using (Helfer.Sicherungsdatei.ExportOeffnen(name, endung)) { } return ""; }
+            catch (ArgumentException ex) { return ex.Message; }
+            catch (Exception ex) { return "(" + ex.GetType().Name + ") " + ex.Message; }
+        }
+
+        /// <summary>ExportSchuetzen muss ablehnen; "" = gelungen, sonst Typ (bei Nicht-InvalidOperationException in Klammern) und Text.</summary>
+        static string SchuetzenAbgelehnt(string pfad)
+        {
+            try { Helfer.Sicherungsdatei.ExportSchuetzen(pfad); return ""; }
+            catch (InvalidOperationException ex) { return ex.Message; }
+            catch (Exception ex) { return "(" + ex.GetType().Name + ") " + ex.Message; }
+        }
+
+        /// <summary>ExportName muss mit ArgumentException enden.</summary>
+        static bool ExportNameWirft(string art, string endung)
+        {
+            try { Helfer.Sicherungsdatei.ExportName(art, endung); return false; }
+            catch (ArgumentException) { return true; }
+            catch (Exception) { return false; }
+        }
+
+        /// <summary>Besitzer, Schutz und Eintraege einer Datei oder eines Ordners als Zeile (fuer Details).</summary>
+        static string RechteKurz(string pfad, bool ordner, out bool gut)
+        {
+            var admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+            var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+            FileSystemSecurity sec = ordner
+                ? (FileSystemSecurity)new DirectoryInfo(pfad).GetAccessControl(AccessControlSections.Owner | AccessControlSections.Access)
+                : File.GetAccessControl(pfad, AccessControlSections.Owner | AccessControlSections.Access);
+            var besitzer = sec.GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
+            int eintraege = 0;
+            string gesehen = "";
+            foreach (FileSystemAccessRule r in sec.GetAccessRules(true, true, typeof(SecurityIdentifier)))
+            {
+                eintraege++;
+                gesehen += r.IdentityReference.Value + ":" + r.FileSystemRights + (r.IsInherited ? " geerbt" : "") + "; ";
+            }
+            gut = besitzer != null && (besitzer == admins || besitzer == system) && sec.AreAccessRulesProtected && eintraege == 3;
+            return (besitzer == null ? "kein Besitzer" : besitzer.Value) + ", geschuetzt=" + sec.AreAccessRulesProtected + ", " + eintraege + " Eintraege: " + gesehen;
+        }
+
+        static void PruefeExportHerkunft(string wurzel)
+        {
+            string ordner = Path.Combine(wurzel, "sicherungen", "massnahmen");
+            Directory.CreateDirectory(ordner);
+            Helfer.Sicherungsdatei.OrdnerFuerProbe = ordner;
+            bool erhoeht = Sammler.Quellen.Rechte.Erhoeht();
+            string eigene;
+            using (WindowsIdentity wi = WindowsIdentity.GetCurrent()) eigene = wi.User.Value;
+            var admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+            Console.WriteLine("         Export-Probe laeuft " + (erhoeht ? "erhoeht" : "nicht erhoeht") + ": " + ordner);
+
+            // Namen: nur [A-Za-z0-9._-], kein Pfad, nicht "." oder "..".
+            Ist("ExportNameGueltig nimmt 20260919-081500-firewall-1a2b.wfw und einen Ordnernamen an",
+                Helfer.Sicherungsdatei.ExportNameGueltig("20260919-081500-firewall-1a2b.wfw") && Helfer.Sicherungsdatei.ExportNameGueltig("20260919-081500-treiber-1a2b"), "");
+            // Gemessen 19.09.2026: "x.wfw\n" (Zeilenumbruch am Ende) nahm ExportNameGueltig an, weil $ im
+            // .NET-Regex auch vor einem Schluss-Zeilenumbruch trifft; seitdem endet das Muster auf \z, und
+            // der Fall steht in der Liste (fuer Sicherungsnamen ebenso, NameGueltig unten).
+            foreach (string name in new[] { "a\\b.wfw", "a/b.wfw", "..", ".", "a b.wfw", "", "..\\hosts", "C:\\Windows\\win.ini", "x\ty.wfw", "x.wfw\n" })
+                Ist("ExportNameGueltig lehnt \"" + name.Replace("\t", "\\t").Replace("\n", "\\n") + "\" ab", !Helfer.Sicherungsdatei.ExportNameGueltig(name), "");
+            Ist("NameGueltig lehnt \"x.json\\n\" ab (Zeilenumbruch am Ende)", !Helfer.Sicherungsdatei.NameGueltig("x.json\n"), "");
+            Ist("NameGueltig nimmt 20260919-081500-netz.dns.zuruecksetzen-1a2b.json an",
+                Helfer.Sicherungsdatei.NameGueltig("20260919-081500-netz.dns.zuruecksetzen-1a2b.json"), "");
+            string nameFw = Helfer.Sicherungsdatei.ExportName("firewall", ".wfw");
+            Ist("ExportName(firewall, .wfw) folgt dem Muster yyyyMMdd-HHmmss-firewall-xxxx.wfw (Vertrag M4 1)",
+                Regex.IsMatch(nameFw, @"^[0-9]{8}-[0-9]{6}-firewall-[0-9a-f]{4}\.wfw$"), nameFw);
+            string nameTr = Helfer.Sicherungsdatei.ExportName("treiber", "");
+            Ist("ExportName(treiber, leer) folgt dem Muster yyyyMMdd-HHmmss-treiber-xxxx (Ordner ohne Endung)",
+                Regex.IsMatch(nameTr, @"^[0-9]{8}-[0-9]{6}-treiber-[0-9a-f]{4}$"), nameTr);
+            Ist("ExportName mit Leerzeichen in der Art wirft ArgumentException", ExportNameWirft("fire wall", ".wfw"), "");
+            Ist("ExportName mit Endung ohne Punkt wirft ArgumentException", ExportNameWirft("firewall", "wfw"), "");
+            Ist("ExportName mit Pfadzeichen in der Endung wirft ArgumentException", ExportNameWirft("firewall", ".w\\f"), "");
+            Ist("ExportOrdnerPfad ist sicherungen\\massnahmen\\export, ohne Anlage",
+                string.Equals(Helfer.Sicherungsdatei.ExportOrdnerPfad(), Path.Combine(ordner, "export"), StringComparison.OrdinalIgnoreCase) && !Directory.Exists(Path.Combine(ordner, "export")),
+                Helfer.Sicherungsdatei.ExportOrdnerPfad() ?? "(null)");
+
+            // Oeffnen und Schuetzen VOR jedem Handle: Name, Endung, Ort; eine fehlende Datei ist FileNotFound.
+            string g = OeffnenAbgelehnt("..\\hosts", ".wfw");
+            Ist("ExportOeffnen lehnt ..\\hosts mit ArgumentException ab", g.Length > 0 && !g.StartsWith("("), g);
+            g = OeffnenAbgelehnt("20260919-081500-firewall-1a2b.txt", ".wfw");
+            Ist("ExportOeffnen lehnt die falsche Endung .txt mit ArgumentException ab", g.Length > 0 && !g.StartsWith("(") && g.Contains(".wfw"), g);
+            g = OeffnenAbgelehnt("20260919-081500-firewall-0000.wfw", ".wfw");
+            Ist("ExportOeffnen einer fehlenden Datei wirft FileNotFoundException", g.StartsWith("(FileNotFoundException)"), g);
+            g = SchuetzenAbgelehnt("..\\hosts");
+            Ist("ExportSchuetzen lehnt ..\\hosts mit InvalidOperationException ab", g.Length > 0 && !g.StartsWith("("), g);
+            g = SchuetzenAbgelehnt("");
+            Ist("ExportSchuetzen ohne Namen wirft InvalidOperationException", g.Length > 0 && !g.StartsWith("("), g);
+            string fremdPfad = Path.Combine(wurzel, "20260919-081500-firewall-1a2b.wfw");
+            File.WriteAllText(fremdPfad, "fremd", new UTF8Encoding(false));
+            g = SchuetzenAbgelehnt(fremdPfad);
+            Ist("ExportSchuetzen lehnt einen vollen Pfad ausserhalb von export\\ ab", g.Length > 0 && !g.StartsWith("(") && g.Contains("liegt nicht unter"), g);
+            g = SchuetzenAbgelehnt(Path.Combine(ordner, "20260919-081500-firewall-1a2b.wfw"));
+            Ist("ExportSchuetzen lehnt eine Datei direkt im Sicherungsordner (nicht unter export\\) ab", g.Length > 0 && !g.StartsWith("("), g);
+
+            // Der Exportordner selbst: erhoeht entsteht er mit Besitzer Administratoren und der
+            // geschuetzten DACL; nicht erhoeht wirft ExportOrdner, und es wird nichts exportiert.
+            string export = null, ordnerFehler = null;
+            try { export = Helfer.Sicherungsdatei.ExportOrdner(); }
+            catch (InvalidOperationException ex) { ordnerFehler = ex.Message; }
+            catch (Exception ex) { ordnerFehler = "(" + ex.GetType().Name + ") " + ex.Message; }
+            if (!erhoeht)
+            {
+                if (export == null)
+                    Ist("nicht erhoeht: ExportOrdner wirft InvalidOperationException (kein Export, nichts geaendert)", ordnerFehler != null && !ordnerFehler.StartsWith("("), ordnerFehler ?? "");
+                else
+                {
+                    string n0 = "20260919-081500-firewall-fff0.wfw";
+                    File.WriteAllText(Path.Combine(export, n0), "nutzer", new UTF8Encoding(false));
+                    Ist("nicht erhoeht: eine Datei des Nutzers unter export\\ wird von ExportOeffnen abgelehnt", OeffnenAbgelehnt(n0, ".wfw").Length > 0, export);
+                }
+                return;
+            }
+
+            // ---- ab hier nur erhoeht (CI-Runner, erhoehte Werkzeug-Shell) ----
+            Ist("erhoeht: ExportOrdner legt sicherungen\\massnahmen\\export an", export != null && Directory.Exists(export) && string.Equals(export, Path.Combine(ordner, "export"), StringComparison.OrdinalIgnoreCase), ordnerFehler ?? export);
+            if (export == null) return;
+            bool gut;
+            string rechte = RechteKurz(export, true, out gut);
+            Ist("erhoeht: der Exportordner gehoert Administratoren oder SYSTEM, Vererbung aus, genau drei Eintraege", gut, rechte);
+            rechte = RechteKurz(ordner, true, out gut);
+            Ist("erhoeht: der Sicherungsordner darueber ist ebenso geschuetzt", gut, rechte);
+            Ist("erhoeht: ein zweiter Aufruf von ExportOrdner liefert denselben Ordner", string.Equals(Helfer.Sicherungsdatei.ExportOrdner(), export, StringComparison.OrdinalIgnoreCase), "");
+
+            // Eine Datei, wie netsh sie anlegt: Besitzer aus dem Token, Rechte geerbt. Sie ist noch
+            // keine Sicherung (die DACL ist nicht genau die geschuetzte); erst ExportSchuetzen macht sie dazu.
+            string name1 = "20260919-081500-firewall-1a2b.wfw";
+            string pfad1 = Path.Combine(export, name1);
+            File.WriteAllText(pfad1, "probe-export", new UTF8Encoding(false));
+            g = OeffnenAbgelehnt(name1, ".wfw");
+            Ist("frisch angelegte Datei (geerbte Rechte, wie von netsh): ExportOeffnen lehnt ab (stammt nicht vom Helfer)", g.Length > 0 && g.Contains("stammt nicht vom Helfer"), g);
+            g = SchuetzenAbgelehnt(name1);
+            Ist("ExportSchuetzen(Name) gelingt", g.Length == 0, g);
+            rechte = RechteKurz(pfad1, false, out gut);
+            Ist("danach: Besitzer Administratoren oder SYSTEM, Vererbung aus, genau drei Eintraege", gut, rechte);
+            Ist("ExportOeffnen nimmt die geschuetzte Datei an", OeffnenAbgelehnt(name1, ".wfw").Length == 0, OeffnenAbgelehnt(name1, ".wfw"));
+            Ist("ExportOeffnen ohne Endungsvorgabe nimmt sie an", OeffnenAbgelehnt(name1, "").Length == 0, "");
+            Ist("ExportOeffnen mit .WFW (Gross/Klein egal) nimmt sie an", OeffnenAbgelehnt(name1, ".WFW").Length == 0, "");
+            g = OeffnenAbgelehnt(name1, ".reg");
+            Ist("ExportOeffnen mit verlangter Endung .reg lehnt sie ab", g.Length > 0 && !g.StartsWith("("), g);
+            Ist("ExportSchuetzen mit vollem Pfad unter export\\ gelingt ebenso (idempotent)", SchuetzenAbgelehnt(pfad1).Length == 0, "");
+            using (FileStream fs = Helfer.Sicherungsdatei.ExportOeffnen(name1, ".wfw"))
+            {
+                string kanonisch = Helfer.Sicherungsdatei.KanonischerPfad(fs);
+                Ist("KanonischerPfad zeigt auf die Datei unter export\\ (fuer netsh advfirewall import)",
+                    kanonisch.EndsWith("\\export\\" + name1, StringComparison.OrdinalIgnoreCase), kanonisch);
+                Ist("der Inhalt kommt aus demselben Handle", new StreamReader(fs).ReadToEnd() == "probe-export", "");
+            }
+
+            // Besitzer auf das eigene Konto: abgelehnt; zurueck: angenommen.
+            FileSecurity wechsel = File.GetAccessControl(pfad1, AccessControlSections.Owner);
+            wechsel.SetOwner(new SecurityIdentifier(eigene));
+            File.SetAccessControl(pfad1, wechsel);
+            g = OeffnenAbgelehnt(name1, ".wfw");
+            Ist("Besitzer auf das eigene Konto gesetzt: ExportOeffnen lehnt ab", g.Contains("stammt nicht vom Helfer"), g);
+            Ist("ExportSchuetzen holt die Datei zurueck (Besitzer wieder Administratoren)", SchuetzenAbgelehnt(name1).Length == 0 && OeffnenAbgelehnt(name1, ".wfw").Length == 0, "");
+            wechsel = File.GetAccessControl(pfad1, AccessControlSections.Owner);
+            var besitzer = wechsel.GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
+            Ist("der Besitzer ist danach Administratoren", besitzer == admins, besitzer == null ? "kein Besitzer" : besitzer.Value);
+
+            // Ein vierter Eintrag (Lesen fuer das eigene Konto): abgelehnt; ExportSchuetzen setzt die DACL neu.
+            var zusatz = new FileSystemAccessRule(new SecurityIdentifier(eigene), FileSystemRights.Read, AccessControlType.Allow);
+            FileSecurity dacl = File.GetAccessControl(pfad1, AccessControlSections.Access);
+            dacl.AddAccessRule(zusatz);
+            File.SetAccessControl(pfad1, dacl);
+            g = OeffnenAbgelehnt(name1, ".wfw");
+            Ist("ein zusaetzlicher Eintrag fuer das eigene Konto: ExportOeffnen lehnt ab", g.Contains("stammt nicht vom Helfer"), g);
+            Ist("ExportSchuetzen setzt genau die geschuetzte DACL wieder, ExportOeffnen nimmt an", SchuetzenAbgelehnt(name1).Length == 0 && OeffnenAbgelehnt(name1, ".wfw").Length == 0, "");
+            rechte = RechteKurz(pfad1, false, out gut);
+            Ist("danach wieder genau drei Eintraege", gut, rechte);
+
+            // Ein zweiter Name (Hardlink): beide Namen abgelehnt, ExportSchuetzen wirft (mehr als ein Name).
+            string linkName = "20260919-081500-firewall-2c3d.wfw";
+            string linkPfad = Path.Combine(export, linkName);
+            bool link = CreateHardLinkW(linkPfad, pfad1, IntPtr.Zero);
+            Ist("Hardlink auf den Export liess sich anlegen (sonst messen die naechsten Zeilen nichts)", link, "Win32-Fehler " + Marshal.GetLastWin32Error());
+            if (link)
+            {
+                string g1 = OeffnenAbgelehnt(name1, ".wfw"), g2 = OeffnenAbgelehnt(linkName, ".wfw");
+                Ist("Hardlink: der Originalname wird abgelehnt (mehr als einen Namen)", g1.Contains("mehr als einen Namen"), g1);
+                Ist("Hardlink: der zweite Name wird abgelehnt", g2.Contains("mehr als einen Namen"), g2);
+                g = SchuetzenAbgelehnt(name1);
+                Ist("Hardlink: ExportSchuetzen wirft InvalidOperationException (Hardlink)", g.Length > 0 && !g.StartsWith("(") && g.Contains("Hardlink"), g);
+                File.Delete(linkPfad);
+                Ist("Hardlink entfernt: ExportOeffnen nimmt die Datei wieder an", OeffnenAbgelehnt(name1, ".wfw").Length == 0, "");
+            }
+
+            // Ein Reparse-Punkt (Symlink auf die geschuetzte Datei): am Pfad abgelehnt, bevor geoeffnet wird.
+            string symName = "20260919-081500-firewall-3e4f.wfw";
+            string symPfad = Path.Combine(export, symName);
+            bool sym = CreateSymbolicLinkW(symPfad, pfad1, 0);
+            Ist("Symlink auf den Export liess sich anlegen (erhoeht: SeCreateSymbolicLinkPrivilege)", sym, "Win32-Fehler " + Marshal.GetLastWin32Error());
+            if (sym)
+            {
+                g = OeffnenAbgelehnt(symName, ".wfw");
+                Ist("Symlink: ExportOeffnen lehnt die Verknuepfung ab", g.Length > 0 && !g.StartsWith("("), g);
+                g = SchuetzenAbgelehnt(symName);
+                Ist("Symlink: ExportSchuetzen wirft InvalidOperationException (Verknuepfung)", g.Length > 0 && !g.StartsWith("(") && g.Contains("Verknüpfung"), g);
+                File.Delete(symPfad);
+            }
+
+            // Ein Ordner-Export (Treiber, pnputil /export-driver): ExportSchuetzen schuetzt den Ordner
+            // samt Inhalt; ein Ordner-Symlink wird abgelehnt.
+            string trPfad = Path.Combine(export, nameTr);
+            Directory.CreateDirectory(trPfad);
+            File.WriteAllText(Path.Combine(trPfad, "oem42.inf"), "[Version]", new UTF8Encoding(false));
+            g = SchuetzenAbgelehnt(nameTr);
+            Ist("Ordner-Export: ExportSchuetzen(Ordnername) gelingt", g.Length == 0, g);
+            rechte = RechteKurz(trPfad, true, out gut);
+            Ist("Ordner-Export: Besitzer Administratoren oder SYSTEM, Vererbung aus, genau drei Eintraege", gut, rechte);
+            string symOrdner = Path.Combine(export, "20260919-081500-treiber-5a6b");
+            bool symDir = CreateSymbolicLinkW(symOrdner, trPfad, SymlinkOrdner);
+            Ist("Ordner-Symlink liess sich anlegen", symDir, "Win32-Fehler " + Marshal.GetLastWin32Error());
+            if (symDir)
+            {
+                g = SchuetzenAbgelehnt("20260919-081500-treiber-5a6b");
+                Ist("Ordner-Symlink: ExportSchuetzen wirft InvalidOperationException (Verknuepfung)", g.Length > 0 && !g.StartsWith("(") && g.Contains("Verknüpfung"), g);
+                Directory.Delete(symOrdner);
+            }
+
+            // Die Firewall-Sicherung (sicherheit.firewall.zuruecksetzen): export nur nach Muster, nur
+            // vorhanden und geschuetzt; der Rueckweg oeffnet dieselbe Datei erneut (ZurueckSicherheitPruefen).
+            const string Fr = "sicherheit.firewall.zuruecksetzen";
+            Abgelehnt(Fr + " mit export=..\\hosts", SicherungAus(Fr, null, new[] { "export", "..\\hosts" }));
+            Abgelehnt(Fr + " mit export=x.wfw (nicht nach Muster)", SicherungAus(Fr, null, new[] { "export", "x.wfw" }));
+            Abgelehnt(Fr + " mit export=20260919-081500-firewall-0000.wfw (Datei fehlt)", SicherungAus(Fr, null, new[] { "export", "20260919-081500-firewall-0000.wfw" }));
+            Abgelehnt(Fr + " ohne export", SicherungAus(Fr, null, new[] { "zustand", "1=an,0,1;2=an,0,1;4=an,0,1" }));
+            Angenommen(Fr + " mit export=" + name1 + " (vorhanden, geschuetzt)", SicherungAus(Fr, null, new[] { "export", name1 }));
+            Angenommen(Fr + " mit export und zustand nach Muster", SicherungAus(Fr, null, new[] { "export", name1, "zustand", "1=an,0,1;2=aus,-,-;4=an,0,1" }));
+            Abgelehnt(Fr + " mit zustand=foo", SicherungAus(Fr, null, new[] { "export", name1, "zustand", "foo" }));
+            File.Delete(pfad1);
+            Abgelehnt(Fr + " mit export=" + name1 + ", nachdem die Datei geloescht ist", SicherungAus(Fr, null, new[] { "export", name1 }));
+        }
+
+        // ---- (j) Rueckweg-Inhalt M4: Profilbindung, hosts, IP-Stack, Firewall eingehend, Winlogon ----
+
+        static void PruefeRueckwegInhaltM4(string wurzel)
+        {
+            // Der Sicherungsordner der Probe (fuer die Firewall-Faelle, die eine Datei suchen).
+            string ordner = Path.Combine(wurzel, "sicherungen", "massnahmen");
+            Directory.CreateDirectory(ordner);
+            Helfer.Sicherungsdatei.OrdnerFuerProbe = ordner;
+
+            // Profilbindung (Vertrag M4 0.4, 3.7): eine HKCU-Sicherung gilt nur im eigenen Konto.
+            const string Auto = "leistung.autostart.deaktivieren";
+            string eigene = Helfer.LeistungMassnahmen.ProfilSidNorm(Helfer.LeistungMassnahmen.EigeneSid());
+            Ist("die eigene SID hat die Form eines Benutzerprofils (S-1-5-21-... oder S-1-12-1-...)", eigene != null, Helfer.LeistungMassnahmen.EigeneSid() ?? "(null)");
+            Abgelehnt(Auto + " HKCU mit fremder profilSid S-1-5-21-1-2-3-1001",
+                SicherungAus(Auto, new[] { "hive", "HKCU", "ort", "Run", "name", "a", "profilSid", "S-1-5-21-1-2-3-1001" }, new[] { "bytes", "020000000000000000000000" }));
+            string grund = Helfer.RueckwegMassnahmen.InhaltPruefen(SicherungAus(Auto, new[] { "hive", "HKCU", "ort", "Run", "name", "a", "profilSid", "S-1-5-21-1-2-3-1001" }, new[] { "bytes", "020000000000000000000000" }));
+            Ist("der Grund ist der feste Satz ProfilFremdeSicherung", grund == Helfer.LeistungMassnahmen.ProfilFremdeSicherung, grund ?? "(angenommen)");
+            Abgelehnt(Auto + " HKCU ohne profilSid",
+                SicherungAus(Auto, new[] { "hive", "HKCU", "ort", "Run", "name", "a" }, new[] { "bytes", "020000000000000000000000" }));
+            Abgelehnt(Auto + " HKCU mit profilSid S-1-5-18 (SYSTEM, kein Profil)",
+                SicherungAus(Auto, new[] { "hive", "HKCU", "ort", "Run", "name", "a", "profilSid", "S-1-5-18" }, new[] { "bytes", "020000000000000000000000" }));
+            Abgelehnt(Auto + " HKCU mit profilSid abc",
+                SicherungAus(Auto, new[] { "hive", "HKCU", "ort", "Run", "name", "a", "profilSid", "abc" }, new[] { "bytes", "020000000000000000000000" }));
+            if (eigene != null)
+            {
+                Angenommen(Auto + " HKCU mit der eigenen profilSid",
+                    SicherungAus(Auto, new[] { "hive", "HKCU", "ort", "Run", "name", "a", "profilSid", eigene }, new[] { "bytes", "020000000000000000000000" }));
+                Angenommen(Auto + " HKCU mit der eigenen profilSid in Kleinschreibung",
+                    SicherungAus(Auto, new[] { "hive", "HKCU", "ort", "Run", "name", "a", "profilSid", eigene.ToLowerInvariant() }, new[] { "bytes", "020000000000000000000000" }));
+            }
+            Angenommen(Auto + " HKLM ohne profilSid (maschinenweit, keine Bindung)",
+                SicherungAus(Auto, new[] { "hive", "HKLM", "ort", "Run", "name", "a" }, new[] { "bytes", "020000000000000000000000" }));
+
+            // hosts (Vertrag M4 3.3): inhalt bis 256 KB, druckbare Zeichen, Tabulator und Zeilenumbrueche.
+            const string Ho = "netz.hosts.bereinigen";
+            Angenommen(Ho + " mit gewoehnlichem Inhalt (CRLF, Tabulator, Kommentar)",
+                SicherungAus(Ho, null, new[] { "inhalt", "# Copyright (c) 1993-2009 Microsoft Corp.\r\n127.0.0.1\tlocalhost\r\n0.0.0.0 windowsupdate.microsoft.com\r\n" }));
+            Angenommen(Ho + " mit leerem Inhalt (die Datei war leer)", SicherungAus(Ho, null, new[] { "inhalt", "" }));
+            Angenommen(Ho + " mit Inhalt von genau 262144 Zeichen", SicherungAus(Ho, null, new[] { "inhalt", new string('a', 262144) }));
+            Abgelehnt(Ho + " mit Inhalt von 262145 Zeichen (mehr als 256 KB)", SicherungAus(Ho, null, new[] { "inhalt", new string('a', 262145) }));
+            Abgelehnt(Ho + " mit NUL im Inhalt", SicherungAus(Ho, null, new[] { "inhalt", "127.0.0.1 localhost\0evil" }));
+            Abgelehnt(Ho + " mit Steuerzeichen U+0001 im Inhalt", SicherungAus(Ho, null, new[] { "inhalt", "127.0.0.1 localhost\u0001" }));
+            Abgelehnt(Ho + " mit Escape U+001B im Inhalt", SicherungAus(Ho, null, new[] { "inhalt", "\u001b[31m127.0.0.1 localhost" }));
+            Abgelehnt(Ho + " ohne inhalt", SicherungAus(Ho, null, new[] { "x", "1" }));
+            Ist("ZurueckNetzPruefen lehnt NUL im hosts-Inhalt ab",
+                Helfer.MassnahmenM3.ZurueckNetzPruefen(SicherungAus(Ho, null, new[] { "inhalt", "a\0b" })) != null, "");
+            Ist("ZurueckNetzBekannt kennt netz.hosts.bereinigen und netz.ip.zuruecksetzen, nicht netz.winsock.zuruecksetzen",
+                Helfer.MassnahmenM3.ZurueckNetzBekannt(Ho) && Helfer.MassnahmenM3.ZurueckNetzBekannt("netz.ip.zuruecksetzen") && !Helfer.MassnahmenM3.ZurueckNetzBekannt("netz.winsock.zuruecksetzen"), "");
+
+            // IP-Stack (Vertrag M4 3.3): je Zeile SettingID|Beschreibung|IP;IP|Maske;Maske|Gateway|DNS, alles IPv4.
+            const string Ip = "netz.ip.zuruecksetzen";
+            const string Guid1 = "{3C49F2BC-A43A-4295-9CE6-E8BA3F74FCAD}", Guid2 = "{7D2B5F10-0C1E-4E0F-9B4D-1A2B3C4D5E6F}";
+            string gueltig = Guid1 + "|Ethernet|192.168.1.20|255.255.255.0|192.168.1.1|192.168.1.1;8.8.8.8";
+            Angenommen(Ip + " mit einem festen Adapter", SicherungAus(Ip, null, new[] { "adapter", gueltig }));
+            Angenommen(Ip + " mit zwei Adressen und zwei Masken, ohne Gateway und DNS", SicherungAus(Ip, null, new[] { "adapter", Guid1 + "|Ethernet|192.168.1.20;192.168.1.21|255.255.255.0;255.255.255.0||" }));
+            Angenommen(Ip + " mit leerem adapter (kein fester Adapter)", SicherungAus(Ip, null, new[] { "adapter", "" }));
+            Angenommen(Ip + " mit zwei Zeilen (LF)", SicherungAus(Ip, null, new[] { "adapter", gueltig + "\n" + Guid2 + "|WLAN|10.0.0.5|255.0.0.0||" }));
+            Abgelehnt(Ip + " mit IP=evil", SicherungAus(Ip, null, new[] { "adapter", Guid1 + "|Ethernet|evil|255.255.255.0||" }));
+            Abgelehnt(Ip + " mit Maske 255.255.255", SicherungAus(Ip, null, new[] { "adapter", Guid1 + "|Ethernet|192.168.1.20|255.255.255||" }));
+            Abgelehnt(Ip + " mit Gateway fe80::1 (IPv6)", SicherungAus(Ip, null, new[] { "adapter", Guid1 + "|Ethernet|192.168.1.20|255.255.255.0|fe80::1|" }));
+            Abgelehnt(Ip + " mit DNS 8.8.8.8;evil", SicherungAus(Ip, null, new[] { "adapter", Guid1 + "|Ethernet|192.168.1.20|255.255.255.0||8.8.8.8;evil" }));
+            Abgelehnt(Ip + " mit 5 statt 6 Feldern", SicherungAus(Ip, null, new[] { "adapter", Guid1 + "|Ethernet|192.168.1.20|255.255.255.0|" }));
+            Abgelehnt(Ip + " mit 2 Adressen und 1 Maske", SicherungAus(Ip, null, new[] { "adapter", Guid1 + "|Ethernet|192.168.1.20;192.168.1.21|255.255.255.0||" }));
+            Abgelehnt(Ip + " ohne Adresse", SicherungAus(Ip, null, new[] { "adapter", Guid1 + "|Ethernet||||" }));
+            Abgelehnt(Ip + " mit SettingID ohne Klammern", SicherungAus(Ip, null, new[] { "adapter", "3C49F2BC-A43A-4295-9CE6-E8BA3F74FCAD|Ethernet|192.168.1.20|255.255.255.0||" }));
+            Abgelehnt(Ip + " mit derselben SettingID in 2 Zeilen", SicherungAus(Ip, null, new[] { "adapter", gueltig + "\n" + gueltig }));
+            Abgelehnt(Ip + " mit 11 DNS-Eintraegen", SicherungAus(Ip, null, new[] { "adapter", Guid1 + "|Ethernet|192.168.1.20|255.255.255.0||1.1.1.1;1.1.1.2;1.1.1.3;1.1.1.4;1.1.1.5;1.1.1.6;1.1.1.7;1.1.1.8;1.1.1.9;1.1.1.10;1.1.1.11" }));
+            var viele = new StringBuilder();
+            for (int i = 0; i < 65; i++) viele.Append("{" + i.ToString("D8") + "-0000-0000-0000-000000000000}|A|10.0.0.1|255.0.0.0||\n");
+            Abgelehnt(Ip + " mit 65 Zeilen (mehr als 64 Adapter)", SicherungAus(Ip, null, new[] { "adapter", viele.ToString() }));
+            Abgelehnt(Ip + " ohne adapter", SicherungAus(Ip, null, new[] { "x", "1" }));
+            Ist("ZurueckNetzPruefen lehnt IP=evil ab",
+                Helfer.MassnahmenM3.ZurueckNetzPruefen(SicherungAus(Ip, null, new[] { "adapter", Guid1 + "|Ethernet|evil|255.255.255.0||" })) != null, "");
+
+            // Firewall eingehend (Vertrag M4 3.3): DefaultInboundAction 0|1, Profil 1|2|4.
+            const string Fe = "sicherheit.firewall.eingehend.blockieren";
+            Angenommen(Fe + " mit DefaultInboundAction=1, Profil=2", SicherungAus(Fe, new[] { "profil", "2" }, new[] { "DefaultInboundAction", "1", "Profil", "2" }));
+            Angenommen(Fe + " mit DefaultInboundAction=0, Profil=4", SicherungAus(Fe, new[] { "profil", "4" }, new[] { "DefaultInboundAction", "0", "Profil", "4" }));
+            Abgelehnt(Fe + " mit DefaultInboundAction=2", SicherungAus(Fe, new[] { "profil", "2" }, new[] { "DefaultInboundAction", "2", "Profil", "2" }));
+            Abgelehnt(Fe + " mit Profil=3", SicherungAus(Fe, new[] { "profil", "3" }, new[] { "DefaultInboundAction", "1", "Profil", "3" }));
+            Abgelehnt(Fe + " ohne DefaultInboundAction", SicherungAus(Fe, new[] { "profil", "2" }, new[] { "Profil", "2" }));
+            Ist("ZurueckSicherheitPruefen lehnt DefaultInboundAction=2 ab",
+                Helfer.MassnahmenM3.ZurueckSicherheitPruefen(SicherungAus(Fe, new[] { "profil", "2" }, new[] { "DefaultInboundAction", "2", "Profil", "2" })) != null, "");
+            Ist("ZurueckSicherheitBekannt kennt eingehend.blockieren und firewall.zuruecksetzen",
+                Helfer.MassnahmenM3.ZurueckSicherheitBekannt(Fe) && Helfer.MassnahmenM3.ZurueckSicherheitBekannt("sicherheit.firewall.zuruecksetzen"), "");
+
+            // Winlogon (Vertrag M4 3.3): beide Vorwerte, je hoechstens 260 Zeichen ohne Steuerzeichen; leer = war nicht gesetzt.
+            const string Wl = "leistung.winlogon.zuruecksetzen";
+            Angenommen(Wl + " mit Shell=explorer.exe und Userinit mit Anhang", SicherungAus(Wl, null, new[] { "Shell", "explorer.exe", "Userinit", "C:\\WINDOWS\\system32\\userinit.exe,C:\\Users\\Public\\x.exe," }));
+            Angenommen(Wl + " mit leeren Vorwerten (waren nicht gesetzt)", SicherungAus(Wl, null, new[] { "Shell", "", "Userinit", "" }));
+            Angenommen(Wl + " mit ShellArt=expand", SicherungAus(Wl, null, new[] { "Shell", "%SystemRoot%\\explorer.exe", "Userinit", "", "ShellArt", "expand" }));
+            Abgelehnt(Wl + " ohne Userinit", SicherungAus(Wl, null, new[] { "Shell", "explorer.exe" }));
+            Abgelehnt(Wl + " mit Steuerzeichen in Shell", SicherungAus(Wl, null, new[] { "Shell", "explorer.exe\u0001", "Userinit", "" }));
+            Abgelehnt(Wl + " mit Shell von 261 Zeichen", SicherungAus(Wl, null, new[] { "Shell", new string('x', 261), "Userinit", "" }));
+            Abgelehnt(Wl + " mit ShellArt=binary", SicherungAus(Wl, null, new[] { "Shell", "explorer.exe", "Userinit", "", "ShellArt", "binary" }));
+            Ist("ZurueckLeistungPruefen nimmt zwei leere Vorwerte an",
+                Helfer.MassnahmenM3.ZurueckLeistungPruefen(SicherungAus(Wl, null, new[] { "Shell", "", "Userinit", "" })) == null, "");
+            Ist("ZurueckLeistungBekannt kennt nur leistung.winlogon.zuruecksetzen",
+                Helfer.MassnahmenM3.ZurueckLeistungBekannt(Wl) && !Helfer.MassnahmenM3.ZurueckLeistungBekannt(Auto), "");
+
+            // Kennungen ohne Rueckweg (Vertrag M4 3.3): die Datei ist Beleg, der Plan wird abgelehnt.
+            Abgelehnt("netz.winsock.zuruecksetzen (kein Rueckweg, Beleg)", SicherungAus("netz.winsock.zuruecksetzen", null, new[] { "katalog", "Winsock Catalog Provider Entry" }));
+            Abgelehnt("update.zuruecksetzen (kein Rueckweg, Beleg)", SicherungAus("update.zuruecksetzen", null, new[] { "verborgen", "4340b239-4b90-4305-9c2e-6a24dfcb6757|1|Hewlett-Packard - USB - 1.0.0.0" }));
+            grund = Helfer.RueckwegMassnahmen.InhaltPruefen(SicherungAus("geraet.treiber.neu", new[] { "instanzId", "PCI\\VEN_8086&DEV_125C\\4&3B2C1D0E&0&00E4" }, new[] { "inf", "oem42.inf", "export", "20260919-081500-treiber-1a2b", "name", "Probe", "code", "10" }));
+            Ist("geraet.treiber.neu: kein Rueckweg, der Grund nennt den Exportordner und pnputil /add-driver",
+                grund != null && grund.Contains("20260919-081500-treiber-1a2b") && grund.Contains("pnputil /add-driver oem42.inf"), grund ?? "(angenommen)");
+            grund = Helfer.RueckwegMassnahmen.InhaltPruefen(SicherungAus("geraet.treiber.neu", new[] { "instanzId", "PCI\\VEN_8086&DEV_125C\\4&3B2C1D0E&0&00E4" }, new[] { "inf", "usbhub3.inf", "export", "", "name", "Probe", "code", "10" }));
+            Ist("geraet.treiber.neu ohne Export (Windows-Treiber): kein Rueckweg, der Grund nennt den Treiberspeicher",
+                grund != null && grund.Contains("Treiberspeicher"), grund ?? "(angenommen)");
+            // Mehrzeilige Vorwerte nur dort, wo der Vertrag sie vorsieht: ein Zeilenumbruch in Shell bleibt verboten.
+            Abgelehnt(Wl + " mit Zeilenumbruch in Shell", SicherungAus(Wl, null, new[] { "Shell", "explorer.exe\ncalc.exe", "Userinit", "" }));
         }
 
         static string Kurz(string sid)

@@ -32,11 +32,13 @@ namespace WartungsToolbox.Proben
             DnsTimeoutDhcp(h, alle);
             DnsZuruecksetzenGrenzen(h, alle);
             NcsiPortal(h, alle);
+            StackGestoert(h, alle);
             Gesund(h, alle);
             GatewayTot(h, alle);
             RouteNichtGelesen(h, alle);
             OnLink(h, alle);
             KeinAdapterUp(h, alle);
+            KurzUnterbrochen(h, alle);
             ProxyLokal(h, alle);
             ProxyFirma(h, alle);
             KeineDaten(h);
@@ -153,14 +155,16 @@ namespace WartungsToolbox.Proben
             {
                 var b = treffer[0];
                 h.Ist("Zustand bad", b.Zustand == Zustand.Bad, b.Zustand);
-                h.Ist("Massnahme netz.hosts.pruefen", b.Massnahmen.Contains(NetzRegel.MHostsPruefen));
-                // Befund des Gegenlesens M3 (18.09.2026): die Detailzeile versprach eine Sicherung
-                // hosts.<datum>.bak "durch die Massnahme"; netz.hosts.pruefen ist Rat (Stufe 3), und im
-                // Helfer schreibt nichts eine hosts-Kopie. Die Zeile darf keine Sicherung durch das
-                // Programm zusagen; die Kopie legt der Nutzer selbst an (wie der Rat derselben Karte sagt).
-                h.Ist("Detail verspricht keine Sicherung durch die Massnahme (kein 'legt vorher ... an')", !b.Detail.Any(d => d.Contains("legt vorher") || d.Contains("die Maßnahme zeigt")), string.Join(" | ", b.Detail));
-                h.Ist("Detail sagt, dass der Nutzer die Kopie selbst anlegt und das Programm keine schreibt", b.Detail.Any(d => d.Contains("selbst an") && d.Contains("schreibt keine")), string.Join(" | ", b.Detail));
-                h.Ist("Rat verlangt die Kopie vom Nutzer ('vorher eine Kopie sichern')", (b.Rat ?? "").Contains("vorher eine Kopie sichern"), b.Rat);
+                // M4 (docs/M4-ENTWURF.md, Abschnitt 2.4): netz.hosts.bereinigen (Stufe 2, werte-merken) statt
+                // des Rats netz.hosts.pruefen; die Detailzeile und der Rat sagen jetzt, dass Beheben die Kopie
+                // in der Sicherung ablegt und Rueckgaengig sie zurueckschreibt. Bis M3 stand dort das Gegenteil
+                // (der Nutzer legt die Kopie selbst an), und die Probe sicherte genau das.
+                h.Ist("Massnahme netz.hosts.bereinigen, nicht mehr netz.hosts.pruefen", b.Massnahmen.Contains(NetzRegel.MHostsBereinigen) && !b.Massnahmen.Contains("netz.hosts.pruefen"), string.Join(",", b.Massnahmen));
+                h.Ist("genau eine Kennung, keine Parameter", b.Massnahmen.Count == 1 && b.Parameter.Count == 0);
+                h.Ist("Detail sagt: Beheben legt vorher eine Kopie in der Sicherung ab, Rückgängig schreibt sie zurück", b.Detail.Any(d => d.Contains("legt vorher eine Kopie") && d.Contains("Sicherung") && d.Contains("Rückgängig schreibt sie zurück")), string.Join(" | ", b.Detail));
+                h.Ist("Detail nennt die Zahl der Zeilen, die Beheben entfernt", b.Detail.Any(d => d.Contains("entfernt genau die 2 Zeilen")), string.Join(" | ", b.Detail));
+                h.Ist("kein Detail verlangt die Kopie vom Nutzer (kein 'selbst an', kein 'schreibt keine')", !b.Detail.Any(d => d.Contains("selbst an") || d.Contains("schreibt keine")), string.Join(" | ", b.Detail));
+                h.Ist("Rat nennt Beheben mit Kopie in der Sicherung und den Virenscan", (b.Rat ?? "").Contains("Beheben legt vorher eine Kopie") && b.Rat.Contains("Virenscan"), b.Rat);
                 h.Ist("Detail nennt windowsupdate.microsoft.com", b.Detail.Any(d => d.Contains("windowsupdate.microsoft.com")));
                 h.Ist("Detail nennt download.eset.com (AV-Hersteller)", b.Detail.Any(d => d.Contains("download.eset.com")));
                 h.Ist("Detail nennt KEINE Docker-Zeile", !b.Detail.Any(d => d.Contains("docker.internal")));
@@ -175,6 +179,49 @@ namespace WartungsToolbox.Proben
             }
             h.Ist("Bereich Netz ist bad", Harness.Bereich(erg, Bereich.Netz).Zustand == Zustand.Bad);
             alle.AddRange(Harness.Befunde(erg, Bereich.Netz));
+
+            // Gegenprobe M4: DataBasePath weicht vom Standard ab => der Helfer lehnt ab, also keine Kennung
+            // (die Karte bleibt bad, der Rat nennt den Pfad und die Handarbeit).
+            s.Netz.HostsPfadAbweichend = "D:\\etc";
+            var ab = Harness.Einer(h.Pruefen(s), "netz.hosts.umleitung");
+            h.Ist("Gegenprobe: hostsPfadAbweichend gesetzt => Befund bad ohne Kennung, Rat nennt den Pfad", ab != null && ab.Zustand == Zustand.Bad && ab.Massnahmen.Count == 0 && (ab.Rat ?? "").Contains("D:\\etc") && ab.Rat.Contains("von Hand"), ab == null ? "null" : ab.Rat);
+            h.Ist("Gegenprobe: Detail nennt den abweichenden DataBasePath", ab != null && ab.Detail.Any(d => d.Contains("DataBasePath") && d.Contains("D:\\etc")));
+            if (ab != null) alle.Add(ab);
+            s.Netz.HostsPfadAbweichend = null;
+
+            // Gegenprobe M4 (Nachzug Phase 2): DataBasePath liess sich nicht lesen (Fehlerliste
+            // registry.netz.hostspfad), das Feld bleibt null. Null heisst dann "nicht gemessen", nicht
+            // "Standardort": keine Kennung (der Helfer lehnte sonst erst nach dem UAC-Dialog ab), die
+            // Karte bleibt bad, der Rat nennt die Handarbeit ohne Pfad, Fehlend nennt den Ort.
+            // Wirksamkeitsprobe 18.09.2026: "&& hostsPfadGelesen" aus der Weiche in Netz.cs entfernt
+            // -> 4 der Zusicherungen unten rot (Kennung, Rat, Detail, Beheben-Versprechen); zurueckgebaut.
+            h.Ist("Grundmenge: hostsPfadAbweichend null, kein Fehlereintrag registry.netz.hostspfad", s.Netz.HostsPfadAbweichend == null && !s.Fehlerliste.Any(f => f.Quelle == "registry.netz.hostspfad"));
+            s.Fehlerliste.Add(new Fehler { Quelle = "registry.netz.hostspfad", Art = Fehler.Ausnahme, Text = "gepflanzt" });
+            var ergNg = h.Pruefen(s);
+            var ng = Harness.Einer(ergNg, "netz.hosts.umleitung");
+            h.Ist("Gegenprobe: Fehlereintrag registry.netz.hostspfad => Befund bad ohne Kennung", ng != null && ng.Zustand == Zustand.Bad && ng.Massnahmen.Count == 0, ng == null ? "null" : string.Join(",", ng.Massnahmen));
+            h.Ist("Gegenprobe: Rat nennt die Handarbeit und die Bedingung DataBasePath, keinen Pfad „(leer)“ oder „D:\\etc“", ng != null && (ng.Rat ?? "").Contains("von Hand") && ng.Rat.Contains("DataBasePath") && !ng.Rat.Contains("(leer)") && !ng.Rat.Contains("D:\\etc"), ng == null ? "null" : ng.Rat);
+            h.Ist("Gegenprobe: Detail sagt „nicht prüfbar“ und „keine Maßnahme“", ng != null && ng.Detail.Any(d => d.Contains("nicht prüfbar") && d.Contains("keine Maßnahme")), ng == null ? "null" : string.Join(" | ", ng.Detail));
+            h.Ist("Gegenprobe: kein Detail verspricht Beheben mit Kopie in der Sicherung", ng != null && !ng.Detail.Any(d => d.Contains("Beheben entfernt")), ng == null ? "null" : string.Join(" | ", ng.Detail));
+            h.Ist("Gegenprobe: Fehlend nennt „Ort der hosts-Datei (DataBasePath)“", Harness.Bereich(ergNg, Bereich.Netz).Fehlend.Any(f => f.Contains("Ort der hosts-Datei") && f.Contains("DataBasePath")), string.Join("; ", Harness.Bereich(ergNg, Bereich.Netz).Fehlend));
+            h.Ist("Gegenprobe: die Treffer selbst bleiben (Messwert 2)", ng != null && ng.Messwert != null && ng.Messwert.Wert == "2", ng == null || ng.Messwert == null ? "null" : ng.Messwert.Wert);
+            if (ng != null) alle.Add(ng);
+            s.Fehlerliste.RemoveAll(f => f.Quelle == "registry.netz.hostspfad");
+            // Rueckweg: ohne den Eintrag haengt die Kennung wieder (die Probe misst die Weiche, nicht den Zufall).
+            var zurueck = Harness.Einer(h.Pruefen(s), "netz.hosts.umleitung");
+            h.Ist("Gegenprobe: Fehlereintrag entfernt => Kennung netz.hosts.bereinigen wieder da, Fehlend ohne den Ort", zurueck != null && zurueck.Massnahmen.Contains(NetzRegel.MHostsBereinigen) && !Harness.Bereich(h.Pruefen(s), Bereich.Netz).Fehlend.Any(f => f.Contains("Ort der hosts-Datei")), zurueck == null ? "null" : string.Join(",", zurueck.Massnahmen));
+
+            // Das Praedikat, das Regel und Helfer teilen (docs/M4-ENTWURF.md, Abschnitt 2.4): dieselben
+            // Treffer wie HostsKlasse, die Zieladresse entscheidet nicht, ohne Host nie wahr.
+            h.Ist("HostsZeileUmleitung: 0.0.0.0 windowsupdate.microsoft.com => ja", NetzRegel.HostsZeileUmleitung("0.0.0.0", "windowsupdate.microsoft.com"));
+            h.Ist("HostsZeileUmleitung: 127.0.0.1 download.eset.com => ja (AV-Hersteller)", NetzRegel.HostsZeileUmleitung("127.0.0.1", "download.eset.com"));
+            h.Ist("HostsZeileUmleitung: 203.0.113.9 www.msftconnecttest.com => ja (fremde Zieladresse zaehlt ebenso)", NetzRegel.HostsZeileUmleitung("203.0.113.9", "www.msftconnecttest.com"));
+            h.Ist("HostsZeileUmleitung: 127.0.0.1 host.docker.internal => nein (harmlos)", !NetzRegel.HostsZeileUmleitung("127.0.0.1", "host.docker.internal"));
+            h.Ist("HostsZeileUmleitung: 0.0.0.0 fake-download.example => nein (Fremdsperrliste)", !NetzRegel.HostsZeileUmleitung("0.0.0.0", "fake-download.example"));
+            h.Ist("HostsZeileUmleitung: 0.0.0.0 go.microsoft.com => nein (kein update/download)", !NetzRegel.HostsZeileUmleitung("0.0.0.0", "go.microsoft.com"));
+            h.Ist("HostsZeileUmleitung: ohne Host => nein", !NetzRegel.HostsZeileUmleitung("0.0.0.0", null) && !NetzRegel.HostsZeileUmleitung("0.0.0.0", "") && !NetzRegel.HostsZeileUmleitung("0.0.0.0", "   "));
+            h.Ist("HostsZeileUmleitung: ohne IP, aber geschuetzter Host => ja (die Zeile gehoert in keine hosts-Datei)", NetzRegel.HostsZeileUmleitung(null, "wdcp.microsoft.com"));
+            h.Ist("HostsZeileUmleitung deckt sich mit HostsKlasse fuer jede Zeile des Bilds", s.Netz.Hosts.All(x => NetzRegel.HostsZeileUmleitung(x.Ip, x.Host) == (NetzRegel.HostsKlasse(x.Host) != null)));
 
             // Klassenzuordnung direkt.
             h.Ist("HostsKlasse: download.windowsupdate.com => update", NetzRegel.HostsKlasse("download.windowsupdate.com") == NetzRegel.HostsUpdate);
@@ -214,7 +261,7 @@ namespace WartungsToolbox.Proben
                 h.Ist("Satz nennt die Folge „Kein Internet“", b.Satz.Contains("„Kein Internet“"), b.Satz);
                 h.Ist("Satz behauptet nicht, Update oder Virenschutz erreichten ihre Server nicht", !b.Satz.Contains("Server nicht"), b.Satz);
                 h.Ist("Satz nennt Adresse und Ziel", b.Satz.Contains("www.msftconnecttest.com") && b.Satz.Contains("0.0.0.0"), b.Satz);
-                h.Ist("Massnahme netz.hosts.pruefen bleibt", b.Massnahmen.Contains(NetzRegel.MHostsPruefen));
+                h.Ist("Massnahme netz.hosts.bereinigen auch bei nur einer NCSI-Zeile", b.Massnahmen.Contains(NetzRegel.MHostsBereinigen));
                 h.Ist("Messwert = 1", b.Messwert != null && b.Messwert.Wert == "1");
             }
             h.Ist("Bereich Netz ist bad", Harness.Bereich(erg, Bereich.Netz).Zustand == Zustand.Bad);
@@ -468,6 +515,112 @@ namespace WartungsToolbox.Proben
             alle.AddRange(warns);
         }
 
+        // ------------------------------------------------------------ (e2) Netzwerk-Stack gestoert (M4)
+
+        // Gepflanzt im Speicher aus dem gesunden Bild (docs/M4-ENTWURF.md, Abschnitt 2.4): Router und
+        // Namensdienst antworten, Testseite und TCP 443 scheitern, kein Proxy => genau ein bad
+        // netz.stack.gestoert mit Winsock- und IP-Reset in dieser Reihenfolge, kein netz.sonde.ncsi,
+        // kein netz.verbindung. Jede der vier Sonden und jede der drei Proxy-Sichten ist eine Gegenprobe.
+        static void StackGestoert(Harness h, List<Befund> alle)
+        {
+            h.Gruppe("Netz (e2): Router ja, DNS ja, Testseite nein, TCP 443 nein, kein Proxy => bad netz.stack.gestoert mit Winsock- und IP-Reset");
+            var s = h.Bild("gepflanzt-netz-gesund.json"); if (s == null) return;
+            h.Ist("Grundmenge: ein physischer Adapter Up, kein Proxy (WinINet aus, WinHTTP 1, keine PAC)",
+                  s.Netz.Adapter.Any(a => a.Physisch && a.OpStatus == 1) && s.Netz.Proxy.WinInetAktiv == false && s.Netz.Proxy.WinHttpTyp == 1 && string.IsNullOrEmpty(s.Netz.Proxy.PacUrl));
+            var so = s.Netz.Sonden;
+            so.Gateway = true; so.Dns = true; so.DnsFehler = null; so.Ncsi = false; so.NcsiInhaltStimmt = false; so.Tcp443 = false;
+            h.Ist("Grundmenge: StackGestoert(Sonden, Proxy) ist wahr", NetzRegel.StackGestoert(so, s.Netz.Proxy));
+            var erg = h.Pruefen(s);
+            var st = Harness.AlleMit(erg, "netz.stack.gestoert").ToList();
+            h.Ist("genau ein Befund netz.stack.gestoert", st.Count == 1, st.Count.ToString());
+            if (st.Count == 1)
+            {
+                var b = st[0];
+                h.Ist("Zustand bad", b.Zustand == Zustand.Bad, b.Zustand);
+                h.Ist("Kennungen: erst netz.winsock.zuruecksetzen, dann netz.ip.zuruecksetzen, sonst nichts", b.Massnahmen.Count == 2 && b.Massnahmen[0] == NetzRegel.MWinsockZuruecksetzen && b.Massnahmen[1] == NetzRegel.MIpZuruecksetzen, string.Join(",", b.Massnahmen));
+                h.Ist("Konstanten tragen die Katalog-Kennungen", NetzRegel.MWinsockZuruecksetzen == "netz.winsock.zuruecksetzen" && NetzRegel.MIpZuruecksetzen == "netz.ip.zuruecksetzen" && NetzRegel.MHostsBereinigen == "netz.hosts.bereinigen");
+                h.Ist("keine Parameter", b.Parameter.Count == 0, string.Join(",", b.Parameter.Keys));
+                h.Ist("Satz nennt die vier Sonden (Router, Namensdienst, Testseite, TCP 443) und den fehlenden Proxy", b.Satz.Contains("Router antwortet") && b.Satz.Contains("Namensdienst antwortet") && b.Satz.Contains("Internet-Testseite") && b.Satz.Contains("TCP 443") && b.Satz.Contains("kein Proxy"), b.Satz);
+                h.Ist("Rat: erst Winsock (Neustart), bleibt es, den IP-Stack", b.Rat != null && b.Rat.StartsWith("Erst Winsock") && b.Rat.Contains("Neustart") && b.Rat.Contains("bleibt es") && b.Rat.Contains("IP-Stack"), b.Rat);
+                h.Ist("Messwert 2 von 4 Sonden, Schwelle 4", b.Messwert != null && b.Messwert.Wert == "2" && b.Messwert.Schwelle == "4");
+                h.Ist("Detail nennt alle vier Sonden mit Ergebnis und den Proxy-Stand", b.Detail.Any(d => d.Contains("Router ja") && d.Contains("Namensdienst ja") && d.Contains("Testseite nein") && d.Contains("TCP 443 nein")) && b.Detail.Any(d => d.StartsWith("Proxy:") && d.Contains("AutoConfigURL keine")), string.Join(" | ", b.Detail));
+            }
+            h.Ist("kein netz.sonde.ncsi daneben (eine Ursache, ein Befund)", Harness.Einer(erg, "netz.sonde.ncsi") == null);
+            h.Ist("kein netz.verbindung (ok) daneben", Harness.Einer(erg, "netz.verbindung") == null);
+            h.Ist("kein netz.sonde.gateway, kein netz.sonde.dns (beide antworten)", Harness.Einer(erg, "netz.sonde.gateway") == null && Harness.Einer(erg, "netz.sonde.dns") == null);
+            h.Ist("Bereich Netz ist bad", Harness.Bereich(erg, Bereich.Netz).Zustand == Zustand.Bad);
+            alle.AddRange(Harness.Befunde(erg, Bereich.Netz));
+
+            // Gegenprobe: WinINet-Proxy aktiv => der Proxy erklaert die versagenden Sonden: netz.sonde.ncsi
+            // warn statt stack.gestoert (nur ohne Proxy, docs/M4-ENTWURF.md, Abschnitt 2.4).
+            s.Netz.Proxy.WinInetAktiv = true; s.Netz.Proxy.WinInetServer = "proxy.firma.example:3128";
+            erg = h.Pruefen(s);
+            h.Ist("Gegenprobe WinINet-Proxy aktiv: kein netz.stack.gestoert, stattdessen netz.sonde.ncsi warn", Harness.Einer(erg, "netz.stack.gestoert") == null && Harness.Einer(erg, "netz.sonde.ncsi") != null && Harness.Einer(erg, "netz.sonde.ncsi").Zustand == Zustand.Warn);
+            h.Ist("Gegenprobe WinINet-Proxy: StackGestoert ist falsch", !NetzRegel.StackGestoert(so, s.Netz.Proxy));
+            s.Netz.Proxy.WinInetAktiv = false; s.Netz.Proxy.WinInetServer = null;
+            // Gegenprobe: WinHTTP-Proxy (Typ 3, Windows Update) => ebenfalls kein stack.gestoert.
+            s.Netz.Proxy.WinHttpTyp = 3; s.Netz.Proxy.WinHttpServer = "proxy.firma.example:3128";
+            erg = h.Pruefen(s);
+            h.Ist("Gegenprobe WinHTTP-Typ 3: kein netz.stack.gestoert", Harness.Einer(erg, "netz.stack.gestoert") == null && !NetzRegel.StackGestoert(so, s.Netz.Proxy));
+            s.Netz.Proxy.WinHttpTyp = 1; s.Netz.Proxy.WinHttpServer = null;
+            // Gegenprobe: Proxy-Skript (PAC) => kein stack.gestoert.
+            s.Netz.Proxy.PacUrl = "http://wpad.example/wpad.dat";
+            erg = h.Pruefen(s);
+            h.Ist("Gegenprobe AutoConfigURL: kein netz.stack.gestoert", Harness.Einer(erg, "netz.stack.gestoert") == null && !NetzRegel.StackGestoert(so, s.Netz.Proxy));
+            s.Netz.Proxy.PacUrl = null;
+            // Gegenprobe (Nachbesserung 18.09.2026): "kein Proxy" muss GELESEN sein. WinHTTP-Typ null ist
+            // kein Beleg fuer "kein Proxy", also kein bad-Urteil: es bleibt bei netz.sonde.ncsi (warn),
+            // dessen Satz nichts ueber den Proxy behauptet.
+            s.Netz.Proxy.WinHttpTyp = null;
+            erg = h.Pruefen(s);
+            h.Ist("Gegenprobe WinHTTP-Typ null: kein netz.stack.gestoert, netz.sonde.ncsi warn", Harness.Einer(erg, "netz.stack.gestoert") == null && Harness.Einer(erg, "netz.sonde.ncsi") != null && Harness.Einer(erg, "netz.sonde.ncsi").Zustand == Zustand.Warn && !NetzRegel.StackGestoert(so, s.Netz.Proxy));
+            s.Netz.Proxy.WinHttpTyp = 1;
+            // Gegenprobe: WinINet nicht gelesen (null) ebenso.
+            s.Netz.Proxy.WinInetAktiv = null;
+            erg = h.Pruefen(s);
+            h.Ist("Gegenprobe WinINet null: kein netz.stack.gestoert, netz.sonde.ncsi warn", Harness.Einer(erg, "netz.stack.gestoert") == null && Harness.Einer(erg, "netz.sonde.ncsi") != null && !NetzRegel.StackGestoert(so, s.Netz.Proxy));
+            s.Netz.Proxy.WinInetAktiv = false;
+            h.Ist("StackGestoert(so, null) ist falsch (kein Proxy-Objekt, nichts belegt)", !NetzRegel.StackGestoert(so, null));
+            h.Ist("StackGestoert(so, new Proxy()) ist falsch (alle Felder null, nichts belegt)", !NetzRegel.StackGestoert(so, new Proxy()));
+            // Gegenprobe: die Proxy-Quelle meldet einen Fehler (Felder wie gelesen, aber Fehlereintrag):
+            // der Zweig ist gesperrt, weil Daten ODER Fehlereintrag gilt, nie beides.
+            s.Fehlerliste.Add(new Fehler { Quelle = "api.netz.proxy.winhttp", Art = Fehler.Ausnahme, Text = "Win32Exception: WinHttpGetDefaultProxyConfiguration" });
+            erg = h.Pruefen(s);
+            h.Ist("Gegenprobe Fehlereintrag api.netz.proxy.*: kein netz.stack.gestoert, netz.sonde.ncsi warn, 'Proxy-Einstellungen' unter fehlend", Harness.Einer(erg, "netz.stack.gestoert") == null && Harness.Einer(erg, "netz.sonde.ncsi") != null && Harness.Bereich(erg, Bereich.Netz).Fehlend.Contains("Proxy-Einstellungen"), string.Join(" | ", Harness.Bereich(erg, Bereich.Netz).Fehlend));
+            s.Fehlerliste.RemoveAll(f => f.Quelle == "api.netz.proxy.winhttp");
+            erg = h.Pruefen(s);
+            h.Ist("Grundmenge wiederhergestellt: netz.stack.gestoert wieder da", Harness.Einer(erg, "netz.stack.gestoert") != null);
+
+            // Gegenproben je Sonde: fehlt eine der vier Bedingungen, gibt es keinen stack.gestoert.
+            so.Tcp443 = true;
+            erg = h.Pruefen(s);
+            h.Ist("Gegenprobe TCP 443 ja: kein netz.stack.gestoert, netz.sonde.ncsi warn", Harness.Einer(erg, "netz.stack.gestoert") == null && Harness.Einer(erg, "netz.sonde.ncsi") != null);
+            so.Tcp443 = null;
+            erg = h.Pruefen(s);
+            h.Ist("Gegenprobe TCP 443 nicht gemessen: kein netz.stack.gestoert (null ist kein Beleg)", Harness.Einer(erg, "netz.stack.gestoert") == null);
+            so.Tcp443 = false;
+            so.Gateway = null;
+            erg = h.Pruefen(s);
+            h.Ist("Gegenprobe Router nicht gemessen: kein netz.stack.gestoert", Harness.Einer(erg, "netz.stack.gestoert") == null);
+            so.Gateway = false;
+            erg = h.Pruefen(s);
+            h.Ist("Gegenprobe Router nein: netz.sonde.gateway bad, kein netz.stack.gestoert", Harness.Einer(erg, "netz.stack.gestoert") == null && Harness.Einer(erg, "netz.sonde.gateway") != null);
+            so.Gateway = true;
+            so.Dns = false; so.DnsFehler = "timeout";
+            erg = h.Pruefen(s);
+            h.Ist("Gegenprobe DNS timeout: netz.sonde.dns bad, kein netz.stack.gestoert", Harness.Einer(erg, "netz.stack.gestoert") == null && Harness.Einer(erg, "netz.sonde.dns") != null);
+            so.Dns = true; so.DnsFehler = null;
+            so.Ncsi = true; so.NcsiInhaltStimmt = true;
+            erg = h.Pruefen(s);
+            h.Ist("Gegenprobe Testseite ja (TCP 443 weiter nein): kein netz.stack.gestoert, netz.verbindung ok", Harness.Einer(erg, "netz.stack.gestoert") == null && Harness.Einer(erg, "netz.verbindung") != null);
+            so.Ncsi = false; so.NcsiInhaltStimmt = false;
+            // Gegenprobe: kein physischer Adapter Up => Stufe 1 meldet, der Stack nicht.
+            foreach (var a in s.Netz.Adapter.Where(a => a.Physisch)) a.OpStatus = 2;
+            erg = h.Pruefen(s);
+            h.Ist("Gegenprobe kein Adapter Up: netz.verbindung.keine, kein netz.stack.gestoert", Harness.Einer(erg, "netz.stack.gestoert") == null && Harness.Einer(erg, "netz.verbindung.keine") != null);
+            h.Ist("StackGestoert(null, null) ist falsch", !NetzRegel.StackGestoert(null, null));
+        }
+
         // ------------------------------------------------------------ (f) alles gesund
 
         // Wirksamkeitsprobe 12.09.2026: Zusammenfassung an "e.Befunde.Any(b => b.IstProblem)"
@@ -664,7 +817,16 @@ namespace WartungsToolbox.Proben
             h.Ist("Folgestufen schweigen: kein netz.apipa (WLAN ist Down)", Harness.Einer(erg, "netz.apipa.") == null);
             h.Ist("Folgestufen schweigen: kein netz.gateway.fehlt", Harness.Einer(erg, "netz.gateway.fehlt") == null);
             h.Ist("genau ein Problem im Bereich", Harness.Befunde(erg, Bereich.Netz).Count(b => b.IstProblem) == 1);
+            h.Ist("ohne Nachmessung (aeltere Aufzeichnung) keine Nachmess-Zeile", k != null && !k.Detail.Any(d => d.Contains("erneut gemessen")));
             alle.AddRange(Harness.Befunde(erg, Bereich.Netz));
+
+            // Nachmessung (seit 01.10.2026): der Sammler hat 10 s nachgemessen und weiter nichts gefunden.
+            // Wirksamkeit 2026-10-01: die Detailzeile im bad-Zweig entfernt -> diese Zusicherung rot; zurueck.
+            s.Netz.NachgemessenMs = 10040;
+            k = Harness.Einer(h.Pruefen(s), "netz.verbindung.keine");
+            h.Ist("Nachmessung ohne Erfolg: bad bleibt, Detail 'Nach 10 Sekunden erneut gemessen'", k != null && k.Zustand == Zustand.Bad && k.Detail.Any(d => d.StartsWith("Nach 10 Sekunden erneut gemessen")), k == null ? null : string.Join(" | ", k.Detail));
+            h.Ist("Nachmessung ohne Erfolg: kein netz.verbindung.kurzweg daneben", Harness.Einer(h.Pruefen(s), "netz.verbindung.kurzweg") == null);
+            s.Netz.NachgemessenMs = null;
 
             // Gegenprobe: Testseite antwortet trotzdem (VPN, Tethering) => ok-Info statt bad.
             s.Netz.Sonden.Ncsi = true; s.Netz.Sonden.NcsiInhaltStimmt = true;
@@ -792,6 +954,35 @@ namespace WartungsToolbox.Proben
 
         // Wirksamkeitsprobe 12.09.2026: DatenVorhanden fest auf true gesetzt -> "Bereich unknown"
         // wurde rot; zurueckgebaut.
+        // ------------------------------------------------------------ Verbindung nur kurz weg
+
+        // Gemessen im PC-Audit vom 30.09.2026: der Link riss bei der Anmeldung 3 s ab, genau waehrend
+        // des Pruefens, und v8.2 meldete "Keine Netzwerkverbindung" (bad). Seit 01.10.2026 misst der
+        // Sammler nach; steht dann ein Anschluss Up, ist das ein ok-Hinweis.
+        // Wirksamkeit 2026-10-01: "else if (n.NachgemessenMs.HasValue)" auf "else if (false)" gesetzt ->
+        // "netz.verbindung.kurzweg ok" rot; zurueck.
+        static void KurzUnterbrochen(Harness h, List<Befund> alle)
+        {
+            h.Gruppe("Netz: erste Messung ohne Anschluss, Nachmessung mit Anschluss => ok 'Verbindung war kurz unterbrochen'");
+            var s = h.Bild("gepflanzt-netz-gesund.json"); if (s == null) return;
+            int physisch = s.Netz.Adapter.Count(a => a.Physisch);
+            h.Ist("Grundmenge: ein physischer Anschluss Up, Nachmessung nicht gesetzt", s.Netz.Adapter.Any(a => a.Physisch && a.OpStatus == 1) && !s.Netz.NachgemessenMs.HasValue);
+            h.Ist("Grundmenge: ohne Nachmessung kein netz.verbindung.kurzweg", Harness.Einer(h.Pruefen(s), "netz.verbindung.kurzweg") == null);
+
+            s.Netz.NachgemessenMs = 2960;
+            var erg = h.Pruefen(s);
+            var k = Harness.Einer(erg, "netz.verbindung.kurzweg");
+            h.Ist("Nachmessung erfolgreich: netz.verbindung.kurzweg ok, kein Problem", k != null && k.Zustand == Zustand.Ok && !k.IstProblem, k == null ? null : k.Zustand);
+            h.Ist("Satz nennt die Zahl der Anschluesse und 'nach 3 Sekunden'", k != null && k.Satz.Contains("keiner der " + physisch + " ") && k.Satz.Contains("nach 3 Sekunden"), k == null ? null : k.Satz);
+            h.Ist("kein netz.verbindung.keine daneben", Harness.Einer(erg, "netz.verbindung.keine") == null);
+            h.Ist("Messwert und Quelle gesetzt", k != null && k.Messwert != null && !string.IsNullOrEmpty(k.Quelle));
+            alle.AddRange(Harness.Befunde(erg, Bereich.Netz).Where(b => b.Schluessel == "netz.verbindung.kurzweg"));
+
+            s.Netz.NachgemessenMs = 400;
+            k = Harness.Einer(h.Pruefen(s), "netz.verbindung.kurzweg");
+            h.Ist("unter einer Sekunde: 'nach 1 Sekunde' (Einzahl, nie 0)", k != null && k.Satz.Contains("nach 1 Sekunde ") , k == null ? null : k.Satz);
+        }
+
         static void KeineDaten(Harness h)
         {
             h.Gruppe("Netz: ohne Adapter-Daten ist der Bereich unknown, nie ok und nie bad");

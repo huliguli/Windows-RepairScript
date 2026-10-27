@@ -128,6 +128,55 @@ namespace WartungsToolbox.Sammler.Quellen
                 z.SchattenUnbegrenzt = unbegrenzt ? true : (maxBekannt ? (bool?)false : null);
                 z.SchattenMax = unbegrenzt || !maxBekannt ? (long?)null : max;
             });
+
+            // Zeitpunktwiederherstellung (Point-in-time restore): eigene VSS-Kopien ohne Verfasser, die
+            // SystemRestore nicht auflistet. Microsoft Learn "Point-in-time restore for Windows" (Stand
+            // 2026-06-23): Punkte alle 24 h, hoechstens 72 h alt, gemeinsamer VSS-Speicher mit der
+            // Systemwiederherstellung, Wiederherstellung aus WinRE.
+            Sammler.NurErhoeht(s, "wmi.shadowcopy", () =>
+            {
+                string laufwerk = (Environment.GetEnvironmentVariable("SystemDrive") ?? "C:").TrimEnd('\\');
+                string volumeId = null;
+                foreach (var v in Wmi.Abfrage(Cimv2, "SELECT DeviceID, DriveLetter FROM Win32_Volume"))
+                    if (string.Equals(Wmi.Str(v, "DriveLetter"), laufwerk, StringComparison.OrdinalIgnoreCase)) volumeId = Wmi.Str(v, "DeviceID");
+                var zeiten = new List<string>();
+                foreach (var mo in Wmi.Abfrage(Cimv2, "SELECT InstallDate, VolumeName, ClientAccessible, NoWriters, Persistent FROM Win32_ShadowCopy", 10000))
+                {
+                    // Die Punkte der Systemwiederherstellung tragen Verfasser (NoWriters false): die stehen schon in Punkte.
+                    if (Wmi.Wahr(mo, "ClientAccessible") != true || Wmi.Wahr(mo, "NoWriters") != true || Wmi.Wahr(mo, "Persistent") != true) continue;
+                    // Nur das Windows-Laufwerk; ohne gelesene Volume-ID wird nicht gefiltert (lieber mitzaehlen als stumm verlieren).
+                    if (volumeId != null && !string.Equals(Wmi.Str(mo, "VolumeName"), volumeId, StringComparison.OrdinalIgnoreCase)) continue;
+                    zeiten.Add(Wmi.ZeitUtc(mo, "InstallDate"));
+                }
+                z.ZeitpunkteUtc = zeiten;
+            });
+
+            // Die Aufgabe belegt, dass die Kopien ohne Verfasser zur Zeitpunktwiederherstellung gehoeren
+            // (und nicht zu einer fremden Sicherungssoftware). Fehlt sie, meldet GetTask 0x80070002.
+            Sammler.Versuch(s, "com.aufgabe.pitr", () =>
+            {
+                Type t = Type.GetTypeFromProgID("Schedule.Service", false);
+                if (t == null) { Sammler.Fehler(s, "com.aufgabe.pitr", Fehler.Fehlt, "Schedule.Service ist nicht registriert"); return; }
+                object svc = Activator.CreateInstance(t), ordner = null, aufgabe = null;
+                try
+                {
+                    Autostartquelle.Com.Aufruf(svc, "Connect", Type.Missing, Type.Missing, Type.Missing, Type.Missing);
+                    try
+                    {
+                        ordner = Autostartquelle.Com.Aufruf(svc, "GetFolder", @"\Microsoft\Windows\Setup");
+                        aufgabe = Autostartquelle.Com.Aufruf(ordner, "GetTask", "PITRTask");
+                        z.ZeitpunktAktiv = Convert.ToBoolean(Autostartquelle.Com.Wert(aufgabe, "Enabled"), CultureInfo.InvariantCulture);
+                    }
+                    catch (System.Runtime.InteropServices.COMException ex) when (ex.ErrorCode == unchecked((int)0x80070002) || ex.ErrorCode == unchecked((int)0x80070003))
+                    {
+                        z.ZeitpunktAktiv = false;   // Ordner oder Aufgabe gibt es nicht: Funktion nicht vorhanden
+                    }
+                }
+                finally
+                {
+                    Autostartquelle.Com.Frei(aufgabe); Autostartquelle.Com.Frei(ordner); Autostartquelle.Com.Frei(svc);
+                }
+            });
         }
 
         /// <summary>MaxSpace ueber long.MaxValue (in der Praxis nur UNBOUNDED = 2^64 - 1) heisst "ohne Obergrenze".</summary>

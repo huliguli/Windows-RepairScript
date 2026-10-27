@@ -14,6 +14,7 @@ namespace WartungsToolbox.Kern.Regeln
         public const double PlatzBadPct = 10;
         public const double PlatzBadGb = 10;
         public const double PlatzWarnPct = 20;
+        public const long PapierkorbWarnBytes = 1L << 30;  // Wahl (M4-Entwurf 2.4): ab 1 GB im Papierkorb ein warn-Befund mit speicher.papierkorb.leeren, darunter nur die Zahl
 
         // Datentraeger
         public const int WearWarn = 80;            // v7: Verschleiss ab 80 % ist eine Vorwarnung
@@ -22,6 +23,7 @@ namespace WartungsToolbox.Kern.Regeln
         public const int DiskEreignisseTage = 30;  // Wahl
         public const int DiskEreignisseWarn = 1;   // Wahl: ein 7/11/51/153 in 30 Tagen
         public const int ResetEreignisseWarn = 3;  // Wahl: drei 129 (Reset) in 30 Tagen
+        public const int SchattenVerlustTage = 30; // Wahl: Fenster fuer Volsnap 25/33/36; aeltere Verluste sind fuer den naechsten Rueckweg ohne Belang
 
         // Stabilitaet
         public const int EreignisTage = 90;         // Wahl (Konzept 3.3: "nur die abonnierten IDs, 90 Tage"); Modell und Sammler nehmen diesen Wert

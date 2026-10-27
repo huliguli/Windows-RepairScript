@@ -115,7 +115,10 @@ namespace WartungsToolbox
         /// --auto-Prozess im Hintergrund (Mutex, GeplanteWartungLaeuft in CheckFlow). Bis 8.1
         /// fehlte der Hintergrundlauf: ohne verbundenen Helfer gibt die App den Termin an
         /// --auto zurück, der Host war frei, und „Aufräumen“ mit „temp“ oder „updates“ lief
-        /// neben DISM RestoreHealth (B14). grund ist der Satz für scanError; null, wenn frei.
+        /// neben DISM RestoreHealth (B14). Seit 8.3 zählt auch das Update (UpdateLaeuft,
+        /// ShellForm): sein Dateitausch läuft als Plan über dieselbe Helfer-Pipe, ein
+        /// Entfernen daneben bekäme „beschäftigt“ statt einer Vormerkung (Prüfung der
+        /// Phase 2). grund ist der Satz für scanError; null, wenn frei.
         /// </summary>
         bool WartungLaeuft(string was, out string grund)
         {
@@ -123,6 +126,8 @@ namespace WartungsToolbox
                 grund = "Es läuft gerade eine Wartung. Bitte warten Sie, bis sie fertig ist.";
             else if (GeplanteWartungLaeuft())
                 grund = "Die geplante Wartung läuft gerade im Hintergrund.";
+            else if (UpdateLaeuft)
+                grund = "Das Update läuft gerade; bis es fertig ist, startet kein Aufräumen.";
             else
             {
                 grund = null;

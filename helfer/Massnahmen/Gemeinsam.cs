@@ -104,6 +104,16 @@ namespace WartungsToolbox.Helfer
     /// Ordners uebernimmt der Helfer mit SeTakeOwnershipPrivilege (nur fuer diesen Block
     /// eingeschaltet), erst der Besitzer, dann die DACL.
     ///
+    /// Exporte (M4-Entwurf 3.2): netsh und pnputil legen ihre Dateien und Ordner unter
+    /// sicherungen\massnahmen\export\ selbst an. ExportOrdner legt diesen Unterordner an und
+    /// schuetzt ihn wie den Elternordner; ExportSchuetzen setzt danach Besitzer Administratoren
+    /// und genau die geschuetzte DACL auf das, was der Fremdprozess angelegt hat (scheitert das,
+    /// gilt die Sicherung als nicht angelegt, und die Massnahme bricht VOR dem Eingriff ab);
+    /// ExportOeffnen oeffnet eine Exportdatei fuer den Rueckweg nach denselben Regeln wie Lesen
+    /// (Name, Ort, kein Reparse-Punkt, Herkunft am Handle) und laesst das Handle offen, damit
+    /// netsh advfirewall import den kanonischen Pfad liest, waehrend die Datei nicht getauscht
+    /// werden kann. HerkunftPruefen ist dafuer die eine Funktion fuer JSON und Export.
+    ///
     /// Trockenlauf: Schreiben schreibt nichts, meldet "(trocken) Sicherung ..." und liefert null.
     /// </summary>
     public static class Sicherungsdatei
@@ -111,8 +121,19 @@ namespace WartungsToolbox.Helfer
         /// <summary>Werte-Schluessel fuer den Host: Pfad der geschriebenen Sicherungsdatei.</summary>
         public const string DateiSchluessel = "sicherung.datei";
 
+        /// <summary>Name des Export-Unterordners unter dem Sicherungsordner (Vertrag M4 1 und 3.2).</summary>
+        public const string ExportUnterordner = "export";
+
         /// <summary>Dateiname einer Sicherung, wie ihn die Kennung rueckweg annimmt (Vertrag Abschnitt 1).</summary>
-        static readonly Regex NameRx = new Regex(@"^[A-Za-z0-9._-]+\.json$", RegexOptions.Compiled);
+        // \z statt $: $ trifft in .NET auch vor einem abschliessenden Zeilenumbruch, ein Name mit
+        // Zeilenumbruch am Ende waere sonst gueltig (gemessen 19.09.2026, T1); \z verlangt das echte Ende.
+        static readonly Regex NameRx = new Regex(@"^[A-Za-z0-9._-]+\.json\z", RegexOptions.Compiled);
+
+        /// <summary>Name eines Exports (Datei oder Ordner) direkt unter export\: kein Pfad, keine Leerzeichen.</summary>
+        static readonly Regex ExportNameRx = new Regex(@"^[A-Za-z0-9._-]+\z", RegexOptions.Compiled);
+
+        /// <summary>Art eines Exports im Dateinamen (firewall, treiber): nur Kleinbuchstaben.</summary>
+        static readonly Regex ExportArtRx = new Regex(@"^[a-z]+$", RegexOptions.Compiled);
 
         /// <summary>Kennung einer Massnahme, wie sie in den Dateinamen darf (dieselbe Menge wie Auto.cs).</summary>
         static readonly Regex KennungRx = new Regex(@"^[a-z0-9.]+$", RegexOptions.Compiled);
@@ -304,6 +325,189 @@ namespace WartungsToolbox.Helfer
             catch (Exception ex) { AppLog.Warn("Sicherungsordner nicht geschützt: " + ex.Message); }
         }
 
+        // ------------------------------------------------------------------ Export (Vertrag M4 3.2)
+
+        /// <summary>
+        /// Der Pfad des Export-Unterordners OHNE Anlage und ohne Pruefung (fuer Meldungen und fuer
+        /// den Ort einer Exportdatei); null, wenn der Sicherungsordner hinter einer Abzweigung liegt.
+        /// </summary>
+        public static string ExportOrdnerPfad()
+        {
+            string ordner = Ordner();
+            return ordner == null ? null : Path.Combine(ordner, ExportUnterordner);
+        }
+
+        /// <summary>
+        /// Legt sicherungen\massnahmen\export an (den Elternordner mit, beide gleich mit der
+        /// geschuetzten DACL), bringt beide in Helferbesitz und prueft am Handle, dass keine
+        /// Abzweigung im Spiel ist (OrdnerSchuetzen). Rueckgabe: der Pfad, an den netsh oder
+        /// pnputil schreiben. Wirft InvalidOperationException, wenn Anlegen, Besitz oder DACL
+        /// scheitern (nicht erhoeht, Abzweigung): dann wird nichts exportiert und nichts geaendert.
+        /// Trockenlauf: der Aufrufer ruft diese Funktion nicht (kein Ordner entsteht trocken).
+        /// </summary>
+        public static string ExportOrdner()
+        {
+            string ordner = Ordner();
+            if (ordner == null)
+                throw new InvalidOperationException("Der Sicherungsordner " + OrdnerPfad()
+                    + " liegt hinter einer Verknüpfung auf einen anderen Ort oder ist nicht prüfbar; es wird nichts exportiert und nichts geändert.");
+            string export = Path.Combine(ordner, ExportUnterordner);
+            bool geaendert;
+            // Erst der Elternordner (er haelt waehrend der Anlage des Unterordners die Eltern fest),
+            // dann der Unterordner selbst; beide Handles werden danach freigegeben, denn der
+            // Fremdprozess schreibt ueber den Pfad, und der Elternordner ist nach dem Schutz fuer
+            // Benutzer weder loeschbar noch umbenennbar (nur Lesen und Ausfuehren).
+            using (OrdnerSchuetzen(ordner, true, out geaendert))
+            {
+                if (geaendert) AppLog.Info("Sicherungsordner " + ordner + " geschützt (Besitzer Administratoren, Benutzer nur Lesen).");
+                using (OrdnerSchuetzen(export, true, out geaendert)) { }
+                if (geaendert) AppLog.Info("Exportordner " + export + " geschützt (Besitzer Administratoren, Benutzer nur Lesen).");
+            }
+            return export;
+        }
+
+        /// <summary>
+        /// Name fuer einen neuen Export: yyyyMMdd-HHmmss-&lt;art&gt;-&lt;4hex&gt;&lt;endung&gt; (Vertrag M4 1:
+        /// firewall → .wfw; treiber → Ordner ohne Endung). art nur Kleinbuchstaben, endung leer
+        /// oder ".xyz"; sonst ArgumentException. Der Name im JSON ist immer nur dieser Name, nie ein Pfad.
+        /// </summary>
+        public static string ExportName(string art, string endung)
+        {
+            if (string.IsNullOrEmpty(art) || art.Length > 20 || !ExportArtRx.IsMatch(art))
+                throw new ArgumentException("Die Export-Art „" + Massnahmenbau.Kurz(art) + "“ taugt nicht als Dateiname (erlaubt: Kleinbuchstaben, höchstens 20 Zeichen).");
+            endung = endung ?? "";
+            if (endung.Length > 0 && (endung.Length > 8 || endung[0] != '.' || !ExportNameRx.IsMatch(endung.Substring(1))))
+                throw new ArgumentException("Die Export-Endung „" + Massnahmenbau.Kurz(endung) + "“ ist keine Dateiendung.");
+            return DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + "-" + art + "-" + Guid.NewGuid().ToString("N").Substring(0, 4) + endung;
+        }
+
+        /// <summary>true, wenn name ein Exportname ohne Pfadbestandteile ist ([A-Za-z0-9._-]+, hoechstens 200 Zeichen).</summary>
+        public static bool ExportNameGueltig(string name)
+        {
+            return !string.IsNullOrEmpty(name) && name.Length <= 200 && ExportNameRx.IsMatch(name)
+                && name != "." && name != "..";
+        }
+
+        /// <summary>
+        /// Setzt Besitzer Administratoren und genau die geschuetzte DACL (Vererbung aus) auf eine
+        /// Datei oder einen Ordner, den ein Fremdprozess (netsh, pnputil) unter export\ angelegt
+        /// hat, beides am Handle, beides danach nachgelesen; eine Datei muss dazu genau einen
+        /// Namen haben. pfad muss direkt unter dem Exportordner liegen (Name nach
+        /// ExportNameGueltig) und darf kein Reparse-Punkt sein. Wirft InvalidOperationException,
+        /// wenn irgendetwas davon scheitert: dann gilt die Sicherung als nicht angelegt, und die
+        /// Massnahme bricht VOR dem Eingriff ab (der Aufrufer loescht den ungeschuetzten Export).
+        /// </summary>
+        public static void ExportSchuetzen(string pfad)
+        {
+            string name = ExportPfadPruefen(pfad, "geschützt");
+            string export = ExportOrdnerPfad();
+            string voll = Path.Combine(export, name);
+            FileAttributes attr;
+            try { attr = File.GetAttributes(voll); }
+            catch (Exception ex) { throw new InvalidOperationException("Der Export " + name + " ist nicht lesbar (" + ex.Message + "); die Sicherung gilt als nicht angelegt.", ex); }
+            if ((attr & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidOperationException("Der Export " + name + " ist eine Verknüpfung auf einen anderen Ort; die Sicherung gilt als nicht angelegt.");
+            bool ordner = (attr & FileAttributes.Directory) != 0;
+            string erwartet = ErwarteterPfad(export) + Path.DirectorySeparatorChar + name;
+            bool geaendert;
+            SafeFileHandle h = null;
+            try
+            {
+                h = Schuetzen(voll, ordner, erwartet, out geaendert);
+                if (!ordner)
+                {
+                    Native.BY_HANDLE_FILE_INFORMATION info;
+                    if (!Native.GetFileInformationByHandle(h, out info))
+                        throw new InvalidOperationException("die Zahl der Namen ist nicht lesbar (Win32-Fehler " + Marshal.GetLastWin32Error() + ")");
+                    if (info.nNumberOfLinks != 1)
+                        throw new InvalidOperationException(info.nNumberOfLinks + " Namen zeigen auf dieselbe Datei (Hardlink)");
+                }
+            }
+            catch (InvalidOperationException ex)
+            {
+                throw new InvalidOperationException("Der Export " + name + " ließ sich nicht gegen andere Konten schützen: " + ex.Message + "; die Sicherung gilt als nicht angelegt, es wird nichts geändert.", ex);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException("Der Export " + name + " ließ sich nicht gegen andere Konten schützen (" + ex.GetType().Name + ": " + ex.Message + "); die Sicherung gilt als nicht angelegt, es wird nichts geändert.", ex);
+            }
+            finally
+            {
+                if (h != null) h.Dispose();
+            }
+            if (geaendert) AppLog.Info("Export " + name + " geschützt (Besitzer Administratoren, Benutzer nur Lesen).");
+        }
+
+        /// <summary>
+        /// Oeffnet eine Exportdatei fuer den Rueckweg nach denselben Regeln wie Lesen: name ohne
+        /// Pfad (ExportNameGueltig), mit der verlangten Endung (endungOderLeer, Groß/Klein egal;
+        /// leer = keine Vorgabe), direkt unter export\, kein Reparse-Punkt am Pfad, genau ein
+        /// Oeffnen (FileShare.Read), am Handle Besitzer Administratoren oder SYSTEM, genau die
+        /// geschuetzte DACL und genau ein Name. Der Aufrufer liest aus dem Handle oder reicht
+        /// KanonischerPfad(fs) an netsh, solange der Stream offen ist, und schliesst ihn danach.
+        /// Wirft ArgumentException (Name, Endung, Ort, Herkunft), FileNotFoundException, sonst die Leseausnahme.
+        /// </summary>
+        public static FileStream ExportOeffnen(string name, string endungOderLeer)
+        {
+            if (!ExportNameGueltig(name))
+                throw new ArgumentException("Der Exportname „" + Massnahmenbau.Kurz(name) + "“ ist kein Name unter dem Exportordner (erlaubt: Buchstaben, Ziffern, Punkt, Unterstrich, Bindestrich).");
+            if (!string.IsNullOrEmpty(endungOderLeer) && !name.EndsWith(endungOderLeer, StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("Der Export „" + name + "“ trägt nicht die Endung " + endungOderLeer + "; er wird nicht zurückgespielt.");
+            string export = ExportOrdnerPfad();
+            if (export == null)
+                throw new ArgumentException("Der Sicherungsordner " + OrdnerPfad() + " liegt hinter einer Verknüpfung auf einen anderen Ort; es wird nichts gelesen.");
+            string voll = Path.Combine(export, name);
+            if (!File.Exists(voll)) throw new FileNotFoundException("Der Export " + name + " wurde nicht gefunden.", voll);
+
+            FileAttributes attr;
+            try { attr = File.GetAttributes(voll); }
+            catch (Exception ex) { throw Ablehnung(name, "Attribute nicht lesbar: " + ex.Message, 0); }
+            if ((attr & FileAttributes.ReparsePoint) != 0) throw Ablehnung(name, "die Datei ist eine Verknüpfung auf einen anderen Ort", 0);
+
+            FileStream fs = new FileStream(voll, FileMode.Open, FileAccess.Read, FileShare.Read);
+            try
+            {
+                int namen;
+                string fremd = HerkunftPruefen(fs, out namen);
+                if (fremd != null) throw Ablehnung(name, fremd, namen);
+            }
+            catch (Exception)
+            {
+                fs.Dispose();
+                throw;
+            }
+            return fs;
+        }
+
+        /// <summary>Der Pfad, auf den ein offener Stream wirklich zeigt (Junctions und kurze Namen aufgeloest), fuer netsh advfirewall import.</summary>
+        public static string KanonischerPfad(FileStream fs)
+        {
+            if (fs == null) throw new ArgumentNullException("fs");
+            return Native.Kanonisch(fs.SafeFileHandle);
+        }
+
+        // Ein Pfad zu einem Export: voller Pfad direkt unter export\ oder nur der Name. Liefert
+        // den Namen; wirft InvalidOperationException, wenn Name oder Ort nicht stimmen.
+        static string ExportPfadPruefen(string pfad, string wozu)
+        {
+            if (string.IsNullOrEmpty(pfad)) throw new InvalidOperationException("Kein Export angegeben; nichts wird " + wozu + ".");
+            string name = Path.GetFileName(pfad);
+            if (!ExportNameGueltig(name))
+                throw new InvalidOperationException("Der Exportname „" + Massnahmenbau.Kurz(name) + "“ ist kein Name unter dem Exportordner (erlaubt: Buchstaben, Ziffern, Punkt, Unterstrich, Bindestrich).");
+            string export = ExportOrdnerPfad();
+            if (export == null)
+                throw new InvalidOperationException("Der Sicherungsordner " + OrdnerPfad() + " liegt hinter einer Verknüpfung auf einen anderen Ort; nichts wird " + wozu + ".");
+            if (Path.IsPathRooted(pfad) || pfad.IndexOf(Path.DirectorySeparatorChar) >= 0 || pfad.IndexOf(Path.AltDirectorySeparatorChar) >= 0)
+            {
+                string gegeben;
+                try { gegeben = Path.GetFullPath(pfad); }
+                catch (Exception ex) { throw new InvalidOperationException("Der Exportpfad ist nicht lesbar: " + ex.Message, ex); }
+                if (!string.Equals(gegeben.TrimEnd(Path.DirectorySeparatorChar), Path.GetFullPath(Path.Combine(export, name)), StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Der Export „" + name + "“ liegt nicht unter " + export + "; nichts wird " + wozu + ".");
+            }
+            return name;
+        }
+
         // Der festgenagelte Sicherungsordner: ein offenes Handle, geprueft und in Helferbesitz.
         // Solange es offen ist, lassen sich die Eltern weder umbenennen noch loeschen (gemessen
         // 18.09.2026); der Ordner selbst schon, deshalb entsteht die Datei relativ zum Handle
@@ -340,27 +544,53 @@ namespace WartungsToolbox.Helfer
             geaendert = false;
             string erwartet = ErwarteterPfad(ordner);
             if (anlegen) OrdnerAnlegen(ordner);
+            try
+            {
+                return new Nagel { Handle = Schuetzen(ordner, true, erwartet, out geaendert) };
+            }
+            catch (InvalidOperationException ex)
+            {
+                throw new InvalidOperationException("Der Sicherungsordner " + ordner + " ließ sich nicht gegen andere Konten schützen: " + ex.Message + "; es wird nichts gesichert und nichts geändert.", ex);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException("Der Sicherungsordner " + ordner + " ließ sich nicht gegen andere Konten schützen (" + ex.GetType().Name + ": " + ex.Message + "); es wird nichts gesichert und nichts geändert.", ex);
+            }
+        }
 
+        /// <summary>
+        /// Der gemeinsame Kern fuer Ordner (OrdnerSchuetzen) und Exporte (ExportSchuetzen): oeffnet
+        /// pfad mit exakt den noetigen Rechten, prueft am Handle, dass er nach erwartet fuehrt,
+        /// bringt ihn in Helferbesitz und setzt die geschuetzte DACL (Ordner vererbend, Datei
+        /// nicht), beides nur bei Abweichung, beides danach nachgelesen. Liefert das offene
+        /// Handle; der Aufrufer gibt es frei. Wirft InvalidOperationException mit dem nackten
+        /// Grund (der Aufrufer setzt den Satz davor).
+        /// </summary>
+        static SafeFileHandle Schuetzen(string pfad, bool ordner, string erwartet, out bool geaendert)
+        {
+            geaendert = false;
             SafeFileHandle h = null;
             try
             {
                 using (var privileg = Privileg.Einschalten(Native.SeTakeOwnershipPrivilege))
                 {
-                    uint rechte = Native.READ_CONTROL | Native.WRITE_DAC | (privileg.An ? Native.WRITE_OWNER : 0);
+                    // Eine Datei braucht zusaetzlich FILE_READ_ATTRIBUTES fuer die Zahl ihrer Namen
+                    // (GetFileInformationByHandle in ExportSchuetzen); der Ordner nicht.
+                    uint rechte = Native.READ_CONTROL | Native.WRITE_DAC | (privileg.An ? Native.WRITE_OWNER : 0) | (ordner ? 0 : Native.FILE_READ_ATTRIBUTES);
                     int fehler;
-                    h = Native.OrdnerOeffnen(ordner, rechte, out fehler);
+                    h = Native.Oeffnen(pfad, rechte, ordner, out fehler);
                     if (h == null && fehler == Native.ERROR_ACCESS_DENIED && privileg.An)
                     {
                         // Fremder Besitzer ohne Eintrag fuer Administratoren: erst den Besitz
                         // uebernehmen (nur WRITE_OWNER, das gewaehrt das Privileg), dann als
                         // Besitzer erneut oeffnen. Das erste Handle bleibt bis dahin offen.
-                        using (SafeFileHandle besitz = Native.OrdnerOeffnen(ordner, Native.WRITE_OWNER, out fehler))
+                        using (SafeFileHandle besitz = Native.Oeffnen(pfad, Native.WRITE_OWNER, ordner, out fehler))
                         {
                             if (besitz == null) throw new InvalidOperationException("er ließ sich nicht zum Besitzwechsel öffnen (Win32-Fehler " + fehler + ")");
                             IdentitaetPruefen(besitz, erwartet);
                             BesitzerSetzen(besitz);
                             geaendert = true;
-                            h = Native.OrdnerOeffnen(ordner, rechte, out fehler);
+                            h = Native.Oeffnen(pfad, rechte, ordner, out fehler);
                         }
                     }
                     if (h == null)
@@ -378,9 +608,9 @@ namespace WartungsToolbox.Helfer
                         BesitzerSetzen(h);
                         geaendert = true;
                     }
-                    if (!DaclStimmt(ist, true))
+                    if (!DaclStimmt(ist, ordner))
                     {
-                        DaclSetzen(h);
+                        DaclSetzen(h, ordner);
                         geaendert = true;
                     }
 
@@ -388,20 +618,12 @@ namespace WartungsToolbox.Helfer
                     SecurityIdentifier b = Besitzer(danach);
                     if (!BesitzerStimmt(b))
                         throw new InvalidOperationException("der Besitzer wurde nicht übernommen (" + (b == null ? "keiner lesbar" : b.Value) + " statt Administratoren)");
-                    if (!DaclStimmt(danach, true))
+                    if (!DaclStimmt(danach, ordner))
                         throw new InvalidOperationException("die Rechte wurden nicht übernommen (" + DaclKurz(danach) + ")");
                 }
-                var nagel = new Nagel { Handle = h };
+                SafeFileHandle fertig = h;
                 h = null;
-                return nagel;
-            }
-            catch (InvalidOperationException ex)
-            {
-                throw new InvalidOperationException("Der Sicherungsordner " + ordner + " ließ sich nicht gegen andere Konten schützen: " + ex.Message + "; es wird nichts gesichert und nichts geändert.", ex);
-            }
-            catch (Exception ex)
-            {
-                throw new InvalidOperationException("Der Sicherungsordner " + ordner + " ließ sich nicht gegen andere Konten schützen (" + ex.GetType().Name + ": " + ex.Message + "); es wird nichts gesichert und nichts geändert.", ex);
+                return fertig;
             }
             finally
             {
@@ -476,10 +698,13 @@ namespace WartungsToolbox.Helfer
             am.Speichern(h, AccessControlSections.Owner);
         }
 
-        static void DaclSetzen(SafeFileHandle h)
+        // Die geschuetzte DACL am Handle setzen: fuer einen Ordner vererbend (die Eintraege gelten
+        // dann auch fuer alles, was ein Fremdprozess darunter schon angelegt hat: SetSecurityInfo
+        // traegt vererbbare Eintraege in den Teilbaum), fuer eine Datei ohne Vererbungsmarken.
+        static void DaclSetzen(SafeFileHandle h, bool ordner)
         {
             var am = new HandleSicherheit();
-            am.SetSecurityDescriptorBinaryForm(GeschuetzteDacl(true).GetSecurityDescriptorBinaryForm(), AccessControlSections.Access);
+            am.SetSecurityDescriptorBinaryForm(GeschuetzteDacl(ordner).GetSecurityDescriptorBinaryForm(), AccessControlSections.Access);
             am.Speichern(h, AccessControlSections.Access);
         }
 
@@ -560,9 +785,10 @@ namespace WartungsToolbox.Helfer
         /// und stellt beim Verlassen den alten Zustand wieder her. An = false, wenn das Token es
         /// nicht traegt (nicht erhoeht): dann laeuft der Block ohne, und die Stelle, die es
         /// gebraucht haette, meldet den Fehler. Ein Thread mit Identitaetswechsel bekommt sein
-        /// eigenes Token angepasst, sonst das des Prozesses. Wirft nie.
+        /// eigenes Token angepasst, sonst das des Prozesses. Wirft nie. Oeffentlich, weil
+        /// System.cs (wiederherstellungspunkt.zurueck) SeShutdownPrivilege denselben Weg braucht.
         /// </summary>
-        sealed class Privileg : IDisposable
+        public sealed class Privileg : IDisposable
         {
             public bool An;
             string _name;
@@ -601,7 +827,8 @@ namespace WartungsToolbox.Helfer
         /// <summary>
         /// null, wenn die GEOEFFNETE Datei vom erhoehten Helfer stammt; sonst der Grund fuer app.log.
         /// namen: die Zahl der Namen der Datei, wenn sie nicht 1 ist (dann ist das der Grund), sonst 0.
-        /// Alles, was sich nicht lesen laesst, ist ein Grund.
+        /// Alles, was sich nicht lesen laesst, ist ein Grund. Eine Funktion fuer JSON (Lesen,
+        /// DateiSchreiben) und Export (ExportOeffnen), Vertrag M4 3.2; oeffentlich fuer die HelferProbe.
         ///
         /// Geprueft wird am offenen Handle, nicht am Pfad, aus drei Gruenden (Vertrag 8.10):
         /// 1. Check-then-read: eine Pruefung ueber den Pfad und ein zweites Oeffnen zum Lesen sind
@@ -617,7 +844,7 @@ namespace WartungsToolbox.Helfer
         /// Der Reparse-Punkt wird VOR dem Oeffnen am Pfad abgelehnt (Lesen): FileStream folgt ihm,
         /// und das Handle zeigte dann auf das Ziel.
         /// </summary>
-        static string HerkunftPruefen(FileStream fs, out int namen)
+        public static string HerkunftPruefen(FileStream fs, out int namen)
         {
             namen = 0;
             FileSecurity sec;
@@ -945,11 +1172,22 @@ namespace WartungsToolbox.Helfer
             /// </summary>
             public static SafeFileHandle OrdnerOeffnen(string pfad, uint rechte, out int win32)
             {
+                return Oeffnen(pfad, rechte, true, out win32);
+            }
+
+            /// <summary>
+            /// Wie OrdnerOeffnen, wahlweise fuer eine Datei (ordner = false: FILE_NON_DIRECTORY_FILE,
+            /// ein Ordner unter dem Namen wird abgelehnt) oder einen Ordner (FILE_DIRECTORY_FILE).
+            /// Nur fuer Besitzer und Rechte gedacht: kein SYNCHRONIZE, kein Lesen, kein Schreiben.
+            /// </summary>
+            public static SafeFileHandle Oeffnen(string pfad, uint rechte, bool ordner, out int win32)
+            {
                 using (var o = new Objekt(NtPfad(pfad), null, null))
                 {
                     IntPtr h;
                     IO_STATUS_BLOCK iosb;
-                    int status = NtOpenFile(out h, rechte, ref o.Oa, out iosb, FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_DIRECTORY_FILE | FILE_OPEN_FOR_BACKUP_INTENT);
+                    uint optionen = (ordner ? FILE_DIRECTORY_FILE : FILE_NON_DIRECTORY_FILE) | FILE_OPEN_FOR_BACKUP_INTENT;
+                    int status = NtOpenFile(out h, rechte, ref o.Oa, out iosb, FILE_SHARE_READ | FILE_SHARE_WRITE, optionen);
                     if (status < 0) { win32 = RtlNtStatusToDosError(status); return null; }
                     win32 = 0;
                     return new SafeFileHandle(h, true);
@@ -1062,6 +1300,49 @@ namespace WartungsToolbox.Helfer
                 throw new TimeoutException((was ?? "Der Aufruf") + " überschritt " + (zeitMs >= 60000 ? (zeitMs / 60000) + " Minuten" : (zeitMs / 1000) + " Sekunden") + ".");
             if (fehler != null) throw fehler;
             return ergebnis;
+        }
+    }
+
+    /// <summary>
+    /// Laesst ein Werkzeug ueber Werkzeuge.Lauf laufen und sammelt seine Ausgabezeilen (Art
+    /// "normal", die Zeilen des Prozesses) als Text, statt sie dem Aufrufer zu zeigen: fuer
+    /// Belege wie "netsh winsock show catalog" (mehrere hundert Zeilen, die in die Sicherung
+    /// gehoeren, nicht in die Konsole; Werkzeuge.Lauf haelt in tail nur die letzten 6000
+    /// Zeichen). Die Werkzeugzeile, ExitCode, Deutung und Fehler gehen weiter an den Aufrufer.
+    /// Hoechstens maxZeichen; darueber wird abgeschnitten und gekuerzt = true. Kein eigener
+    /// Prozessstart: der Weg bleibt Werkzeuge.Lauf (Trockenlauf: nur dessen (trocken)-Zeile,
+    /// Text leer, Rueckgabe 0).
+    /// </summary>
+    public static class Prozessausgabe
+    {
+        public static int Sammeln(Ausfuehrungskontext k, string file, string args, int zeitMs, int maxZeichen, out string text, out bool gekuerzt)
+        {
+            var sb = new StringBuilder();
+            var gate = new object();
+            bool voll = false;
+            Action<string, string, int?> alt = k.Zeile;
+            k.Zeile = (t, art, prozent) =>
+            {
+                if (art == "normal" && !prozent.HasValue)
+                {
+                    lock (gate)
+                    {
+                        if (sb.Length >= maxZeichen) { voll = true; return; }
+                        sb.Append(t ?? "").Append('\n');
+                        if (sb.Length > maxZeichen) { sb.Length = maxZeichen; voll = true; }
+                    }
+                    return;
+                }
+                if (alt != null) alt(t, art, prozent);
+            };
+            try
+            {
+                string tail;
+                int code = Werkzeuge.Lauf(k, file, args, zeitMs, null, false, out tail);
+                lock (gate) { text = sb.ToString(); gekuerzt = voll; }
+                return code;
+            }
+            finally { k.Zeile = alt; }
         }
     }
 

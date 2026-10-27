@@ -36,6 +36,14 @@ namespace WartungsToolbox
     /// Nachweis aus dem Kern und das Ergebnis mit Nachweiskarte; der Rückweg spielt eine
     /// Sicherungsdatei zurück. Vertrag: docs/M3-ENTWURF.md, Abschnitte 4, 8.9, 8.10 und 9.
     ///
+    /// Seit 8.3 (Meilenstein 4) kommen die Maßnahmen der Stufe 3 dazu (docs/M4-ENTWURF.md,
+    /// Abschnitte 4 und 10.3): die Vorschau trägt den Satz, was verloren geht (verlust), und
+    /// massnahmeAusfuehren läuft für Stufe 3 nur mit bestaetigt = true aus dem Häkchen der
+    /// Vorschau. Die Nachweise lesen alle Werte des Helfers mit Punkt im Namen aus dem
+    /// Wörterbuch p; das Dateiurteil (EvaluateFiles) kommt aus dism.zustand und sfc.zustand
+    /// statt aus Konsolentext; die Techniker-Ansicht (technikerAnsicht, technikerText) zeigt
+    /// alle Befunde mit Messwert, Schwelle und Quelle, ohne etwas zu ändern.
+    ///
     /// Zwei Regeln aus v7.3.2 gelten weiter: nie still ablehnen (StartAbgelehnt antwortet
     /// mit Grund), und jeder Lauf protokolliert Anfang und Ende.
     /// </summary>
@@ -80,13 +88,28 @@ namespace WartungsToolbox
         bool FlowRunning { get { return _flowThread != null && _flowThread.IsAlive; } }
 
         /// <summary>
-        /// Läuft irgendwo schon etwas? Der Hauptweg, die beiden Suchläufe und der
-        /// CommandRunner (Werkzeugkasten, Warteschlange, geplante Wartung) greifen auf
-        /// denselben PC zu; zwei DISM-Instanzen auf demselben Windows-Abbild wären fatal.
+        /// Die drei Wege, die „cancel“ anhält: der Hauptweg, die beiden Suchläufe und der
+        /// CommandRunner (Werkzeugkasten, Warteschlange, geplante Wartung). Ohne das Update:
+        /// dessen Leiste hat keinen Abbrechen-Knopf, und ein „Abbrechen“ auf einem stehen
+        /// gebliebenen Ablaufbildschirm soll die Oberfläche auch während eines Updates zurücksetzen.
+        /// </summary>
+        bool AbbrechbarerLauf
+        {
+            get { return FlowRunning || ScanRunning || (_runner != null && _runner.Running); }
+        }
+
+        /// <summary>
+        /// Läuft irgendwo schon etwas? Die drei abbrechbaren Wege greifen auf denselben PC zu;
+        /// zwei DISM-Instanzen auf demselben Windows-Abbild wären fatal. Seit 8.3 zählt das
+        /// Update dazu (M4-Entwurf 4): sein Dateitausch läuft als Plan update.anwenden auf
+        /// derselben Helfer-Pipe. Klopfte die geplante Wartung in diesen Sekunden an
+        /// (OnScheduledRunRequested), startete sie sonst sofort, der Helfer meldete
+        /// „beschäftigt“, der --auto-Prozess hatte schon übergeben, und der Termin fiel aus;
+        /// mit dem Flag wird sie vorgemerkt, und UpdateFreigeben holt sie nach.
         /// </summary>
         bool EtwasLaeuft
         {
-            get { return FlowRunning || ScanRunning || (_runner != null && _runner.Running); }
+            get { return AbbrechbarerLauf || UpdateLaeuft; }
         }
 
         /// <summary>
@@ -112,6 +135,11 @@ namespace WartungsToolbox
                         (string.IsNullOrEmpty(_runner.Title) ? "eine andere Aufgabe" : _runner.Title) + ".";
             else if (GeplanteWartungLaeuft())
                 grund = "Die geplante Wartung läuft gerade im Hintergrund.";
+            // Seit 8.3 läuft der Dateitausch des Updates als Plan über denselben Ausführer und
+            // dasselbe Protokoll (ShellForm.FinishUpdate); ein zweiter Plan daneben bekäme vom
+            // Helfer „beschäftigt“, und die Nachmessung schriebe in den laufenden Update-Lauf.
+            else if (UpdateLaeuft)
+                grund = "Das Update läuft gerade; bis es fertig ist, startet kein anderer Lauf.";
             else
             {
                 if (_countdownAktiv)
@@ -520,10 +548,11 @@ namespace WartungsToolbox
                         "Die Tiefenprüfung konnte nicht abgeschlossen werden. Bitte starten Sie den PC neu und versuchen Sie es noch einmal."))
                     return;
 
-                EvaluateFiles(erg.Wert("dism.ausgabe"), erg.Wert("sfc.ausgabe"));
+                EvaluateFiles(erg);
                 _filesGeprueft = true;
                 _protokoll.Schreibe(Protokoll.Regeln, Protokoll.BefundArt, "windows.dateien", _filesSummary,
-                    new { zustand = _filesState, dismExit = erg.Wert("dism.exit"), sfcExit = erg.Wert("sfc.exit") });
+                    new { zustand = _filesState, dismZustand = erg.Wert(WertDismZustand), dismHresult = erg.Wert(WertDismHresult),
+                          sfcZustand = erg.Wert(WertSfcZustand), sfcExit = erg.Wert(WertSfcExit) });
                 ErstbefundAbwarten();
                 // Nachmessung im laufenden Protokoll (kein neuer Lauf): Anfang „tiefenpruefung“
                 // und Ende „deep“ stehen in derselben Datei.
@@ -594,12 +623,13 @@ namespace WartungsToolbox
                 int nachher = Ganz(erg.Wert("sicherung.nachher"));
                 bool punktAngelegt = vorher >= 0 && nachher > vorher;
 
-                EvaluateFiles(erg.Wert("dism.ausgabe"), erg.Wert("sfc.ausgabe"));
-                // Ein Schritt mit 3010 heißt Neustart, auch wenn die SFC-Deutung ihn nicht nennt.
-                if (erg.Wert("neustart") == "1") _filesNeustart = true;
+                // Das Urteil liest neustart selbst (3010 oder „pending“ in CBS.log heißt Neustart,
+                // auch wenn sfc.zustand ihn nicht nennt).
+                EvaluateFiles(erg);
                 _protokoll.Schreibe(Protokoll.Host, Protokoll.Nachweis, "windows.dateien", _filesSummary,
                     new { zustand = _filesState, punktAngelegt, sicherungVorher = erg.Wert("sicherung.vorher"), sicherungNachher = erg.Wert("sicherung.nachher"),
-                          sicherungSatz = erg.Wert("sicherung.satz"), dismExit = erg.Wert("dism.exit"), sfcExit = erg.Wert("sfc.exit"), neustart = erg.Wert("neustart") });
+                          sicherungSatz = erg.Wert("sicherung.satz"), dismZustand = erg.Wert(WertDismZustand), dismHresult = erg.Wert(WertDismHresult),
+                          dismRepariert = erg.Wert(WertDismRepariert), sfcZustand = erg.Wert(WertSfcZustand), sfcExit = erg.Wert(WertSfcExit), neustart = erg.Wert(WertNeustart) });
 
                 // Nach dem Eingriff neu messen, damit das Ergebnis den Zustand DANACH zeigt.
                 // Der Helfer ist verbunden, also misst Messen gleich erhöht nach; im laufenden
@@ -632,15 +662,36 @@ namespace WartungsToolbox
         const string KennungUpdateEinstellungen = "update.einstellungen.oeffnen";
 
         // Werte-Schlüssel des Helfers, die in das Wörterbuch des Nachweises wandern (Entwurf 8.10):
-        // unverändert, unter demselben Namen, der Kern liest sie dort.
+        // unverändert, unter demselben Namen, der Kern liest sie dort. Seit 8.3 wandern ALLE
+        // Werte mit Punkt im Namen generisch hinein (WerteMitPunktUebernehmen, M4-Entwurf 10.3:
+        // sicherung.vorher, nachweis.bestanden, nachweis.satz, rueckweg.kennung,
+        // rueckweg.parameter.<name>, rueckweg.moeglich, dism.*, sfc.*, update.*); die Konstanten
+        // bleiben für die Stellen, die einen Wert einzeln lesen, und für neustart (ohne Punkt,
+        // wird eigens übernommen).
         const string WertSicherungDatei = "sicherung.datei";
-        const string WertSicherungVorher = "sicherung.vorher";
         const string WertNeustart = "neustart";
-        const string WertNachweisBestanden = "nachweis.bestanden";
         const string WertNachweisSatz = "nachweis.satz";
         const string WertRueckwegKennung = "rueckweg.kennung";
-        const string WertRueckwegParameter = "rueckweg.parameter.";
         const string WertRueckwegMoeglich = "rueckweg.moeglich";
+
+        // Werte des Helfers zur Tiefenprüfung und Reparatur (helfer/Massnahmen/System.cs, M4-Entwurf
+        // 3.4): das Dateiurteil (EvaluateFiles) liest sie, nicht mehr den Konsolentext.
+        const string WertDismZustand = "dism.zustand";      // healthy | repairable | nonrepairable | fehler
+        const string WertDismHresult = "dism.hresult";      // 0x + 8 Hex, nur bei fehler von Belang
+        const string WertDismRepariert = "dism.repariert";  // "1" nach gelungenem RestoreHealth (nur dateien.reparieren)
+        const string WertSfcZustand = "sfc.zustand";        // ohneBefund | repariert | nichtRepariert | fehler
+        const string WertSfcExit = "sfc.exit";
+
+        // Schlüssel unter „parameter“ einer Sicherungsdatei, der das Profil nennt, aus dem ein
+        // HKCU-Vorwert stammt (helfer/Massnahmen/Leistung.cs): der Verlauf zeigt „Rückgängig“ nur
+        // für das eigene Profil (M4-Entwurf 4, 10.3), der Helfer lehnt fremde Profile ohnehin ab.
+        const string SicherungProfilSchluessel = Helfer.LeistungMassnahmen.ProfilSchluessel;
+
+        // Die letzte bad-Zeile des zuletzt über PlanAusfuehren gelaufenen Plans (getrimmt, null
+        // ohne bad-Zeile): das Update nennt sie bei Exit 1 als Grund (M4-Entwurf 10.3), weil
+        // PlanErgebnis.Grund dort nur „Problem“ sagt. Geschrieben im Rückruf des Ausführers,
+        // gelesen nach dem Plan auf demselben Thread.
+        volatile string _planLetzteBadZeile;
 
         // Dateiname einer Sicherung, wie ihn die Kennung rueckweg annimmt (Vertrag Abschnitt 1):
         // Buchstaben, Ziffern, Punkt, Unterstrich, Bindestrich, Endung .json, keine Pfadzeichen.
@@ -707,7 +758,10 @@ namespace WartungsToolbox
         /// gleichnamige Nachricht, mit ausfuehrbar = false und grund, wenn der Start scheitern
         /// würde (nie stumm: die Oberfläche zeigt dann den Grund statt „Jetzt ausführen“).
         /// Nur lesend, im Thread der Oberfläche; parameter sind die Werte des Befunds, die in
-        /// den Plan gingen.
+        /// den Plan gingen. Seit 8.3 (M4-Entwurf 4): verlust ist der Satz der Stufe 3 mit den
+        /// Zahlen des Befunds (Massnahme.VerlustMit; „?“ für eine Zahl, die der Befund nicht
+        /// liefert), null unter Stufe 3; läuft gerade etwas (Prüfung, Suchlauf, Werkzeug,
+        /// geplante Wartung, Update), ist keine Maßnahme ausführbar, Stufe 3 erst recht nicht.
         /// </summary>
         internal void MassnahmeVorschau(string kennung, string schluessel)
         {
@@ -719,6 +773,11 @@ namespace WartungsToolbox
                 if (laeuft != null) grund = "Gerade läuft " + laeuft + "; die Maßnahme startet erst, wenn der Lauf zu Ende ist.";
             }
             if (grund != null) AppLog.Info("Vorschau „" + (kennung ?? "") + "“ zu " + (schluessel ?? "") + ": nicht ausführbar (" + grund + ")");
+            // Befund.Parameter ist null-sicher zu lesen (Entwurf 8.9); ohne Befund bleibt ein
+            // leeres Wörterbuch, damit jeder Platzhalter zu „?“ wird statt roh stehen zu bleiben.
+            string verlust = null;
+            if (m != null && m.Stufe >= Massnahme.StufeUnumkehrbar)
+                verlust = m.VerlustMit(b != null && b.Parameter != null ? b.Parameter : new Dictionary<string, string>());
             UiPost(new
             {
                 type = "massnahmeVorschau",
@@ -728,6 +787,7 @@ namespace WartungsToolbox
                 wasPassiert = m != null ? m.WasPassiert : "",
                 wasBleibt = m != null ? m.WasBleibt : "",
                 risiko = m != null ? m.Risiko : "",
+                verlust = verlust,
                 sicherung = m != null ? m.Sicherung : Massnahme.SicherungKeine,
                 rueckweg = m != null ? m.Rueckweg : Massnahme.RueckwegKeiner,
                 neustart = m != null && m.Neustart,
@@ -743,11 +803,16 @@ namespace WartungsToolbox
         /// Befehl „massnahmeAusfuehren“ (UI → Host, Entwurf 9.2): erst dieselbe Prüfung wie die
         /// Vorschau (Absage als flowError, die Oberfläche steht schon auf dem Ablaufbildschirm),
         /// dann StartAbgelehnt wie beim Hauptweg, dann der Lauf im eigenen Thread (MassnahmeWorker).
+        /// Stufe 3 (M4-Entwurf 4) verlangt bestaetigt = true, das Häkchen „Ich habe verstanden, was
+        /// verloren geht“ aus der Vorschau; ohne das Feld (alte Oberfläche, fremde Nachricht) läuft
+        /// nichts, und der Grund steht im app.log. Unter Stufe 3 wird das Feld nicht gelesen.
         /// </summary>
-        internal void MassnahmeAusfuehren(string kennung, string schluessel)
+        internal void MassnahmeAusfuehren(string kennung, string schluessel, bool bestaetigt)
         {
             Massnahme m; Befund b; Dictionary<string, string> parameter;
             string grund = MassnahmePruefen(kennung, schluessel, out m, out b, out parameter);
+            if (grund == null && m.Stufe >= Massnahme.StufeUnumkehrbar && !bestaetigt)
+                grund = "Die Bestätigung fehlt; Maßnahmen der Stufe 3 laufen nur nach dem Häkchen in der Vorschau.";
             if (grund != null)
             {
                 AppLog.Warn("Maßnahme „" + (kennung ?? "") + "“ zu " + (schluessel ?? "") + " nicht gestartet: " + grund);
@@ -756,9 +821,9 @@ namespace WartungsToolbox
             }
             if (StartAbgelehnt("Maßnahme „" + m.Titel + "“")) return;
             _flowCancel = false;
-            AppLog.Info("Maßnahme „" + m.Titel + "“ (" + m.Kennung + ") gestartet, Befund " + b.Schluessel + ".");
-            Massnahme fm = m; Befund fb = b; Dictionary<string, string> fp = parameter;
-            _flowThread = new Thread(delegate () { MassnahmeWorker(fm, fb, fp); }) { IsBackground = true, Name = "massnahme" };
+            AppLog.Info("Maßnahme „" + m.Titel + "“ (" + m.Kennung + ", Stufe " + m.Stufe + (m.Stufe >= Massnahme.StufeUnumkehrbar ? ", bestätigt" : "") + ") gestartet, Befund " + b.Schluessel + ".");
+            Massnahme fm = m; Befund fb = b; Dictionary<string, string> fp = parameter; bool fbest = bestaetigt;
+            _flowThread = new Thread(delegate () { MassnahmeWorker(fm, fb, fp, fbest); }) { IsBackground = true, Name = "massnahme" };
             _flowThread.Start();
         }
 
@@ -768,7 +833,7 @@ namespace WartungsToolbox
         /// Kern über dem neuen Bild und das Ergebnis mit Nachweiskarte. Drei Schritte des
         /// Balkens: Maßnahme, Nachmessung, Ergebnis (Entwurf 9.1).
         /// </summary>
-        void MassnahmeWorker(Massnahme m, Befund b, Dictionary<string, string> parameter)
+        void MassnahmeWorker(Massnahme m, Befund b, Dictionary<string, string> parameter, bool bestaetigt)
         {
             var uhr = System.Diagnostics.Stopwatch.StartNew();
             string was = "die Maßnahme „" + m.Titel + "“";
@@ -780,7 +845,7 @@ namespace WartungsToolbox
                 ErstbefundAbwarten();
                 if (_protokoll == null) _protokoll = new Protokoll(Protokoll.NeueLaufId());
                 _protokoll.Schreibe(Protokoll.Host, Protokoll.Anfang, m.Kennung, "Maßnahme „" + m.Titel + "“ gestartet",
-                    new { befund = b.Schluessel, stufe = m.Stufe, sicherung = m.Sicherung, parameter = ParameterText(parameter) });
+                    new { befund = b.Schluessel, stufe = m.Stufe, bestaetigt, sicherung = m.Sicherung, parameter = ParameterText(parameter) });
 
                 // Der Dialog kommt nur, wenn noch kein Helfer da ist; sonst wäre die Zeile eine Lüge.
                 bool dialog = !HelferClient.Verbunden && !HelferClient.Abnahmeweg;
@@ -804,9 +869,13 @@ namespace WartungsToolbox
                 FlowStep(3, "Das Ergebnis wird zusammengestellt");
                 Bewerten();
 
-                // Nachweis: Befund-Parameter plus die Werte des Helfers unter ihrem Namen (8.10).
+                // Nachweis: Befund-Parameter plus die Werte des Helfers unter ihrem Namen (8.10);
+                // seit 8.3 jeder Wert mit Punkt (dism.zustand, sfc.zustand, update.verborgen.vorher,
+                // nachweis.bestanden, rueckweg.moeglich, …), dazu neustart (M4-Entwurf 10.3). Ein
+                // Befund-Parameter gewinnt gegen einen gleichnamigen Wert.
                 var p = new Dictionary<string, string>(parameter, StringComparer.Ordinal);
-                WerteUebernehmen(erg, p, WertSicherungVorher, WertNeustart, WertNachweisBestanden, WertNachweisSatz);
+                WerteMitPunktUebernehmen(erg, p, parameter);
+                WerteUebernehmen(erg, p, WertNeustart);
                 Nachweis nw = NachweisBilden(m, m.Titel, erg, p);
                 string sicherung = SicherungName(erg.Wert(WertSicherungDatei));
                 bool rueckwegMoeglich = sicherung != null && erg.Wert(WertRueckwegMoeglich) != "0";
@@ -836,10 +905,21 @@ namespace WartungsToolbox
                 UiPost(new { type = "flowError", message = "Der Name der Sicherungsdatei ist ungültig (erlaubt sind Buchstaben, Ziffern, Punkt, Unterstrich und Bindestrich mit der Endung .json); es wurde nichts zurückgespielt." });
                 return;
             }
-            if (SicherungPfad(name) == null)
+            string pfad = SicherungPfad(name);
+            if (pfad == null)
             {
                 AppLog.Warn("Rückweg nicht gestartet: die Sicherung „" + name + "“ liegt nicht mehr unter sicherungen\\massnahmen.");
                 UiPost(new { type = "flowError", message = "Die Sicherung „" + name + "“ liegt nicht mehr im Sicherungsordner; es wurde nichts zurückgespielt. Die Maßnahme lässt sich nach einer neuen Prüfung erneut ausführen." });
+                return;
+            }
+            // Dieselbe Regel wie beim Knopf im Verlauf (M4-Entwurf 4): eine Sicherung aus dem
+            // Profil eines anderen Kontos oder eine unlesbare Datei geht gar nicht erst zum
+            // Helfer (der lehnte sie mit Exit 2 ab, aber erst nach Bestätigung und UAC-Dialog).
+            string profilGrund;
+            if (!SicherungFuerEigenesProfil(pfad, out profilGrund))
+            {
+                AppLog.Warn("Rückweg nicht gestartet: Sicherung „" + name + "“: " + profilGrund);
+                UiPost(new { type = "flowError", message = profilGrund });
                 return;
             }
             Massnahme hin = HinMassnahme(name);
@@ -894,11 +974,12 @@ namespace WartungsToolbox
                 Massnahme hinNachher = Massnahmen.Finde(hinKennung) ?? hin;
                 if (hinNachher != null) { hinTitel = hinNachher.Titel; titel = "Rückgängig: " + hinTitel; }
 
+                // rueckweg.kennung, rueckweg.parameter.<name>, nachweis.bestanden und nachweis.satz
+                // kommen wie alle Werte mit Punkt generisch mit (8.9, M4-Entwurf 10.3), neustart eigens.
                 var p = new Dictionary<string, string>(StringComparer.Ordinal);
                 p["sicherung"] = name;
-                foreach (var kv in erg.Werte)
-                    if (kv.Key == WertRueckwegKennung || kv.Key.StartsWith(WertRueckwegParameter, StringComparison.Ordinal)) p[kv.Key] = kv.Value;
-                WerteUebernehmen(erg, p, WertNeustart, WertNachweisBestanden, WertNachweisSatz);
+                WerteMitPunktUebernehmen(erg, p, null);
+                WerteUebernehmen(erg, p, WertNeustart);
                 Massnahme rueckweg = Massnahmen.Finde(KennungRueckweg);
                 Nachweis nw = rueckweg == null
                     ? Nachweis.Unlesbar("Der Katalog dieser Fassung kennt keinen Nachweis für den Rückweg; ob der frühere Zustand wieder gilt, bleibt offen.")
@@ -1051,6 +1132,67 @@ namespace WartungsToolbox
             }
         }
 
+        /// <summary>
+        /// Alle Werte des Helfers, deren Name einen Punkt trägt (dism.zustand, sfc.exit,
+        /// update.verborgen.vorher, nachweis.bestanden, rueckweg.parameter.&lt;name&gt;, …), unverändert
+        /// unter demselben Namen in das Wörterbuch des Nachweises (M4-Entwurf 4 und 10.3); der Kern
+        /// liest sie dort. Ein Name, der schon als Befund-Parameter da ist (befundParameter, darf
+        /// null sein), bleibt der des Befunds: der Helfer überschreibt nie, womit er gerufen wurde.
+        /// Leere Werte werden nicht übernommen (ein leerer Wert ist für den Kern „fehlt“).
+        /// </summary>
+        static void WerteMitPunktUebernehmen(PlanErgebnis erg, Dictionary<string, string> p, Dictionary<string, string> befundParameter)
+        {
+            if (erg == null || erg.Werte == null) return;
+            foreach (var kv in erg.Werte)
+            {
+                if (string.IsNullOrEmpty(kv.Key) || kv.Key.IndexOf('.') < 0 || string.IsNullOrEmpty(kv.Value)) continue;
+                if (befundParameter != null && befundParameter.ContainsKey(kv.Key)) continue;
+                p[kv.Key] = kv.Value;
+            }
+        }
+
+        /// <summary>
+        /// Liest eine Sicherungsdatei lesend (Kern.Json mit derselben Klasse wie der Helfer,
+        /// Helfer.Sicherung; M4-Entwurf 10.3) und sagt, ob der Rückweg über sie für dieses Konto
+        /// in Frage kommt: true, wenn parameter.profilSid fehlt (maschinenweite Sicherung) oder das
+        /// eigene Profil nennt; false mit grund bei fremdem Profil, unlesbarer Datei, Datei ohne
+        /// Kennung, leerem oder ungültigem profilSid oder unlesbarer eigener SID (was sich nicht
+        /// prüfen lässt, bekommt keinen Knopf). Herkunft (Besitzer, Rechte, Hardlinks) prüft
+        /// weiter nur der Helfer am Handle; hier geht es nur darum, keinen Knopf zu zeigen, der
+        /// immer in seine Absage führt (Rueckweg.InhaltPruefen lehnt genau diese Fälle mit Exit 2
+        /// ab). Wirft nie.
+        /// </summary>
+        static bool SicherungFuerEigenesProfil(string pfad, out string grund)
+        {
+            grund = null;
+            Helfer.Sicherung s;
+            try { s = Json.Lesen<Helfer.Sicherung>(File.ReadAllText(pfad, Encoding.UTF8)); }
+            catch (Exception ex)
+            {
+                grund = "Die Sicherungsdatei ließ sich nicht lesen (" + ex.Message.TrimEnd('.') + "); ohne lesbare Sicherung gibt es kein „Rückgängig“.";
+                return false;
+            }
+            // „null“, „[]“ oder ein Objekt ohne kennung lesen sich fehlerfrei, sind aber keine
+            // Sicherung: der Helfer wüsste nicht, welchen Rückweg er nehmen soll.
+            if (s == null || string.IsNullOrEmpty(s.Kennung))
+            {
+                grund = "Die Sicherungsdatei trägt keine Kennung; ohne lesbare Sicherung gibt es kein „Rückgängig“.";
+                return false;
+            }
+            // Fehlt der Schlüssel ganz, ist die Sicherung maschinenweit (HKLM, Dienst, Aufgabe …).
+            // Steht er da, muss er eine Profil-SID sein: ein leerer Wert ist kein fehlender.
+            string profil;
+            if (s.Parameter == null || !s.Parameter.TryGetValue(SicherungProfilSchluessel, out profil)) return true;
+            if (string.IsNullOrEmpty(profil) || Helfer.LeistungMassnahmen.ProfilSidNorm(profil) == null)
+            {
+                grund = "Die Sicherung nennt kein gültiges Profil (" + SicherungProfilSchluessel + " muss eine Konto-SID sein); ohne das gibt es kein „Rückgängig“.";
+                return false;
+            }
+            if (Helfer.LeistungMassnahmen.ProfilIstEigenes(profil)) return true;
+            grund = Helfer.LeistungMassnahmen.ProfilFremdeSicherung;
+            return false;
+        }
+
         static string MassnahmeFehlerSatz(string titel)
         {
             return "Die Maßnahme „" + titel + "“ konnte nicht abgeschlossen werden; den Grund nennen die Zeilen darüber. Sie können es jederzeit erneut versuchen.";
@@ -1165,6 +1307,7 @@ namespace WartungsToolbox
         PlanErgebnis PlanAusfuehren(IAusfuehrer a, Plan plan, string kennung)
         {
             _flowAbbruchNachgereicht = 0;
+            _planLetzteBadZeile = null;
             var k = new Helfer.Ausfuehrungskontext();
             k.Zeile = delegate (string text, string art, int? prozent)
             {
@@ -1174,6 +1317,7 @@ namespace WartungsToolbox
                     UiPost(new { type = "flowPercent", percent = prozent.Value });
                     if (string.IsNullOrEmpty(text)) return;   // reine Fortschrittszeile: keine Konsolenzeile
                 }
+                if (art == "bad" && !string.IsNullOrWhiteSpace(text)) _planLetzteBadZeile = text.Trim();
                 FlowLog(text ?? "", ZeilenArt(art));
             };
             // Der Balken zählt die Schritte der Maßnahme (Tiefenprüfung 2, Reparatur 4); ein
@@ -1439,72 +1583,98 @@ namespace WartungsToolbox
         }
 
         /// <summary>
-        /// Deutet die Ausgaben von DISM und SFC anhand der offiziellen Meldungstexte (Explain).
-        /// Unbekannte Ausgaben werden NICHT gedeutet. Das bleibt die einzige Stelle im
-        /// Hauptweg, die Text liest; sie wird in Meilenstein 4 durch DISM-API und CBS.log ersetzt.
+        /// Urteil über die Windows-Dateien aus den Werten des Helfers (M4-Entwurf 10.3): DISM nur
+        /// aus dism.zustand (healthy → ok, repairable → „reparierbar“ als warn, nonrepairable →
+        /// bad, fehler oder fehlend → unbekannt, mit dism.hresult im Satz), SFC aus sfc.zustand
+        /// (ohneBefund → ok, repariert → ok mit Neustart-Rat, nichtRepariert → bad, fehler oder
+        /// fehlend → unbekannt, mit sfc.exit im Satz). Die Textsuche in dism.ausgabe (Explain)
+        /// entfällt; der Übergangswert bleibt nur in alten Protokollen. Kein Wert wird gedeutet,
+        /// der nicht da ist: fehlt einer der beiden, gibt es kein „in Ordnung“, aber auch keinen
+        /// Befund (unbekannt). Ein Neustart gilt, wenn SFC repariert hat oder der Helfer neustart
+        /// = "1" meldet (sfc.exit 3010, „pending“ in CBS.log).
         /// </summary>
-        void EvaluateFiles(string dismOut, string sfcOut)
+        void EvaluateFiles(PlanErgebnis erg)
         {
             _filesSummary = null;
             _filesAdvice = null;
             _filesNeustart = false;
 
-            // Beide Deutungen getrennt, dann gilt die schlechtere. Bis 12.09.2026 gewann bei
+            string dism = (erg.Wert(WertDismZustand) ?? "").Trim();
+            string sfc = (erg.Wert(WertSfcZustand) ?? "").Trim();
+            string hresult = erg.Wert(WertDismHresult);
+            string sfcExit = erg.Wert(WertSfcExit);
+
+            // Beide Urteile getrennt, dann gilt das schlechtere. Bis 12.09.2026 gewann bei
             // unbekannter SFC-Ausgabe (abgebrochen, unbekannte Meldung) die DISM-Deutung, und
             // ein Lauf ohne SFC-Ergebnis stand als "unbeschädigt" da.
-            bool sfcGut;
-            string sfcTxt = Deutung("sfc", sfcOut, out sfcGut);
-            bool dismGut;
-            string dismTxt = Deutung("dism", dismOut, out dismGut);
-
-            string sfcZustand = sfcTxt == null ? Zustand.Unknown : (sfcGut ? Zustand.Ok : Zustand.Bad);
-            string dismZustand = dismTxt == null ? Zustand.Unknown : (dismGut ? Zustand.Ok : Zustand.Warn);
+            string dismZustand;
+            switch (dism)
+            {
+                case "healthy": dismZustand = Zustand.Ok; break;
+                case "repairable": dismZustand = Zustand.Warn; break;
+                case "nonrepairable": dismZustand = Zustand.Bad; break;
+                default: dismZustand = Zustand.Unknown; break;
+            }
+            bool repariert = sfc == "repariert";
+            string sfcZustand;
+            switch (sfc)
+            {
+                case "ohneBefund": case "repariert": sfcZustand = Zustand.Ok; break;
+                case "nichtRepariert": sfcZustand = Zustand.Bad; break;
+                default: sfcZustand = Zustand.Unknown; break;
+            }
             // Unbekannt zählt hier wie ein eigener Rang zwischen ok und warn: ohne SFC-Ergebnis
             // gibt es kein "in Ordnung", aber auch keinen Befund.
             string zustand;
-            if (sfcZustand == Zustand.Bad) zustand = Zustand.Bad;
+            if (sfcZustand == Zustand.Bad || dismZustand == Zustand.Bad) zustand = Zustand.Bad;
             else if (dismZustand == Zustand.Warn) zustand = Zustand.Warn;
             else if (sfcZustand == Zustand.Unknown || dismZustand == Zustand.Unknown) zustand = Zustand.Unknown;
             else zustand = Zustand.Ok;
             _filesState = zustand;
+            _filesNeustart = repariert || erg.Wert(WertNeustart) == "1";
 
             if (zustand == Zustand.Bad)
             {
-                _filesSummary = "Es wurden beschädigte Windows-Dateien gefunden, die nicht alle repariert werden konnten.";
-                _filesAdvice = "Lassen Sie die Reparatur laufen. Bleibt der Befund, hilft eine Windows-Reparaturinstallation.";
+                if (dismZustand == Zustand.Bad)
+                {
+                    _filesSummary = "Die Grundbestandteile von Windows (Komponentenspeicher) sind beschädigt und lassen sich mit DISM nicht reparieren"
+                                    + (sfcZustand == Zustand.Bad ? "; auch beschädigte Windows-Dateien blieben unrepariert." : ".");
+                    _filesAdvice = "Bleibt der Befund nach einem zweiten Lauf mit Internetverbindung, hilft nur eine Windows-Reparaturinstallation (Inplace-Upgrade); eigene Dateien und Programme bleiben dabei erhalten.";
+                }
+                else
+                {
+                    _filesSummary = "Es wurden beschädigte Windows-Dateien gefunden, die nicht alle repariert werden konnten.";
+                    _filesAdvice = "Lassen Sie die Reparatur laufen. Bleibt der Befund, hilft eine Windows-Reparaturinstallation.";
+                }
                 return;
             }
             if (zustand == Zustand.Warn)
             {
-                _filesSummary = "An den Grundbestandteilen von Windows wurden Beschädigungen gefunden.";
+                _filesSummary = "An den Grundbestandteilen von Windows wurden Beschädigungen gefunden; sie sind reparierbar, solange Windows Update erreichbar ist.";
                 _filesAdvice = "Lassen Sie die Reparatur laufen. Sie holt die fehlenden Bestandteile über das Internet neu.";
                 return;
             }
             if (zustand == Zustand.Unknown)
             {
-                _filesSummary = sfcTxt == null && dismTxt == null
-                    ? "Der Zustand der Windows-Dateien ließ sich nicht eindeutig bestimmen: beide Prüfwerkzeuge lieferten kein auswertbares Ergebnis."
-                    : (sfcTxt == null ? "Die Grundbestandteile sind geprüft, die Dateiprüfung (SFC) lieferte aber kein auswertbares Ergebnis."
-                                      : "Die Dateien sind geprüft, die Prüfung der Grundbestandteile (DISM) lieferte aber kein auswertbares Ergebnis.");
+                string dismSatz = dism == "fehler"
+                    ? "die Prüfung der Grundbestandteile (DISM) meldete einen Fehler" + (string.IsNullOrEmpty(hresult) ? "" : " (" + hresult + ")")
+                    : "die Prüfung der Grundbestandteile (DISM) lieferte kein Ergebnis";
+                string sfcSatz = sfc == "fehler"
+                    ? "die Dateiprüfung (SFC) meldete einen Fehler" + (string.IsNullOrEmpty(sfcExit) ? "" : " (Exit " + sfcExit + ")")
+                    : "die Dateiprüfung (SFC) lieferte kein Ergebnis";
+                if (sfcZustand == Zustand.Unknown && dismZustand == Zustand.Unknown)
+                    _filesSummary = "Der Zustand der Windows-Dateien ließ sich nicht bestimmen: " + dismSatz + ", und " + sfcSatz + ".";
+                else if (sfcZustand == Zustand.Unknown)
+                    _filesSummary = "Die Grundbestandteile sind geprüft, aber " + sfcSatz + ".";
+                else
+                    _filesSummary = "Die Dateien sind geprüft, aber " + dismSatz + ".";
                 return;
             }
-            bool repariert = sfcTxt.IndexOf("repariert", StringComparison.OrdinalIgnoreCase) >= 0;
             _filesSummary = repariert
                 ? "Beschädigte Windows-Dateien wurden gefunden und repariert."
                 : "Alle geschützten Windows-Dateien und die Grundbestandteile von Windows sind in Ordnung.";
-            _filesNeustart = repariert;
-            if (repariert)
+            if (_filesNeustart)
                 _filesAdvice = "Starten Sie den PC einmal neu, damit die Reparatur vollständig abgeschlossen ist.";
-        }
-
-        /// <summary>
-        /// Explain.ForOutput wählt die Deutung am Dateinamen des Werkzeugs. Der Host führt seit
-        /// 8.1 keinen Werkzeugnamen mehr als Literal (er startet keins; Test 8.3 greppt danach),
-        /// deshalb entsteht der Name aus dem Werte-Präfix des Helfers ("dism", "sfc") plus Endung.
-        /// </summary>
-        static string Deutung(string praefix, string ausgabe, out bool gut)
-        {
-            return Explain.ForOutput(praefix + ".exe", ausgabe ?? "", out gut);
         }
 
         // ---------------------------------------------------------------- Ergebnis
@@ -1735,6 +1905,259 @@ namespace WartungsToolbox
                 sb.AppendLine("ROHAUSGABE DER WERKZEUGE");
                 sb.Append(_log.ToString());
             }
+            return sb.ToString();
+        }
+
+        // ---------------------------------------------------------------- Techniker-Ansicht (Meilenstein 4)
+
+        /// <summary>Zahl der jüngsten Protokolldateien, die die Techniker-Ansicht nennt (M4-Entwurf 4).</summary>
+        const int TechnikerProtokollAnzahl = 10;
+
+        /// <summary>
+        /// Befehl „technikerAnsicht“ (UI → Host, M4-Entwurf 4): alle Befunde des letzten Ergebnisses,
+        /// auch „in Ordnung“, mit Messwert, Schwelle, Quelle, Detail, Kennungen und Parametern; dazu
+        /// die Fehlerliste des Systembilds, was nicht geprüft wurde, die zehn jüngsten Protokolle
+        /// und der Laufzeitordner. Nur lesend, nichts wird geändert. Ohne Ergebnis (kein Bild) ist
+        /// die Antwort techniker {leer: true}. Bild und Ergebnisse werden als Stand von jetzt
+        /// gefasst; die Dateizugriffe (Protokolle, Sicherungen zählen) laufen im Hintergrund, die
+        /// Antwort geht per UiPost. Nie stumm: ein Fehler beim Zusammenstellen kommt als leer mit fehler.
+        /// </summary>
+        internal void TechnikerAnsicht()
+        {
+            Systembild bild = _bild;
+            List<BereichErgebnis> ergebnisse = _ergebnisse;
+            if (bild == null)
+            {
+                UiPost(new { type = "techniker", leer = true });
+                return;
+            }
+            Thread t = new Thread(delegate ()
+            {
+                try { UiPost(TechnikerDaten(bild, ergebnisse)); }
+                catch (Exception ex)
+                {
+                    AppLog.Warn("Techniker-Ansicht nicht erstellt: " + ex.Message);
+                    UiPost(new { type = "techniker", leer = true, fehler = "Die Techniker-Ansicht ließ sich nicht zusammenstellen (" + ex.Message.TrimEnd('.') + "); nach einer neuen Prüfung geht es erneut." });
+                }
+            }) { IsBackground = true, Name = "techniker" };
+            t.Start();
+        }
+
+        /// <summary>Die Nachricht techniker (Feldnamen aus M4-Entwurf 4) aus Bild und Ergebnissen.</summary>
+        object TechnikerDaten(Systembild bild, List<BereichErgebnis> ergebnisse)
+        {
+            var bereiche = new List<object>();
+            foreach (var b in ergebnisse ?? new List<BereichErgebnis>())
+            {
+                if (b == null) continue;
+                bereiche.Add(new
+                {
+                    bereich = b.Bereich,
+                    titel = Bereich.Titel(b.Bereich),
+                    zustand = b.Zustand,
+                    fehlend = b.Fehlend.ToArray(),
+                    befunde = b.Befunde.Where(f => f != null).Select(TechnikerBefund).ToArray(),
+                });
+            }
+            // Der Dateibefund der Tiefenprüfung liegt nicht im Systembild (eigene Felder); er gehört
+            // trotzdem zu „alle Befunde“, sobald geprüft wurde.
+            if (_filesGeprueft)
+            {
+                bereiche.Add(new
+                {
+                    bereich = "files",
+                    titel = "Windows-Dateien",
+                    zustand = _filesState,
+                    fehlend = new string[0],
+                    befunde = new object[]
+                    {
+                        new
+                        {
+                            schluessel = "windows.dateien", zustand = _filesState, titel = "Windows-Dateien", satz = _filesSummary, rat = _filesAdvice,
+                            messwert = (string)null, einheit = (string)null, schwelle = (string)null, quelle = "DISM-API (dism.zustand), sfc.exe (sfc.zustand)",
+                            detail = new string[0], massnahmen = new string[0], parameter = new Dictionary<string, string>(), frage = (string)null, antwort = (string)null,
+                        },
+                    },
+                });
+            }
+
+            Kern.Windows w = bild.Windows ?? new Kern.Windows();
+            Kern.Hardware h = bild.Hardware ?? new Kern.Hardware();
+            return new
+            {
+                type = "techniker",
+                version = typeof(ShellForm).Assembly.GetName().Version.ToString(3),
+                aufgezeichnet = ZeitText(bild.AufgezeichnetUtc),
+                erhoeht = bild.Erhoeht,
+                windows = new
+                {
+                    produkt = string.IsNullOrEmpty(w.Caption) ? w.Edition : w.Caption,
+                    build = w.Build > 0 ? w.Build + "." + w.Ubr + (string.IsNullOrEmpty(w.DisplayVersion) ? "" : " (" + w.DisplayVersion + ")") : null,
+                    sprache = SpracheText(bild.Sprache),
+                },
+                hardware = new
+                {
+                    system = ((h.Hersteller ?? "") + " " + (h.Modell ?? "")).Trim(),
+                    cpu = h.Cpu,
+                    ramGb = h.RamGesamtKB > 0 ? Math.Round(h.RamGesamtKB / 1048576.0, 1) : (double?)null,
+                },
+                bereiche = bereiche.ToArray(),
+                fehlerliste = (bild.Fehlerliste ?? new List<Fehler>()).Where(f => f != null)
+                    .Select(f => new { quelle = f.Quelle, art = f.Art, text = f.Text }).ToArray(),
+                protokolle = TechnikerProtokolle().Select(p => new { name = p.Name, zeit = p.LastWriteTime.ToString("dd.MM.yyyy HH:mm"), groesse = p.Length }).ToArray(),
+                laufzeitordner = Ablage.Maschinenweit(),
+                sicherungen = SicherungenZaehlen(),
+            };
+        }
+
+        /// <summary>Ein Befund für die Techniker-Ansicht: alle Felder, die der Kern trägt, plus die gespeicherte Antwort auf seine Frage.</summary>
+        object TechnikerBefund(Befund f)
+        {
+            string antwort = null;
+            if (f.Frage != null && !string.IsNullOrEmpty(f.Frage.Id))
+            {
+                try { antwort = Entscheidungen.AntwortAuf(f.Frage.Id); }
+                catch (Exception ex) { AppLog.Warn("Antwort zu " + f.Frage.Id + " nicht lesbar: " + ex.Message); }
+            }
+            return new
+            {
+                schluessel = f.Schluessel,
+                zustand = f.Zustand,
+                titel = f.Titel,
+                satz = f.Satz,
+                rat = f.Rat,
+                messwert = f.Messwert == null ? null : f.Messwert.Wert,
+                einheit = f.Messwert == null ? null : f.Messwert.Einheit,
+                schwelle = f.Messwert == null ? null : f.Messwert.Schwelle,
+                quelle = f.Quelle,
+                detail = (f.Detail ?? new List<string>()).ToArray(),
+                massnahmen = (f.Massnahmen ?? new List<string>()).ToArray(),
+                parameter = f.Parameter ?? new Dictionary<string, string>(),
+                frage = f.Frage == null ? null : f.Frage.Text,
+                antwort = antwort,
+            };
+        }
+
+        /// <summary>ISO-Zeit des Bilds als Ortszeit „dd.MM.yyyy HH:mm:ss“; unlesbar → der Rohtext, leer → null.</summary>
+        static string ZeitText(string iso)
+        {
+            if (string.IsNullOrEmpty(iso)) return null;
+            DateTime? t = Zeit.Lesen(iso);
+            return t.HasValue ? t.Value.ToLocalTime().ToString("dd.MM.yyyy HH:mm:ss") : iso;
+        }
+
+        /// <summary>Systemsprache als „1031 (de-DE)“; 0 → null; unbekannte LCID → nur die Zahl.</summary>
+        static string SpracheText(Kern.Sprache s)
+        {
+            if (s == null || s.Lcid == 0) return null;
+            try { return s.Lcid + " (" + System.Globalization.CultureInfo.GetCultureInfo(s.Lcid).Name + ")"; }
+            catch (Exception) { return s.Lcid.ToString(); }
+        }
+
+        /// <summary>
+        /// Die jüngsten Dateien des Protokollordners (lauf-*.jsonl und dism-*.log liegen dort; Kern
+        /// Protokoll.Ordner, null hinter einer Abzweigung), neueste zuerst, höchstens
+        /// TechnikerProtokollAnzahl. Wirft nie; ohne Ordner eine leere Liste.
+        /// </summary>
+        static List<FileInfo> TechnikerProtokolle()
+        {
+            try
+            {
+                string ordner = Protokoll.Ordner();
+                if (string.IsNullOrEmpty(ordner) || !Directory.Exists(ordner)) return new List<FileInfo>();
+                return new DirectoryInfo(ordner).GetFiles().OrderByDescending(f => f.LastWriteTimeUtc).Take(TechnikerProtokollAnzahl).ToList();
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Protokolle nicht gelistet: " + ex.Message);
+                return new List<FileInfo>();
+            }
+        }
+
+        /// <summary>
+        /// Zahl der Sicherungsdateien unter sicherungen\massnahmen, gebildet wie SicherungPfad (kein
+        /// Anlegen, Abzweigung zählt als 0). Wirft nie.
+        /// </summary>
+        static int SicherungenZaehlen()
+        {
+            try
+            {
+                string ordner = Path.Combine(Ablage.Maschinenweit(), "sicherungen", "massnahmen");
+                if (Ablage.IstAbzweigung(ordner) || !Directory.Exists(ordner)) return 0;
+                return Directory.GetFiles(ordner, "*.json").Length;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Sicherungen nicht gezählt: " + ex.Message);
+                return 0;
+            }
+        }
+
+        /// <summary>
+        /// Befehl „technikerText“ (UI → Host, M4-Entwurf 4): der Bericht (BerichtText) plus die
+        /// Abschnitte „ALLE BEFUNDE“ (auch in Ordnung, mit Schlüssel, Quelle, Messwert, Schwelle,
+        /// Kennungen, Parametern und Einzelheiten), „SYSTEMBILD-FEHLER“ und „PROTOKOLLE“; die
+        /// Oberfläche kopiert ihn in die Zwischenablage. Im Thread der Oberfläche, weil BerichtText
+        /// den Konsolenpuffer liest, der nur dort geschrieben wird.
+        /// </summary>
+        internal string TechnikerText()
+        {
+            var sb = new StringBuilder(BerichtText());
+            var ergebnisse = _ergebnisse ?? new List<BereichErgebnis>();
+            sb.AppendLine();
+            sb.AppendLine("ALLE BEFUNDE (auch in Ordnung)");
+            if (ergebnisse.Count == 0) sb.AppendLine("  Es liegt kein Ergebnis vor (0 Bereiche); erst prüfen.");
+            foreach (var b in ergebnisse)
+            {
+                if (b == null) continue;
+                sb.AppendLine();
+                sb.AppendLine("[" + b.Zustand + "] " + Bereich.Titel(b.Bereich) + " (" + b.Befunde.Count + " Befund(e))");
+                foreach (var f in b.Befunde)
+                {
+                    if (f == null) continue;
+                    sb.AppendLine("  " + f.Schluessel + "  [" + f.Zustand + "]  " + f.Titel + ": " + f.Satz);
+                    sb.AppendLine("      Quelle: " + (f.Quelle ?? "?")
+                                  + (f.Messwert != null ? "  Messwert: " + f.Messwert.Wert + " " + f.Messwert.Einheit + (f.Messwert.Schwelle != null ? " (Schwelle " + f.Messwert.Schwelle + ")" : "") : ""));
+                    if (!string.IsNullOrEmpty(f.Rat)) sb.AppendLine("      Rat: " + f.Rat);
+                    if (f.Massnahmen != null && f.Massnahmen.Count > 0)
+                        sb.AppendLine("      Kennungen: " + string.Join(", ", f.Massnahmen) + (f.Parameter != null && f.Parameter.Count > 0 ? "  Parameter: " + ParameterText(f.Parameter) : ""));
+                    if (f.Frage != null)
+                    {
+                        string antwort = null;
+                        try { antwort = Entscheidungen.AntwortAuf(f.Frage.Id); } catch (Exception) { }
+                        sb.AppendLine("      Frage: " + f.Frage.Text + "  Antwort: " + (antwort ?? "offen"));
+                    }
+                    foreach (string d in f.Detail ?? new List<string>()) sb.AppendLine("      " + d);
+                }
+                foreach (string fe in b.Fehlend) sb.AppendLine("  Nicht geprüft: " + fe);
+            }
+            if (_filesGeprueft)
+            {
+                sb.AppendLine();
+                sb.AppendLine("[" + _filesState + "] Windows-Dateien (1 Befund)");
+                sb.AppendLine("  windows.dateien  [" + _filesState + "]  Windows-Dateien: " + _filesSummary);
+                sb.AppendLine("      Quelle: DISM-API (dism.zustand), sfc.exe (sfc.zustand)");
+                if (!string.IsNullOrEmpty(_filesAdvice)) sb.AppendLine("      Rat: " + _filesAdvice);
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("SYSTEMBILD-FEHLER");
+            var fehler = _bild != null && _bild.Fehlerliste != null ? _bild.Fehlerliste.Where(f => f != null).ToList() : new List<Fehler>();
+            if (fehler.Count == 0) sb.AppendLine("  Keine (0 Einträge): jede Quelle hat geliefert.");
+            foreach (var fe in fehler)
+                sb.AppendLine("  " + fe.Quelle + " [" + fe.Art + "] " + fe.Text + (fe.Art == Fehler.Zugriff ? " (mit Administratorrechten ergänzbar)" : ""));
+
+            sb.AppendLine();
+            string protokollOrdner = null;
+            try { protokollOrdner = Protokoll.Ordner(); } catch (Exception) { }
+            sb.AppendLine("PROTOKOLLE (Ordner: " + (protokollOrdner ?? "keiner") + ", die " + TechnikerProtokollAnzahl + " jüngsten)");
+            var protokolle = TechnikerProtokolle();
+            if (protokolle.Count == 0) sb.AppendLine("  Keine Protokolldatei (0 Dateien).");
+            foreach (var p in protokolle)
+                sb.AppendLine("  " + p.LastWriteTime.ToString("dd.MM.yyyy HH:mm") + "  " + p.Length.ToString().PadLeft(9) + " Byte  " + p.Name);
+            sb.AppendLine();
+            sb.AppendLine("LAUFZEITORDNER");
+            sb.AppendLine("  " + Ablage.Maschinenweit() + "  (Sicherungen unter sicherungen\\massnahmen: " + SicherungenZaehlen() + ")");
             return sb.ToString();
         }
     }

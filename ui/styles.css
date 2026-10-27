@@ -228,6 +228,9 @@ h1[tabindex="-1"]:focus,h1[tabindex="-1"]:focus-visible{outline:none}
 .link.danger:hover:not(:disabled){background:var(--bad-bg)}
 /* „Abschalten“ beim Zeitplan wartet wie die Schaltflächen auf 'done' (B26) */
 .link:disabled{opacity:.5;cursor:default}
+/* v8.3: „Für den Techniker“ im Fuß des Ergebnisses ist ein Knopf (btn-ghost, Vertrag M4 §7),
+   in der Höhe der Links daneben, damit die Zeile nicht springt. */
+.foot-r .btn-ghost{padding:7px 13px;font-size:13px;border-radius:var(--r-sm)}
 
 /* ---------- Ablauf ---------- */
 .barrow{display:flex;align-items:center;gap:14px;margin-bottom:7px}
@@ -499,6 +502,80 @@ input:focus-visible,select:focus-visible{border-color:var(--accent)}
 /* Die Fachzeile trägt Registrierungspfade ohne Leerzeichen; ohne Umbruchpunkt liefen sie
    waagerecht aus dem Dialog. */
 .modal .card-tech{overflow-wrap:anywhere}
+/* v8.3: der Kasten „Was verloren geht“ bei Stufe 3 (nicht umkehrbar). Warnfarbe wie die
+   Befundkarten, das Symbol alert davor, darunter das Kontrollkästchen, ohne das „Jetzt
+   ausführen“ gesperrt bleibt. Das Kästchen ist ein echtes input, kein Schalter: es ist die
+   Einwilligung, und die muss sich mit Leertaste setzen lassen. */
+.modal .modal-verlust{
+  display:flex;gap:12px;padding:14px 16px;margin-top:14px;border-radius:var(--r);
+  background:var(--warn-bg);border:1px solid var(--warn-line);
+}
+.modal-verlust .mv-ico{width:20px;height:20px;flex:none;color:var(--warn);margin-top:1px}
+.modal-verlust .mv-ico svg{width:20px;height:20px}
+.modal-verlust .mv-b{flex:1;min-width:0}
+.modal-verlust .lead{color:var(--warn)}
+.modal .modal-verlust p{color:var(--text)}
+.modal-verlust .mv-check{
+  display:flex;align-items:flex-start;gap:10px;margin-top:12px;cursor:pointer;
+  font-size:14px;font-weight:600;line-height:1.4;
+}
+.modal-verlust .mv-check input{
+  width:18px;height:18px;margin:1px 0 0;flex:none;cursor:pointer;accent-color:var(--accent);
+}
+.modal-verlust .mv-check input:disabled{cursor:default;opacity:.5}
+
+/* ---------- Für den Techniker (v8.3) ----------
+   Tabellen je Bereich: Schlüssel, Messwert, Schwelle und Quelle in Schreibmaschinenschrift,
+   markierbar (das ist der Text, den ein Techniker abtippt oder vergleicht). Auf schmalen
+   Fenstern rollt die Tabelle waagerecht in ihrem Rahmen, nicht die ganze Ansicht. Die
+   Detailzeile darunter klappt je Befund auf (Satz, Rat, Kennungen, Parameter, Einzelzeilen). */
+.tk-count{font-size:11.5px;font-weight:500;color:var(--text-3);margin-left:8px;white-space:nowrap}
+.tk-mitte{justify-content:center}
+.tk-knoepfe{flex-wrap:wrap}
+.tk-suche input[type=text]{width:260px;max-width:100%}
+.tk-suche .row-m{min-width:110px}
+.tk-wrap{overflow-x:auto;overscroll-behavior-x:contain}
+.tk-table{
+  width:100%;min-width:760px;border-collapse:collapse;font-size:12.8px;
+  -webkit-user-select:text;user-select:text;
+}
+.tk-table.tk-table-3{min-width:520px}
+.tk-table th{
+  text-align:left;font-size:11px;letter-spacing:1px;text-transform:uppercase;font-weight:600;
+  color:var(--text-3);padding:10px 12px;border-bottom:1px solid var(--line);white-space:nowrap;
+  background:var(--surface-2);
+}
+.tk-table td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top;line-height:1.45}
+.tk-table tbody tr:last-child td{border-bottom:0}
+/* Quelle und Messwert brechen nicht mitten im Wort; wird es breiter als das Fenster, rollt
+   der Rahmen (.tk-wrap) waagerecht. Der Schlüssel darf ab 360 px umbrechen: eine Geräte-
+   Instanz (PCI\VEN_…&DEV_…) hat 60 und mehr Zeichen und schöbe sonst jede andere Spalte
+   aus dem Bild; ein gewöhnlicher Schlüssel (30 Zeichen) bleibt auf einer Zeile. */
+.tk-table td.mono{
+  font-family:"Cascadia Mono","Consolas",monospace;font-size:12px;color:var(--text-2);
+  white-space:nowrap;
+}
+.tk-table td.tk-key{white-space:normal;overflow-wrap:anywhere;min-width:300px;max-width:380px}
+.tk-table td.tk-zahl{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.tk-th-toggle,.tk-td-toggle{width:36px;padding-right:0}
+.tk-row{cursor:pointer}
+.tk-row:hover td{background:var(--surface-2)}
+.tk-toggle{
+  width:24px;height:24px;border-radius:50%;border:1px solid var(--line);background:var(--surface-2);
+  color:var(--text-3);display:grid;place-items:center;cursor:pointer;
+}
+.tk-toggle svg{width:12px;height:12px;transition:transform .18s var(--ease)}
+.tk-toggle[aria-expanded="true"] svg{transform:rotate(90deg)}
+.tk-toggle:hover{color:var(--accent);border-color:var(--accent)}
+.tk-detail td{background:var(--surface-2);padding:12px 16px 14px 48px}
+.tk-detail-b{
+  display:flex;flex-direction:column;gap:5px;font-size:12.8px;color:var(--text-2);line-height:1.55;
+  -webkit-user-select:text;user-select:text;cursor:text;
+}
+.tk-detail-b b{color:var(--text);font-weight:600}
+.tk-detail-zeilen{white-space:pre-wrap;overflow-wrap:anywhere}
+.tk-pfad{overflow-wrap:anywhere;white-space:normal;-webkit-user-select:text;user-select:text;cursor:text}
+.tk-keine{padding:18px}
 
 /* ---------- Banner ---------- */
 .banner{

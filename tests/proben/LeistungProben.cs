@@ -505,8 +505,29 @@ namespace WartungsToolbox.Proben
             var b = Harness.Einer(erg, "leistung.winlogon.shell");
             h.Ist("Shell-Befund bad", b != null && b.Zustand == Zustand.Bad);
             h.Ist("Satz nennt cmd.exe und explorer.exe", b != null && b.Satz.Contains("cmd.exe") && b.Satz.Contains("explorer.exe"));
-            h.Ist("Maßnahme leistung.winlogon.zuruecksetzen (Rat, M3-Entwurf 8.5)", b != null && b.Massnahmen.Contains(LeistungRegel.MWinlogonZuruecksetzen));
+            h.Ist("Maßnahme leistung.winlogon.zuruecksetzen (seit M4 Stufe 2, kein Parameter)", b != null && b.Massnahmen.Contains(LeistungRegel.MWinlogonZuruecksetzen));
+            h.Ist("Shell-Befund ohne Parameter, Rat nennt die Maßnahme und die Sicherung", b != null && b.Parameter.Count == 0 && (b.Rat ?? "").Contains("Maßnahme an dieser Karte") && b.Rat.Contains("Sicherung"), b != null ? b.Rat : null);
             h.Ist("Gegenprobe: kein Userinit-Befund", Harness.Einer(erg, "leistung.winlogon.userinit") == null);
+            // Das Praedikat, das Regel, Nachweis und Helfer teilen (docs/M4-ENTWURF.md, Abschnitt 2.4):
+            // Grenzfaelle mit Leerraum, Grossschreibung und abschliessendem Komma.
+            h.Ist("WinlogonShellStandard: explorer.exe", LeistungRegel.WinlogonShellStandard("explorer.exe"));
+            h.Ist("WinlogonShellStandard: „  Explorer.EXE  “ (Leerraum, Grossschreibung)", LeistungRegel.WinlogonShellStandard("  Explorer.EXE  "));
+            h.Ist("WinlogonShellStandard: „explorer.exe,“ (leerer zweiter Eintrag) gilt wie bisher als Standard", LeistungRegel.WinlogonShellStandard("explorer.exe,"));
+            h.Ist("WinlogonShellStandard: null und leer (Wert nicht gesetzt)", LeistungRegel.WinlogonShellStandard(null) && LeistungRegel.WinlogonShellStandard("") && LeistungRegel.WinlogonShellStandard("   "));
+            h.Ist("WinlogonShellStandard: cmd.exe => nein", !LeistungRegel.WinlogonShellStandard("cmd.exe"));
+            h.Ist("WinlogonShellStandard: „explorer.exe,C:\\evil.exe“ => nein", !LeistungRegel.WinlogonShellStandard("explorer.exe,C:\\evil.exe"));
+            h.Ist("WinlogonShellStandard: „C:\\Windows\\explorer.exe“ (Pfad statt Name) => nein", !LeistungRegel.WinlogonShellStandard("C:\\Windows\\explorer.exe"));
+            h.Ist("WinlogonShellStandard: „explorer.exe.exe“ => nein", !LeistungRegel.WinlogonShellStandard("explorer.exe.exe"));
+            // Die Regel entscheidet ueber genau dieses Praedikat: dieselben Werte im Bild.
+            foreach (string gut in new[] { "explorer.exe", "  Explorer.EXE  ", "explorer.exe," })
+            {
+                s.Autostart.Shell = gut;
+                h.Ist("Gegenprobe: Shell „" + gut + "“ im Bild = kein Befund", Harness.Einer(h.Pruefen(s), "leistung.winlogon.shell") == null);
+            }
+            s.Autostart.Shell = "explorer.exe,C:\\evil.exe";
+            var sh = Harness.Einer(h.Pruefen(s), "leistung.winlogon.shell");
+            h.Ist("Gegenprobe: Shell „explorer.exe,C:\\evil.exe“ = bad mit Maßnahme", sh != null && sh.Zustand == Zustand.Bad && sh.Massnahmen.Contains(LeistungRegel.MWinlogonZuruecksetzen));
+            s.Autostart.Shell = "cmd.exe";
             var a = Harness.Einer(erg, "leistung.appinit");
             h.Ist("AppInit ohne Secure Boot, Schalter 1 = warn", a != null && a.Zustand == Zustand.Warn, a != null ? a.Zustand : null);
             h.Ist("AppInit-Satz behauptet „wird … geladen“ nur mit Schalter 1", a != null && a.Satz.Contains("geladen") && a.Satz.Contains("LoadAppInit_DLLs steht auf 1"), a != null ? a.Satz : null);
@@ -543,7 +564,7 @@ namespace WartungsToolbox.Proben
             if (b == null) return;
             h.Ist("Titel „ergänzt“, nicht „ausgetauscht“", b.Titel.Contains("ergänzt") && !b.Titel.Contains("ausgetauscht"), b.Titel);
             h.Ist("Satz nennt „C:\\Users\\Public\\x.exe“ und nicht „ohne userinit.exe“", b.Satz.Contains("„C:\\Users\\Public\\x.exe“") && !b.Satz.Contains("ohne „userinit.exe“"), b.Satz);
-            h.Ist("Maßnahme leistung.winlogon.zuruecksetzen (Rat, M3-Entwurf 8.5)", b.Massnahmen.Contains(LeistungRegel.MWinlogonZuruecksetzen));
+            h.Ist("Maßnahme leistung.winlogon.zuruecksetzen (seit M4 Stufe 2, kein Parameter)", b.Massnahmen.Contains(LeistungRegel.MWinlogonZuruecksetzen));
             // Gegenproben: der Sollwert in drei Schreibweisen ergibt keinen Befund.
             foreach (string gut in new[] { "C:\\WINDOWS\\system32\\userinit.exe", "C:\\Windows\\system32\\userinit.exe,", "%SystemRoot%\\system32\\userinit.exe,", "\"C:\\Windows\\System32\\userinit.exe\"," })
             {
@@ -553,6 +574,35 @@ namespace WartungsToolbox.Proben
             s.Autostart.Userinit = "C:\\Windows\\system32\\userinit.exe,C:\\Windows\\system32\\userinit.exe,";
             var d = Harness.Einer(h.Pruefen(s), "leistung.winlogon.userinit");
             h.Ist("Doppelter userinit-Teil = ergänzt (genau ein Teil erlaubt)", d != null && d.Titel.Contains("ergänzt"), d != null ? d.Titel : null);
+            h.Ist("Userinit-Befund ohne Parameter, Rat nennt die Maßnahme und die Sicherung", d != null && d.Parameter.Count == 0 && (d.Rat ?? "").Contains("Maßnahme an dieser Karte") && d.Rat.Contains("Sicherung"), d != null ? d.Rat : null);
+            // Das Praedikat, das Regel, Nachweis und Helfer teilen (docs/M4-ENTWURF.md, Abschnitt 2.4):
+            // mit und ohne Komma, Leerraum, Grossschreibung, Anfuehrungszeichen; der Helfer schreibt
+            // <SystemDirectory>\userinit.exe, und erfuellt damit dieselbe Bedingung.
+            h.Ist("WinlogonUserinitStandard: „C:\\Windows\\system32\\userinit.exe,“ (mit Komma)", LeistungRegel.WinlogonUserinitStandard("C:\\Windows\\system32\\userinit.exe,"));
+            h.Ist("WinlogonUserinitStandard: „C:\\Windows\\system32\\userinit.exe“ (ohne Komma)", LeistungRegel.WinlogonUserinitStandard("C:\\Windows\\system32\\userinit.exe"));
+            h.Ist("WinlogonUserinitStandard: „ C:\\WINDOWS\\SYSTEM32\\USERINIT.EXE , “ (Leerraum, Grossschreibung)", LeistungRegel.WinlogonUserinitStandard(" C:\\WINDOWS\\SYSTEM32\\USERINIT.EXE , "));
+            h.Ist("WinlogonUserinitStandard: „%SystemRoot%\\system32\\userinit.exe,“ und „\"C:\\Windows\\System32\\userinit.exe\",“", LeistungRegel.WinlogonUserinitStandard("%SystemRoot%\\system32\\userinit.exe,") && LeistungRegel.WinlogonUserinitStandard("\"C:\\Windows\\System32\\userinit.exe\","));
+            h.Ist("WinlogonUserinitStandard: „D:\\Windows\\system32\\userinit.exe,,“ (zwei leere Teile) => ja", LeistungRegel.WinlogonUserinitStandard("D:\\Windows\\system32\\userinit.exe,,"));
+            h.Ist("WinlogonUserinitStandard: null und leer (Wert nicht gesetzt)", LeistungRegel.WinlogonUserinitStandard(null) && LeistungRegel.WinlogonUserinitStandard("") && LeistungRegel.WinlogonUserinitStandard("  "));
+            h.Ist("WinlogonUserinitStandard: mit weiterem Eintrag nach dem Komma => nein", !LeistungRegel.WinlogonUserinitStandard("C:\\Windows\\system32\\userinit.exe,C:\\Users\\Public\\x.exe"));
+            h.Ist("WinlogonUserinitStandard: Fremdprogramm vor userinit => nein", !LeistungRegel.WinlogonUserinitStandard("C:\\Users\\Public\\x.exe,C:\\Windows\\system32\\userinit.exe,"));
+            h.Ist("WinlogonUserinitStandard: gleichnamige Kopie außerhalb von system32 => nein", !LeistungRegel.WinlogonUserinitStandard("C:\\Users\\Public\\userinit.exe,"));
+            h.Ist("WinlogonUserinitStandard: „\\system32\\userinit.exe“ ohne Ordner davor => nein", !LeistungRegel.WinlogonUserinitStandard("\\system32\\userinit.exe"));
+            h.Ist("WinlogonUserinitStandard: „userinit.exe,“ (nur Dateiname) => nein", !LeistungRegel.WinlogonUserinitStandard("userinit.exe,"));
+            h.Ist("WinlogonUserinitStandard: doppelter userinit-Teil => nein", !LeistungRegel.WinlogonUserinitStandard("C:\\Windows\\system32\\userinit.exe,C:\\Windows\\system32\\userinit.exe,"));
+            // Verankert am Anfang (Nachbesserung 18.09.2026): ein blosses EndsWith(\system32\userinit.exe) liess
+            // drei Austausch-Formen als Standard durch, die der Helfer nie schreibt.
+            h.Ist("WinlogonUserinitStandard: fremder Ordner namens system32 „C:\\Users\\Public\\system32\\userinit.exe,“ => nein", !LeistungRegel.WinlogonUserinitStandard("C:\\Users\\Public\\system32\\userinit.exe,"));
+            h.Ist("WinlogonUserinitStandard: UNC-Pfad „\\\\evil\\share\\system32\\userinit.exe,“ => nein", !LeistungRegel.WinlogonUserinitStandard("\\\\evil\\share\\system32\\userinit.exe,"));
+            h.Ist("WinlogonUserinitStandard: Pfad mit „..“ „C:\\Windows\\system32\\..\\..\\evil\\system32\\userinit.exe,“ => nein", !LeistungRegel.WinlogonUserinitStandard("C:\\Windows\\system32\\..\\..\\evil\\system32\\userinit.exe,"));
+            h.Ist("WinlogonUserinitStandard: „C:\\Windows\\system32\\userinit.exe.exe“ und „C:\\Windowsx\\system32\\userinit.exe“ => nein", !LeistungRegel.WinlogonUserinitStandard("C:\\Windows\\system32\\userinit.exe.exe") && !LeistungRegel.WinlogonUserinitStandard("C:\\Windowsx\\system32\\userinit.exe"));
+            // Regel und Praedikat urteilen gleich: jeder Sollwert oben ergibt keinen Befund, jeder Fehlwert einen.
+            foreach (string wert in new[] { " C:\\WINDOWS\\SYSTEM32\\USERINIT.EXE , ", "D:\\Windows\\system32\\userinit.exe,,", "userinit.exe,", "C:\\Users\\Public\\x.exe,C:\\Windows\\system32\\userinit.exe,", "C:\\Users\\Public\\system32\\userinit.exe,", "\\\\evil\\share\\system32\\userinit.exe," })
+            {
+                s.Autostart.Userinit = wert;
+                bool befund = Harness.Einer(h.Pruefen(s), "leistung.winlogon.userinit") != null;
+                h.Ist("Regel folgt dem Praedikat fuer „" + wert + "“", befund == !LeistungRegel.WinlogonUserinitStandard(wert), befund.ToString());
+            }
         }
 
         static void UserinitKopie(Harness h, List<Befund> alle)
@@ -565,7 +615,7 @@ namespace WartungsToolbox.Proben
             var b = Harness.Einer(erg, "leistung.winlogon.userinit");
             h.Ist("Userinit-Befund bad", b != null && b.Zustand == Zustand.Bad, b != null ? b.Zustand : null);
             h.Ist("Titel „ausgetauscht“, Satz nennt den Fremdpfad", b != null && b.Titel.Contains("ausgetauscht") && b.Satz.Contains("C:\\Users\\Public\\userinit.exe"), b != null ? b.Satz : null);
-            h.Ist("Maßnahme leistung.winlogon.zuruecksetzen (Rat, M3-Entwurf 8.5)", b != null && b.Massnahmen.Contains(LeistungRegel.MWinlogonZuruecksetzen));
+            h.Ist("Maßnahme leistung.winlogon.zuruecksetzen (seit M4 Stufe 2, kein Parameter)", b != null && b.Massnahmen.Contains(LeistungRegel.MWinlogonZuruecksetzen));
         }
 
         // ---------------------------------------------------------------- (j) AppInit

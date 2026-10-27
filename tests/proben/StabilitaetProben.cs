@@ -269,6 +269,11 @@ namespace WartungsToolbox.Proben
             h.Ist("Detail nennt abgeschaltete Fehlerberichte", b.Detail.Any(d => d.Contains("Fehlerberichte")));
             h.Ist("Detail zählt den Hänger (1002) dazu", b.Detail.Any(d => d.Contains("eingefroren")));
             h.Ist("Rat nennt Systemdateien (Windows-Modul beteiligt)", b.Rat != null && b.Rat.Contains("Systemdateien"));
+            // M4 (docs/M4-ENTWURF.md, Abschnitt 2.4): ein Windows-Modul im Absturz (ntdll.dll aus
+            // C:\WINDOWS\SYSTEM32) haengt die Reparatur der Windows-Dateien an, ein Treibermodul nicht.
+            h.Ist("Windows-Modul beteiligt: Maßnahme dateien.reparieren, sonst nichts", b.Massnahmen.SequenceEqual(new[] { Stabilitaet.MDateienReparieren }) && b.Parameter.Count == 0, string.Join(",", b.Massnahmen));
+            h.Ist("Konstanten tragen die Katalog-Kennungen", Stabilitaet.MDateienReparieren == "dateien.reparieren" && Stabilitaet.MSpeichertestPlanen == "stabilitaet.speichertest.planen");
+            h.Ist("Rat nennt die Maßnahme an der Karte (DISM und SFC), nicht mehr den Werkzeugkasten", b.Rat.Contains("Maßnahme an dieser Karte") && b.Rat.Contains("DISM") && !b.Rat.Contains("Werkzeugkasten"), b.Rat);
             h.Ist("Satz nennt den Programmnamen in deutschen Anführungszeichen", b.Satz.Contains("„beispiel.exe“") || b.Satz.Contains("„Beispiel.exe“"));
             h.Ist("Gegenprobe: kein Befund für zwei.exe (nur 2 Abstürze)", Harness.Einer(erg, "stabilitaet.programmabsturz.zwei.exe") == null);
             var d = Harness.Einer(erg, "stabilitaet.programmabsturz.drei.exe");
@@ -277,8 +282,49 @@ namespace WartungsToolbox.Proben
             {
                 h.Ist("Rat nennt Treiber, nicht Systemdateien (SFC prüft Fremdtreiber nicht)", d.Rat.Contains("Treiber") && !d.Rat.Contains("Systemdateien"), d.Rat);
                 h.Ist("Detail kennzeichnet nvml.dll als Treibermodul", d.Detail.Any(x => x.Contains("nvml.dll") && x.Contains("(Treibermodul")), string.Join(" | ", d.Detail));
+                h.Ist("Treibermodul: keine Maßnahme dateien.reparieren (DriverStore liegt unter System32, zählt aber nicht)", d.Massnahmen.Count == 0, string.Join(",", d.Massnahmen));
             }
             h.Ist("genau zwei Programmabsturz-Befunde (beispiel.exe, drei.exe)", Harness.AlleMit(erg, "stabilitaet.programmabsturz.").Count() == 2, Harness.AlleMit(erg, "stabilitaet.programmabsturz.").Count().ToString());
+
+            // Das Praedikat WindowsModul (Regel und Katalog-Nachweis teilen es): System32 und SysWOW64 auf
+            // jedem Laufwerk, Gross/Klein egal; Treiberordner darunter zaehlen nicht, Programmordner nie.
+            h.Ist("WindowsModul: C:\\WINDOWS\\SYSTEM32\\ntdll.dll => ja", Stabilitaet.WindowsModul("C:\\WINDOWS\\SYSTEM32\\ntdll.dll"));
+            h.Ist("WindowsModul: D:\\Windows\\SysWOW64\\combase.dll => ja", Stabilitaet.WindowsModul("D:\\Windows\\SysWOW64\\combase.dll"));
+            h.Ist("WindowsModul: C:\\Windows\\System32\\DriverStore\\FileRepository\\x\\nvml.dll => nein (Treiberpaket)", !Stabilitaet.WindowsModul("C:\\Windows\\System32\\DriverStore\\FileRepository\\x\\nvml.dll"));
+            h.Ist("WindowsModul: C:\\Windows\\System32\\drivers\\x.sys => nein (Kerntreiber)", !Stabilitaet.WindowsModul("C:\\Windows\\System32\\drivers\\x.sys"));
+            h.Ist("WindowsModul: C:\\Program Files\\Beispiel\\beispiel.exe => nein", !Stabilitaet.WindowsModul("C:\\Program Files\\Beispiel\\beispiel.exe"));
+            h.Ist("WindowsModul: C:\\Spiel\\System32\\x.dll (fremder Ordner namens System32) => nein", !Stabilitaet.WindowsModul("C:\\Spiel\\System32\\x.dll"));
+            h.Ist("WindowsModul: null und leer => nein", !Stabilitaet.WindowsModul(null) && !Stabilitaet.WindowsModul(""));
+            h.Ist("Rat bei ntdll (Opfer-Modul) sagt 'meist Opfer' und 'schließt eine Beschädigung ... aus', nicht 'da ein Windows-Modul beteiligt ist'", b.Rat.Contains("meist Opfer") && b.Rat.Contains("schließt eine Beschädigung") && !b.Rat.Contains("da ein Windows-Modul beteiligt ist"), b.Rat);
+            h.Ist("Detail: ntdll als Windows-Modul MIT Pfad (der Pfad entscheidet)", b.Detail.Any(z => z.Contains("Opfer, nicht Ursache, C:\\WINDOWS\\SYSTEM32\\ntdll.dll")), string.Join(" | ", b.Detail));
+            // Gegenprobe (Nachbesserung 18.09.2026): ntdll.dll OHNE ModulePath => der Name allein setzt keine
+            // Kennung (Vertrag M4 2.4 bindet dateien.reparieren an den Pfad), Detail sagt 'Pfad nicht überliefert'.
+            foreach (var x in s.Ereignisse.Von("Application Error", 1000).Where(x => (x.Feld("ModuleName") ?? "").StartsWith("ntdll")))
+            {
+                x.Felder.Remove("ModulePath");
+                x.Felder.Remove("11");
+            }
+            var ohnePfad = Harness.Einer(h.Pruefen(s), "stabilitaet.programmabsturz.beispiel.exe");
+            h.Ist("Gegenprobe ntdll ohne ModulePath: keine Kennung, kein Systemdateien-Rat", ohnePfad != null && ohnePfad.Massnahmen.Count == 0 && !ohnePfad.Rat.Contains("Systemdateien"), ohnePfad == null ? "null" : ohnePfad.Rat);
+            h.Ist("Gegenprobe ntdll ohne ModulePath: Detail sagt 'Pfad nicht überliefert' und nicht 'Opfer, nicht Ursache'", ohnePfad != null && ohnePfad.Detail.Any(z => z.Contains("ntdll") && z.Contains("Pfad nicht überliefert")) && !ohnePfad.Detail.Any(z => z.Contains("Opfer, nicht Ursache")), ohnePfad == null ? "null" : string.Join(" | ", ohnePfad.Detail));
+            // Gegenprobe: ntdll.dll mit fremdem Pfad (Kopie im Programmordner) => ebenfalls keine Kennung.
+            foreach (var x in s.Ereignisse.Von("Application Error", 1000).Where(x => (x.Feld("ModuleName") ?? "").StartsWith("ntdll")))
+                x.Felder["ModulePath"] = "C:\\Program Files\\Beispiel\\ntdll.dll";
+            var fremdPfad = Harness.Einer(h.Pruefen(s), "stabilitaet.programmabsturz.beispiel.exe");
+            h.Ist("Gegenprobe ntdll mit fremdem Pfad: keine Kennung, Detail nennt 'nicht im Windows-Ordner'", fremdPfad != null && fremdPfad.Massnahmen.Count == 0 && fremdPfad.Detail.Any(z => z.Contains("ntdll") && z.Contains("nicht im Windows-Ordner")), fremdPfad == null ? "null" : string.Join(" | ", fremdPfad.Detail));
+            // Gegenprobe im Bild: der ntdll-Absturz bekommt einen Fremdpfad und einen Fremdnamen => keine Maßnahme.
+            foreach (var x in s.Ereignisse.Von("Application Error", 1000).Where(x => (x.Feld("ModuleName") ?? "").StartsWith("ntdll")))
+            {
+                x.Felder["ModuleName"] = "fremd.dll";
+                x.Felder["ModulePath"] = "C:\\Program Files\\Beispiel\\fremd.dll";
+            }
+            var ohne = Harness.Einer(h.Pruefen(s), "stabilitaet.programmabsturz.beispiel.exe");
+            h.Ist("Gegenprobe: ohne Windows-Modul keine Maßnahme und kein Systemdateien-Rat", ohne != null && ohne.Massnahmen.Count == 0 && !ohne.Rat.Contains("Systemdateien"), ohne == null ? "null" : ohne.Rat);
+            // Gegenprobe: derselbe Fremdname, aber Pfad unter SysWOW64 => wieder Maßnahme (der Pfad entscheidet, nicht der Name).
+            foreach (var x in s.Ereignisse.Von("Application Error", 1000).Where(x => (x.Feld("ModuleName") ?? "") == "fremd.dll"))
+                x.Felder["ModulePath"] = "C:\\Windows\\SysWOW64\\fremd.dll";
+            var mit = Harness.Einer(h.Pruefen(s), "stabilitaet.programmabsturz.beispiel.exe");
+            h.Ist("Gegenprobe: Modul unter SysWOW64 => dateien.reparieren, Detail nennt das Windows-Modul", mit != null && mit.Massnahmen.Contains(Stabilitaet.MDateienReparieren) && mit.Detail.Any(z => z.Contains("(Windows-Modul, C:\\Windows\\SysWOW64\\fremd.dll)")), mit == null ? "null" : string.Join(" | ", mit.Detail));
         }
 
         static void ProgrammabsturzUnbekannt(Harness h, List<Befund> alle)

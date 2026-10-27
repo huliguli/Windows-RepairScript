@@ -21,6 +21,13 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\{#MyAppName}
+; Keine freie Ordnerwahl: dieselbe EXE startet als Helfer und aus Aufgaben mit hoechsten Rechten.
+; Unter Program Files duerfen nur Administratoren Dateien aendern; ein Ordner auf einem zweiten
+; Laufwerk erbt dagegen "Authentifizierte Benutzer: Aendern" (gemessen 30.09.2026 an D:\Tools),
+; und ein Schadprogramm ohne Rechte koennte die EXE austauschen. Eine bestehende Installation
+; behaelt ihren Ordner (UsePreviousAppDir, Voreinstellung yes); die App meldet dort den Befund
+; sicherheit.programmordner.beschreibbar mit dem Rat, neu nach Program Files zu installieren.
+DisableDirPage=yes
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=admin
@@ -74,6 +81,15 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; Tasks: deskto
 ; shellexec bleibt, damit der Start ueber die Shell des Nutzers laeuft wie ein Doppelklick.
 ; Bis 8.0 (requireAdministrator) verhinderte shellexec den Fehler 740 bei CreateProcess.
 Filename: "{app}\{#MyAppExe}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent shellexec
+
+[UninstallRun]
+; Die Aufgaben der App (src\Scheduler.cs: TaskName, StartTaskName) zeigen auf {app}. Blieben sie
+; nach der Deinstallation stehen, startete eine davon mit hoechsten Rechten eine Datei, die es
+; nicht mehr gibt; liegt der Ordner auf einem beschreibbaren Laufwerk, koennte jeder eine Datei
+; dieses Namens dort ablegen (im PC-Audit vom 30.09.2026 genau so an einer fremden Aufgabe
+; gefunden). Fehlt eine Aufgabe, endet schtasks mit 1; die Deinstallation laeuft trotzdem weiter.
+Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""WindowsWartung-AutoWartung"" /F"; Flags: runhidden; RunOnceId: "AufgabeWartung"
+Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""WindowsWartung-Autostart"" /F"; Flags: runhidden; RunOnceId: "AufgabeAutostart"
 
 [Code]
 const

@@ -61,6 +61,54 @@ namespace WartungsToolbox.Sammler.Quellen
             Smb1(s, si);
             Smb1Konfiguration(s, si);
             Wer(s, si);
+            Sammler.Versuch(s, "datei.programmordner", () => Programmordner(si));
+        }
+
+        // ------------------------------------------------------------------ Programmordner
+
+        /// <summary>
+        /// Wer ausser Administratoren und SYSTEM die laufende EXE oder ihren Ordner beschreiben darf.
+        /// Dieselbe EXE startet als Helfer per runas und aus den Aufgaben der App mit hoechsten Rechten;
+        /// darf ein nicht erhoehter Prozess sie austauschen, ist das ein Weg an der
+        /// Benutzerkontensteuerung vorbei. Unter Program Files ist die Liste leer; in einem Ordner auf
+        /// einem zweiten Laufwerk erben Dateien dagegen meist "Authentifizierte Benutzer: Aendern".
+        ///
+        /// Geprueft werden nur echte Schreibbits (Daten schreiben/anhaengen, Rechte aendern, Besitz
+        /// uebernehmen, GENERIC_WRITE/ALL). NICHT FileSystemRights.Modify als Maske: Modify und
+        /// FullControl enthalten die Lesebits, "-band" schluege schon bei ReadAndExecute an (gemessen
+        /// 30.09.2026 im PC-Audit: jede Programmdatei war sonst "beschreibbar"). Nur-Vererbungs-Eintraege
+        /// gelten nicht fuer das Objekt selbst und fallen weg.
+        /// </summary>
+        static void Programmordner(Sicherheit si)
+        {
+            string exe = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName;
+            string ordner = System.IO.Path.GetDirectoryName(exe);
+            si.ProgrammOrdner = ordner;
+            var namen = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                { "S-1-1-0", "Jeder" }, { "S-1-5-11", "Authentifizierte Benutzer" }, { "S-1-5-32-545", "Benutzer" },
+            };
+            var eigen = System.Security.Principal.WindowsIdentity.GetCurrent().User;
+            if (eigen != null && !namen.ContainsKey(eigen.Value)) namen[eigen.Value] = "das angemeldete Konto";
+            var treffer = new SortedSet<string>(StringComparer.Ordinal);
+            SchreibRechte(new System.IO.FileInfo(exe).GetAccessControl(), namen, "Programmdatei", treffer);
+            SchreibRechte(new System.IO.DirectoryInfo(ordner).GetAccessControl(), namen, "Ordner", treffer);
+            si.ProgrammOrdnerBeschreibbar = new List<string>(treffer);
+        }
+
+        static void SchreibRechte(System.Security.AccessControl.FileSystemSecurity sd, Dictionary<string, string> namen, string was, SortedSet<string> treffer)
+        {
+            // 0x2 WriteData · 0x4 AppendData · 0x40000 WRITE_DAC · 0x80000 WRITE_OWNER · 0x10000000 GENERIC_ALL · 0x40000000 GENERIC_WRITE
+            const int Schreiben = 0x2 | 0x4 | 0x40000 | 0x80000 | 0x10000000 | 0x40000000;
+            foreach (System.Security.AccessControl.FileSystemAccessRule r in sd.GetAccessRules(true, true, typeof(System.Security.Principal.SecurityIdentifier)))
+            {
+                if (r.AccessControlType != System.Security.AccessControl.AccessControlType.Allow) continue;
+                if ((r.PropagationFlags & System.Security.AccessControl.PropagationFlags.InheritOnly) != 0) continue;
+                string name;
+                if (!namen.TryGetValue(r.IdentityReference.Value, out name)) continue;
+                if (((int)r.FileSystemRights & Schreiben) == 0) continue;
+                treffer.Add(was + ": " + name);
+            }
         }
 
         // ------------------------------------------------------------------ Defender
@@ -230,7 +278,10 @@ namespace WartungsToolbox.Sammler.Quellen
         /// <summary>
         /// root\SecurityCenter2 FirewallProduct: nur displayName der Fremdprodukte (die Regel haengt
         /// sicherheit.firewall.einschalten nur ohne Fremd-Firewall an; die Windows-Firewall selbst
-        /// steht dort unter ihrem eigenen Namen). Fehlender Namespace: "fehlt", keine Fremd-Firewall.
+        /// steht dort unter ihrem eigenen Namen). Welche Namen die Windows-Firewall sind, entscheidet
+        /// allein Kern.Regeln.Sicherheit.IstWindowsFirewallName; der Helfer (FremdFirewall) ruft
+        /// dieselbe Funktion, damit Befund und Ausfuehrung nie verschieden urteilen.
+        /// Fehlender Namespace: "fehlt", keine Fremd-Firewall.
         /// </summary>
         static void DrittFirewall(Systembild s, Sicherheit si)
         {
@@ -247,10 +298,7 @@ namespace WartungsToolbox.Sammler.Quellen
                 {
                     string name = (Wmi.Str(mo, "displayName") ?? "").Trim();
                     if (name.Length == 0) continue;
-                    if (name.StartsWith("Windows Defender", StringComparison.OrdinalIgnoreCase)
-                        || name.StartsWith("Microsoft Defender", StringComparison.OrdinalIgnoreCase)
-                        || name.StartsWith("Windows-Firewall", StringComparison.OrdinalIgnoreCase)
-                        || name.StartsWith("Windows Firewall", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (Kern.Regeln.Sicherheit.IstWindowsFirewallName(name)) continue;
                     if (!si.DrittFirewall.Contains(name)) si.DrittFirewall.Add(name);
                 }
             });
@@ -300,10 +348,11 @@ namespace WartungsToolbox.Sammler.Quellen
 
         /// <summary>
         /// Wirksamer Zustand ueber COM HNetCfg.FwPolicy2 (INetFwPolicy2.FirewallEnabled[profil],
-        /// DefaultInboundAction[profil]; NET_FW_PROFILE_TYPE2 1 Domaene, 2 privat, 4 oeffentlich;
-        /// NET_FW_ACTION 0 Block, 1 Allow). Rueckfall MSFT_NetFirewallProfile: System.Management
-        /// liest dort nur den Persistent Store (DefaultInboundAction 0 NotConfigured, obwohl Block
-        /// wirkt - Konzept 4.4), deshalb im Rueckfall nur Enabled und Eingehend = null.
+        /// DefaultInboundAction[profil], DefaultOutboundAction[profil]; NET_FW_PROFILE_TYPE2
+        /// 1 Domaene, 2 privat, 4 oeffentlich; NET_FW_ACTION 0 Block, 1 Allow). Rueckfall
+        /// MSFT_NetFirewallProfile: System.Management liest dort nur den Persistent Store
+        /// (DefaultInboundAction 0 NotConfigured, obwohl Block wirkt - Konzept 4.4), deshalb im
+        /// Rueckfall nur Enabled; Eingehend und Ausgehend bleiben null.
         /// </summary>
         static void Firewall(Systembild s, Sicherheit si)
         {
@@ -321,11 +370,13 @@ namespace WartungsToolbox.Sammler.Quellen
                         {
                             object an = t.InvokeMember("FirewallEnabled", BindingFlags.GetProperty, null, fw, new object[] { p });
                             object ein = t.InvokeMember("DefaultInboundAction", BindingFlags.GetProperty, null, fw, new object[] { p });
+                            object aus = t.InvokeMember("DefaultOutboundAction", BindingFlags.GetProperty, null, fw, new object[] { p });
                             l.Add(new FirewallProfil
                             {
                                 Profil = p,
                                 An = Convert.ToBoolean(an, CultureInfo.InvariantCulture),
                                 Eingehend = ein == null ? (int?)null : Convert.ToInt32(ein, CultureInfo.InvariantCulture),
+                                Ausgehend = aus == null ? (int?)null : Convert.ToInt32(aus, CultureInfo.InvariantCulture),
                             });
                         }
                         return l;
@@ -350,7 +401,7 @@ namespace WartungsToolbox.Sammler.Quellen
                     if (profil == 0) continue;
                     // Enabled: 0 False, 1 True, 2 NotConfigured (= Systemvorgabe, und die ist "an").
                     int en = Wmi.Ganz(mo, "Enabled") ?? 2;
-                    l.Add(new FirewallProfil { Profil = profil, An = en != 0, Eingehend = null });
+                    l.Add(new FirewallProfil { Profil = profil, An = en != 0, Eingehend = null, Ausgehend = null });
                 }
                 if (l.Count == 0) { Sammler.Fehler(s, "wmi.firewall.profile", Fehler.Fehlt, "MSFT_NetFirewallProfile lieferte kein Profil"); return; }
                 si.Firewall = l;

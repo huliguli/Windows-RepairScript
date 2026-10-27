@@ -47,6 +47,7 @@ namespace WartungsToolbox.Kern
         [DataMember(Name = "netz")] public Netz Netz = new Netz();
         [DataMember(Name = "sicherheit")] public Sicherheit Sicherheit = new Sicherheit();
         [DataMember(Name = "systemschutz")] public Systemschutz Systemschutz = new Systemschutz();
+        [DataMember(Name = "speicher")] public Speicher Speicher = new Speicher();
         [DataMember(Name = "fehlerliste")] public List<Fehler> Fehlerliste = new List<Fehler>();
 
         /// <summary>Alle Fehler einer Quelle (Praefix-Vergleich, z. B. "wmi.storage").</summary>
@@ -80,6 +81,7 @@ namespace WartungsToolbox.Kern
             if (Netz == null) Netz = new Netz();
             if (Sicherheit == null) Sicherheit = new Sicherheit();
             if (Systemschutz == null) Systemschutz = new Systemschutz();
+            if (Speicher == null) Speicher = new Speicher();
             if (Fehlerliste == null) Fehlerliste = new List<Fehler>();
         }
 
@@ -228,8 +230,14 @@ namespace WartungsToolbox.Kern
         /// <summary>Anzeigename, lokalisiert. Nur Anzeige.</summary>
         [DataMember(Name = "name")] public string Name;
         [DataMember(Name = "present")] public bool Present;
-        /// <summary>CM_PROB_* (0 = kein Problem, 22 = deaktiviert, 43 = Ausfall gemeldet).</summary>
-        [DataMember(Name = "problemCode")] public int ProblemCode;
+        /// <summary>
+        /// CM_PROB_* (0 = kein Problem, 22 = deaktiviert, 43 = Ausfall gemeldet); null = nicht gelesen
+        /// (Win32_PnPEntity ohne ConfigManagerErrorCode und kein DEVPKEY_Device_ProblemCode). Seit M4
+        /// (Entwurf 10.2) ist 0 nur noch ein gemessener Wert: die Regel meldet null als unknown ohne
+        /// Kennung, die Nachweise geraet.aktivieren und geraet.treiber.neu sind bei null unlesbar.
+        /// Alte Aufzeichnungen tragen problemCode 0 und lesen sich unveraendert.
+        /// </summary>
+        [DataMember(Name = "problemCode")] public int? ProblemCode;
         [DataMember(Name = "problemStatus")] public long? ProblemStatus;
         [DataMember(Name = "devNodeStatus")] public long? DevNodeStatus;
         /// <summary>DEVPKEY_Device_Parent. Nie aus dem Instanzpfad ableiten.</summary>
@@ -334,6 +342,20 @@ namespace WartungsToolbox.Kern
             if (OpStatus == null) OpStatus = new List<int>();
         }
 
+    }
+
+    // ------------------------------------------------------------------ Speicher (Papierkorb)
+
+    /// <summary>
+    /// Papierkorb des angemeldeten Kontos (SHQueryRecycleBin ueber alle Laufwerke, nicht erhoeht;
+    /// sammler/Quellen/Speicherquelle.cs). null = nicht gelesen (Quelle shell.papierkorb in der
+    /// Fehlerliste); 0 = leer. Fremde Konten fuehrt das Bild nicht.
+    /// </summary>
+    [DataContract]
+    public class Speicher
+    {
+        [DataMember(Name = "papierkorbBytes")] public long? PapierkorbBytes;
+        [DataMember(Name = "papierkorbDateien")] public long? PapierkorbDateien;
     }
 
     // ------------------------------------------------------------------ Ereignisse
@@ -611,6 +633,13 @@ namespace WartungsToolbox.Kern
         /// <summary>Tcpip\Parameters\DataBasePath, wenn er vom Standard (%SystemRoot%\System32\drivers\etc) abweicht; sonst null.</summary>
         [DataMember(Name = "hostsPfadAbweichend")] public string HostsPfadAbweichend;
         [DataMember(Name = "sonden")] public Sonden Sonden = new Sonden();
+        /// <summary>
+        /// Wartezeit der Nachmessung in Millisekunden: gesetzt, wenn bei der ersten Messung kein
+        /// physischer Anschluss Up war und der Sammler deshalb nachgemessen hat; null = nicht noetig.
+        /// Steht danach ein Anschluss Up, war die Verbindung nur kurz weg. Gemessen 30.09.2026: der
+        /// Link einer Intel I226-V riss bei der Anmeldung fuer 3 s ab, genau waehrend der Pruefung.
+        /// </summary>
+        [DataMember(Name = "nachgemessenMs")] public int? NachgemessenMs;
         [OnDeserialized]
         void NachDemLesen(StreamingContext ctx)
         {
@@ -736,6 +765,17 @@ namespace WartungsToolbox.Kern
         /// <summary>BitLocker je Volume (Win32_EncryptableVolume, nur erhoeht); leer nicht erhoeht (fehlerliste: zugriff).</summary>
         [DataMember(Name = "bitlocker")] public List<BitlockerVolume> Bitlocker = new List<BitlockerVolume>();
         [DataMember(Name = "firewall")] public List<FirewallProfil> Firewall = new List<FirewallProfil>();
+        /// <summary>Ordner der laufenden EXE (nur Anzeige).</summary>
+        [DataMember(Name = "programmOrdner")] public string ProgrammOrdner;
+        /// <summary>
+        /// Wer ausser Administratoren und SYSTEM die laufende EXE oder ihren Ordner beschreiben darf,
+        /// je Eintrag "Programmdatei: Name" bzw. "Ordner: Name" (Jeder, Authentifizierte Benutzer,
+        /// Benutzer, das eigene Konto). Leer = niemand; null = nicht gelesen. Bewusst OHNE Vorbelegung
+        /// im Deserialisierer: null und leer bedeuten Verschiedenes. Gemessen 30.09.2026: eine
+        /// Installation in D:\Tools erbte "Authentifizierte Benutzer: Aendern" vom Laufwerk, waehrend
+        /// zwei Aufgaben dieselbe EXE mit hoechsten Rechten starten.
+        /// </summary>
+        [DataMember(Name = "programmOrdnerBeschreibbar")] public List<string> ProgrammOrdnerBeschreibbar;
         /// <summary>root\SecurityCenter2 FirewallProduct: displayName der registrierten Fremd-Firewalls (Suiten wie Norton, ESET, Bitdefender, Kaspersky; die Windows-Firewall traegt sich dort nicht ein). Leer = keine registriert oder nicht gelesen (aeltere Aufzeichnung).</summary>
         [DataMember(Name = "drittFirewall")] public List<string> DrittFirewall = new List<string>();
         /// <summary>WscGetSecurityProviderHealth(WSC_SECURITY_PROVIDER_FIREWALL = 1): 0 GOOD, 1 NOTMONITORED, 2 POOR, 3 SNOOZE; null = nicht abgefragt oder Fehler (Quelle api.wsc.firewall in der Fehlerliste).</summary>
@@ -820,8 +860,10 @@ namespace WartungsToolbox.Kern
         /// <summary>1 Domaene, 2 privat, 4 oeffentlich.</summary>
         [DataMember(Name = "profil")] public int Profil;
         [DataMember(Name = "an")] public bool An;
-        /// <summary>NET_FW_ACTION: 0 Block, 1 Allow; null = nicht gelesen.</summary>
+        /// <summary>DefaultInboundAction, NET_FW_ACTION: 0 Block, 1 Allow; null = nicht gelesen.</summary>
         [DataMember(Name = "eingehend")] public int? Eingehend;
+        /// <summary>DefaultOutboundAction, NET_FW_ACTION: 0 Block, 1 Allow; null = nicht gelesen (Rueckfall auf MSFT_NetFirewallProfile, aeltere Aufzeichnung).</summary>
+        [DataMember(Name = "ausgehend")] public int? Ausgehend;
     }
 
     [DataContract]
@@ -864,6 +906,18 @@ namespace WartungsToolbox.Kern
         [DataMember(Name = "schattenMax")] public long? SchattenMax;
         /// <summary>true = MaxSpace ist UNBOUNDED (18446744073709551615); dann darf kein "von hoechstens 0 GB" entstehen.</summary>
         [DataMember(Name = "schattenUnbegrenzt")] public bool? SchattenUnbegrenzt;
+        /// <summary>
+        /// Erstellzeiten (ISO-8601 UTC) der Punkte der Zeitpunktwiederherstellung (Point-in-time
+        /// restore, Windows 11 seit 2025) auf dem Windows-Laufwerk: Win32_ShadowCopy mit
+        /// ClientAccessible, Persistent und NoWriters. Die Punkte der klassischen Systemwiederherstellung
+        /// tragen Verfasser (NoWriters = false) und stehen in Punkte. Nur erhoeht lesbar;
+        /// null = nicht gelesen (fehlerliste wmi.shadowcopy), leer = keine.
+        /// Gemessen 30.09.2026: drei solche Kopien im 24-h-Takt, erzeugt von der Aufgabe PITRTask,
+        /// waehrend SystemRestore null Punkte meldete - v8.2 zeigte "Kein Wiederherstellungspunkt".
+        /// </summary>
+        [DataMember(Name = "zeitpunkte")] public List<string> ZeitpunkteUtc;
+        /// <summary>Aufgabe \Microsoft\Windows\Setup\PITRTask: true = vorhanden und aktiviert, false = fehlt oder deaktiviert, null = nicht gelesen. Erst sie belegt, dass die Kopien ohne Verfasser Punkte der Zeitpunktwiederherstellung sind und nicht die einer fremden Sicherungssoftware.</summary>
+        [DataMember(Name = "zeitpunktAktiv")] public bool? ZeitpunktAktiv;
     }
 
     [DataContract]

@@ -23,14 +23,14 @@ bewertet die Messwerte nach dokumentierten Grenzen:
 
 | Bereich | Was gemessen wird |
 | --- | --- |
-| Sicherheit | Virenschutz (auch Fremdprogramme), Erkennungsdaten, letzter Scan, Firewall je Netz, Benutzerkontensteuerung, SmartScreen, Secure Boot, Konten ohne Kennwort |
+| Sicherheit | Virenschutz (auch Fremdprogramme), Erkennungsdaten, letzter Scan, Firewall je Netz (eingehend und ausgehend), Benutzerkontensteuerung, SmartScreen, Secure Boot, Konten ohne Kennwort |
 | Zustand der Festplatten | Selbstdiagnose des Laufwerks, bei NVMe das Gesundheitsprotokoll (Reserve, Verbrauch, Medienfehler), Temperatur gegen die Grenzen des Herstellers, TRIM, Dateisystem-Zustand, Fehlermeldungen der letzten 90 Tage |
-| Freier Speicherplatz | frei und gesamt je Laufwerk |
+| Freier Speicherplatz | frei und gesamt je Laufwerk, Größe des Papierkorbs (ab 1 GB ein Hinweis mit Maßnahme) |
 | Stabilität | Blauschirme mit Fehlercode, Stromausfälle, Programmabstürze je Programm, Hardwarefehler, alles aus dem Ereignisprotokoll der letzten 90 Tage |
 | Windows-Updates | ausstehender Neustart, fehlgeschlagene Updates mit Fehlercode, Updates, die sich immer wieder installieren, Alter des letzten Sicherheitsupdates, ausgeblendete Updates |
 | Geräte und Treiber | jedes Gerät mit Problemcode, eingestuft in Defekt, vorübergehend oder gewollt; Treiberversion und -datum |
 | Arbeitsspeicher und Auslastung | freier Speicher über drei Messungen, Speicherfresser, Anzahl der Programme, die mit dem PC starten |
-| Netzwerk | Adapter, Adresse, Router, Namensauflösung, Internet über die Windows-eigene Prüfadresse, Proxy, umgeleitete Adressen in der hosts-Datei |
+| Netzwerk | Adapter, Adresse, Router, Namensauflösung, Internet über die Windows-eigene Prüfadresse, Proxy, umgeleitete Adressen in der hosts-Datei und ihr Ort |
 
 **Fragen statt handeln.** Ist etwas abgeschaltet, das Absicht sein kann (ein Gerät, ein
 Dienst), fragt das Programm einmal und merkt sich die Antwort. Es repariert nichts, was der
@@ -39,10 +39,11 @@ Nutzer selbst so eingerichtet hat.
 **Tiefenprüfung** (auf Wunsch, 5 bis 10 Minuten): lässt Windows seine eigenen Dateien und
 Bausteine durchsehen. Meldet nur, repariert nichts.
 
-**Beheben**: gibt es nur für das, was ein Befund benennt. Bei der Reparatur der
-Windows-Dateien wird vorher ein Sicherungspunkt angelegt; das Programm prüft, ob er wirklich
-entstanden ist. 17 weitere Maßnahmen hängen seit 8.2 an der Karte, siehe unten; was das
-Programm nicht selbst ausführt, bleibt ein Hinweis.
+**Beheben**: gibt es nur für das, was ein Befund benennt. 30 Maßnahmen hängen an Karten (17
+seit 8.2, 13 seit 8.3), siehe unten. Bei der Reparatur der Windows-Dateien wird vorher ein
+Sicherungspunkt angelegt; das Programm prüft, ob er wirklich entstanden ist. Was sich nicht
+umkehren lässt (Stufe 3), läuft nur nach einem Häkchen unter „Was verloren geht“; ein Hinweis
+ohne Schaltfläche bleibt nur „Vorherigen Treiber wiederherstellen“.
 
 Was sich **nicht** feststellen ließ, wird auch so genannt, samt Grund (fehlende Rechte, keine
 Daten). Eine Prüfung ohne Daten wird niemals als Problem ausgegeben, und niemals als „in
@@ -54,6 +55,13 @@ werden sie in etwa 10 Sekunden ergänzt.
 für den Nutzer, das Fachliche (Messwert, Quelle, Schwelle, Befehl, Dauer) daneben für den
 Techniker. „Bericht speichern“ legt beides als Textdatei ab.
 
+**Für den Techniker** (seit 8.3, im Fuß des Ergebnisses und in den Einstellungen): jeder
+Befund der letzten Prüfung, auch die in Ordnung, mit Messwert, Schwelle, Quelle, Einzelheiten,
+Kennungen und Parametern; dazu, was nicht geprüft wurde, die Fehler beim Messen, die 10
+jüngsten Protokolle und der Laufzeitordner. Ein Suchfeld filtert alle Zeilen. „Als Text
+kopieren“ legt den Bericht in die Zwischenablage, „Systembild speichern“ schreibt es als Datei
+(bereinigt wie `--aufzeichnen`). Die Ansicht ändert nichts.
+
 Auf einem fremden Rechner ohne Klick: `WindowsWartung.exe --aufzeichnen bild.json` nimmt das
 Systembild auf (Rechnername, Benutzername, Seriennummern und Adressen werden entfernt),
 `--pruefen bild.json` schreibt die Befunde daneben.
@@ -61,20 +69,36 @@ Systembild auf (Rechnername, Benutzername, Seriennummern und Adressen werden ent
 ### Maßnahmen: Beheben, Nachweis, Rückgängig
 
 **Karte „Beheben“.** Jede Karte, deren Befund eine Maßnahme kennt, trägt die Schaltfläche
-„Beheben: <Name>“ (bei zwei Maßnahmen zwei Schaltflächen). 17 Maßnahmen hängen an Karten:
-DNS-Cache leeren, Adresse neu vom Router anfordern, Namensserver auf automatisch
-zurücksetzen, Virensignaturen aktualisieren, Schnellscan ausführen, Firewall einschalten,
-SmartScreen auf „Warnen“ stellen, Benutzerkontensteuerung wieder einschalten, TRIM
-einschalten, Laufwerk prüfen (nur Scan), Wiederherstellungspunkt anlegen, Startprogramm
-deaktivieren, Geplante Aufgabe deaktivieren, Startart eines Dienstes ändern, Update-Dienst
-wieder einschalten, Update verbergen, Gerät wieder einschalten (nur nach der Antwort „wieder
-einschalten“ auf die Frage zum Gerät). Was das Programm nicht selbst ausführt (Hosts-Datei,
-Treiber, Reparatur des Dateisystems, Speichertest), bleibt ein Hinweis ohne Schaltfläche.
+„Beheben: <Name>“ (bei zwei oder drei Maßnahmen entsprechend viele Schaltflächen). 30
+Maßnahmen hängen an Karten. Seit 8.2 (Stufe 1 und 2): DNS-Cache leeren, Adresse neu vom Router
+anfordern, Namensserver auf automatisch zurücksetzen, Virensignaturen aktualisieren, Schnellscan
+ausführen, Firewall einschalten, SmartScreen auf „Warnen“ stellen, Benutzerkontensteuerung
+wieder einschalten, TRIM einschalten, Laufwerk prüfen (nur Scan), Wiederherstellungspunkt
+anlegen, Startprogramm deaktivieren, Geplante Aufgabe deaktivieren, Startart eines Dienstes
+ändern, Update-Dienst wieder einschalten, Update verbergen, Gerät wieder einschalten (nur nach
+der Antwort „wieder einschalten“ auf die Frage zum Gerät). Seit 8.3 dazu drei der Stufe 2
+(hosts-Datei bereinigen, Eingehende Verbindungen wieder blockieren, Anmeldeprogramm
+zurücksetzen) und zehn der Stufe 3: Winsock zurücksetzen, IP-Stack zurücksetzen, Firewall auf
+Werkseinstellung zurücksetzen, Dateisystem kurz reparieren (Spot-Fix), Dateisystem vollständig
+reparieren, Treiber neu installieren, Papierkorb leeren, Arbeitsspeicher-Test planen, Windows
+Update zurücksetzen, Reparatur der Windows-Dateien. Ein Hinweis ohne Schaltfläche bleibt nur
+„Vorherigen Treiber wiederherstellen“ (Geräte-Manager).
 
 **Vorschau.** Der Klick öffnet zuerst eine Vorschau: Was passiert, Was bleibt, Risiko, dazu
 Sicherung, Rückweg, Dauer, der Hinweis auf einen nötigen Neustart und die Nachfrage von
 Windows. Erst „Jetzt ausführen“ startet; läuft gerade etwas anderes oder fehlt dem Befund
 ein Wert, steht der Grund in der Vorschau, und es gibt nur „Schließen“.
+
+**Stufe 3 nur mit Häkchen.** Jede Maßnahme der Stufe 3 (nicht umkehrbar) zeigt in der Vorschau
+den Kasten „Was verloren geht“ mit einem Satz zu den Folgen (beim Papierkorb mit Zahl der
+Dateien und GB) und das Kontrollkästchen „Ich habe verstanden, was verloren geht“. „Jetzt
+ausführen“ bleibt gesperrt, bis es gesetzt ist; ohne das Häkchen lehnt das Programm den Start
+ab. Die Schaltfläche an der Karte trägt ein Warnsymbol. Dasselbe gilt für „Windows auf einen
+früheren Stand zurücksetzen“ in der Ansicht „Sicherungspunkte“. Keine Maßnahme der Stufe 3
+läuft in der geplanten Wartung. Ein nötiger Neustart allein löst den Kasten nicht aus: braucht
+eine Maßnahme einen Neustart (Winsock, IP-Stack, Speichertest, Reparatur des Windows-Laufwerks,
+Update-Reset empfohlen, Benutzerkontensteuerung in Stufe 2), sagt es die Vorschau, und das
+Programm startet ihn nicht selbst.
 
 **Nachweis.** Nach der Maßnahme liest das Programm den PC erneut und prüft am neuen Bild,
 ob sie gewirkt hat. Die Nachweiskarte oben im Ergebnis kennt drei Ergebnisarten: bestanden,
@@ -87,8 +111,15 @@ Sicherungsdatei unter `C:\ProgramData\WindowsWartung\sicherungen\massnahmen`; sc
 Sicherung, wird nichts geändert. Nachweiskarte und Verlauf zeigen dann „Rückgängig“: nach
 einer Nachfrage schreibt der Helfer die Werte zurück, misst erneut und weist auch das nach.
 Die Dateien gehören dem Programm (Benutzer lesen nur); der Helfer spielt nur eine Datei
-zurück, die er selbst geschrieben hat. Ausnahme ohne „Rückgängig“: der Update-Dienst wird nie
-wieder abgeschaltet.
+zurück, die er selbst geschrieben hat, und nur eine, die unter dem eigenen Konto entstand.
+Seit 8.3 gibt es auch Sicherungen als Datei oder Ordner unter
+`sicherungen\massnahmen\export`: der Firewall-Reset exportiert vorher alle Regeln (`.wfw`,
+„Rückgängig“ spielt sie zurück), „Treiber neu installieren“ exportiert einen Herstellertreiber
+(Zurückspielen von Hand über `pnputil /add-driver`). Ohne „Rückgängig“: der Update-Dienst wird
+nie wieder abgeschaltet; Winsock-Reset, Update-Reset, Papierkorb, Dateisystem-Reparatur,
+Treiber und die Reparatur der Windows-Dateien haben keinen Rückweg über das Programm, die
+Vorschau sagt das; der Speichertest gilt genau für den nächsten Start und löscht sich dann von
+selbst.
 
 **Freigaben in der automatischen Wartung.** In den Einstellungen unter „Was das Programm von
 selbst beheben darf“ lassen sich sechs Maßnahmen der Stufe 1 freischalten (DNS-Cache leeren,
@@ -188,26 +219,40 @@ Den Teil mit Rechten übernimmt ein Helfer (dieselbe Programmdatei, erhöht gest
 nur einen festen Katalog von Maßnahmen kennt und von der Oberfläche keine Befehle annimmt,
 nur Kennungen. Was nicht im Katalog steht, läuft nicht. Wird im Dialog das Kennwort eines
 anderen Kontos eingegeben, lehnt der Helfer alles ab, was das Benutzerprofil betrifft
-(Aufräumen, Apps entfernen, Werkzeuge, geplante Wartung); Tiefenprüfung, Reparatur und die
-Ergänzung der Messwerte laufen mit jedem Administratorkonto.
+(Aufräumen, Apps entfernen, Werkzeuge, geplante Wartung, Papierkorb leeren, Programm-Update);
+Tiefenprüfung, Reparatur und die Ergänzung der Messwerte laufen mit jedem Administratorkonto.
 
 **Datenablage.** Alles, was den PC betrifft, liegt unter `C:\ProgramData\WindowsWartung`:
-Protokolle je Lauf (`protokoll\`), Verlauf (`verlauf\history.json`), Zeitplan der geplanten
-Wartung mit den Freigaben (`zeitplan.json`), Sicherungen (`sicherungen\`, darunter die
-Sicherungsdateien der Maßnahmen in `sicherungen\massnahmen`, die dem Programm gehören und
-für Benutzer nur lesbar sind), die gemerkten Antworten (`entscheidungen.json`) und das
-App-Protokoll (`logs\app.log`). Im Benutzerprofil
-(`%LOCALAPPDATA%\WindowsWartung`) bleiben die Daten der Oberfläche (WebView2, Zoom) und die
-Arbeitsdateien eines Updates (`update\` mit Download und Sicherung der alten Fassung,
-`pending_update.txt` bis zum nächsten Start). Daten aus Version 8.0 werden beim ersten Start
-übernommen; nach einem ZIP-Update von 8.0 gehören die Dateien noch der Administratorengruppe,
-bis zum ersten Schritt mit Administratorrechten lassen sich Antworten dann nicht speichern
-(der Installer setzt die Rechte selbst). Kein Wert verlässt den Rechner.
+
+| Was | Wo |
+| --- | --- |
+| Protokolle je Lauf, seit 8.3 auch die DISM-Protokolle (`dism-*.log`) und das Protokoll des IP-Stack-Resets | `protokoll\` |
+| Verlauf | `verlauf\history.json` |
+| Zeitplan der geplanten Wartung mit den Freigaben | `zeitplan.json` |
+| Sicherungen (`.reg` der Registrierungs-Suche, verborgene Updates, Werte) | `sicherungen\<art>\` |
+| Sicherungsdateien der Maßnahmen (gehören dem Programm, Benutzer lesen nur) | `sicherungen\massnahmen\` |
+| Exporte der Maßnahmen (Firewall-Regeln als `.wfw`, Treiberordner), gleiche Rechte | `sicherungen\massnahmen\export\` |
+| Gemerkte Antworten | `entscheidungen.json` |
+| App-Protokoll | `logs\app.log` |
+| Arbeitskopie des Update-Pakets während des Tauschs (nur Administratoren) | `update\` |
+
+Im Benutzerprofil (`%LOCALAPPDATA%\WindowsWartung`) bleiben die Daten der Oberfläche
+(WebView2, Zoom), der Download eines Updates (`update\update.zip`) und `pending_update.txt`
+bis zum nächsten Start. Nach einem Update liegt die alte Fassung als `.vorher`-Dateien im
+Programmordner, bis der nächste Start mit Administratorrechten sie wegräumt. Daten aus
+Version 8.0 werden beim ersten Start übernommen; nach einem ZIP-Update von 8.0 gehören die
+Dateien noch der Administratorengruppe, bis zum ersten Schritt mit Administratorrechten lassen
+sich Antworten dann nicht speichern (der Installer setzt die Rechte selbst). Kein Wert
+verlässt den Rechner.
 
 **Selbstprüfung beim Start.** Die Programmdatei prüft ihre eigene Signatur und jede Datei der
 Oberfläche gegen eine Liste, die beim Bau eingebettet wird. Wurde eine Datei verändert,
 startet die installierte (signierte) Fassung nicht und bittet um eine Neuinstallation. Ein
 selbst gebauter, unsignierter Stand läuft weiter und schreibt nur eine Warnung ins Protokoll.
+Seit 8.3 gilt: kann die Signatur gar nicht geprüft werden (die Windows-Bibliothek dafür fehlt
+oder antwortet nicht), startet die signierte Fassung ebenfalls nicht. Die Windows-Bibliotheken,
+die das Programm ruft, kommen nur aus `System32`, nie aus dem Programmordner; eine dort
+abgelegte Datei gleichen Namens wird nicht geladen.
 
 ## Aufbau
 
@@ -258,12 +303,16 @@ C# 5 und lehnt jede höhere Sprachversion mit `CS1617` ab.
 ```
 
 `--view` versteht `light`, `dark`, eine Ansicht (`tools`, `history`, `settings`, `storage`,
-`registry`, `schedule` …) und `check` für einen automatisch gestarteten Prüflauf; seit 8.2
-dazu `check,massnahme:<kennung>` (führt nach der Prüfung die erste Karte mit dieser Maßnahme
-aus, über die Vorschau) und `check,massnahme:<kennung>,rueckweg` (klickt danach „Rückgängig“).
-Beides braucht einen Helfer, also den Abnahmeweg aus `DEPLOYMENT.md`. Kommagetrennt
+`registry`, `schedule`, seit 8.3 `techniker` …) und `check` für einen automatisch gestarteten
+Prüflauf; seit 8.2 dazu `check,massnahme:<kennung>` (führt nach der Prüfung die erste Karte
+mit dieser Maßnahme aus, über die Vorschau; bei Stufe 3 setzt es das Häkchen selbst, der
+Eingriff ist dann echt) und `check,massnahme:<kennung>,rueckweg` (klickt danach
+„Rückgängig“); seit 8.3 `check,techniker` (öffnet nach der Prüfung die Techniker-Ansicht).
+Maßnahmen brauchen einen Helfer, also den Abnahmeweg aus `DEPLOYMENT.md`. Kommagetrennt
 kombinierbar. Die beiden Suchläufe starten beim Öffnen ihrer Ansicht von selbst, deshalb
-dort `--shotwait` großzügig setzen.
+dort `--shotwait` großzügig setzen. Das Argument `--vorgaenger <pid>` setzt nur das Programm
+selbst beim Neustart nach einem Update (die neue Fassung wartet bis 30 s auf das Ende der
+alten).
 
 ## Hinweise
 
@@ -272,10 +321,17 @@ dort `--shotwait` großzügig setzen.
 - Das Programm sendet nichts nach außen. Die einzige Verbindung ins Internet ist die
   Update-Prüfung bei GitHub und, bei der Netzwerkprüfung, die Prüfadresse von Windows selbst.
 - Zurücksetzen der Interneteinstellungen und die Speicherprüfung brauchen danach einen
-  Neustart.
+  Neustart; ebenso die Maßnahmen Winsock zurücksetzen, IP-Stack zurücksetzen,
+  Arbeitsspeicher-Test planen und die Reparatur des Windows-Laufwerks (die läuft beim
+  nächsten Start vor der Anmeldung). Windows Update zurücksetzen empfiehlt einen.
 - Ein Update fragt einmal nach Administratorrechten, weil die Programmdateien unter
-  `Program Files` liegen. Der Installer-Weg nennt im Dialog das Programm; wer das ZIP nutzt,
-  sieht dort den Befehlsprozessor (`cmd.exe`). Empfohlen bleibt der Installer.
+  `Program Files` liegen. Beide Wege nennen im Dialog das Programm (Installer:
+  `WindowsWartung-Setup.exe`; ZIP seit 8.3: `WindowsWartung.exe`, der Helfer prüft Prüfsumme,
+  Herausgeber, Version und Inhalt und tauscht die Dateien). Während des Tauschs (Sekunden)
+  lässt sich das Fenster nicht schließen; danach startet das Programm von selbst neu.
+  Empfohlen bleibt der Installer.
+- Die Tiefenprüfung und die Reparatur rufen DISM seit 8.3 als Programmbaustein
+  (`dismapi.dll`), nicht mehr als `dism.exe`; ihr Urteil hängt nicht an der Anzeigesprache.
 - Programm und Installer sind signiert, allerdings mit einem selbst ausgestellten
   Zertifikat (`CN=Jonas (Windows-Wartung)`). Das macht Manipulationen erkennbar und ist die
   Grundlage dafür, dass die Selbstaktualisierung nur Fassungen desselben Herausgebers

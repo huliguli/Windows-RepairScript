@@ -40,14 +40,14 @@ namespace WartungsToolbox.Kern.Regeln
         /// <summary>
         /// Planparameter der Volume-Massnahmen (docs/M3-ENTWURF.md, Abschnitt 1): der Laufwerksbuchstabe
         /// ohne Doppelpunkt ("C"), wie ihn das Bild traegt. volume.scan und volume.optimieren (Stufe 1)
-        /// brauchen ihn; volume.spotfix und volume.reparatur (Stufe 3, bis M4 nur Rat) tragen ihn schon,
-        /// damit der Befund seinen Gegenstand nennt und M4 nichts nachruesten muss.
+        /// brauchen ihn; volume.spotfix und volume.reparatur (Stufe 3, seit M4 ausfuehrbar ueber
+        /// MSFT_Volume.Repair, docs/M4-ENTWURF.md, Abschnitt 1) ebenso.
         /// </summary>
         public const string ParamBuchstabe = "buchstabe";
 
         // Massnahmen-Kennungen aus kern/Massnahmen.cs (docs/M3-ENTWURF.md, Abschnitt 1 und 8.5), wie in
         // Netz.cs und Leistung.cs als Konstanten: MScan, MPunktAnlegen (Stufe 1), MTrimEinschalten
-        // (Stufe 2), MSpotfix und MReparatur (Stufe 3, bis M4 nur Rat). MOptimieren steht im Katalog,
+        // (Stufe 2), MSpotfix und MReparatur (Stufe 3, seit M4 ausfuehrbar). MOptimieren steht im Katalog,
         // aber keine Regel haengt es an: es gibt keinen Messwert "Optimierung faellig" im Bild.
         public const string MTrimEinschalten = "datentraeger.trim.einschalten";
         public const string MScan = "volume.scan";
@@ -78,6 +78,7 @@ namespace WartungsToolbox.Kern.Regeln
             PruefeVolumes(ctx, e);
             PruefeEreignisse(ctx, e);
             PruefeSystemschutz(ctx, e);
+            PruefeSchattenVerlust(ctx, e);
             return e;
         }
 
@@ -675,12 +676,32 @@ namespace WartungsToolbox.Kern.Regeln
 
             if (z.Punkte.Count == 0)
             {
+                // Windows 11 legt mit der Zeitpunktwiederherstellung eigene Punkte an, die SystemRestore
+                // nicht auflistet. Sind sie da UND belegt die Aufgabe PITRTask ihre Herkunft, gibt es einen
+                // Rueckweg: kein Warnbefund (bis 8.2 hiess es hier faelschlich "Kein Wiederherstellungspunkt").
+                int zeitpunkte = ZeitpunktAnzahl(z);
+                if (zeitpunkte > 0)
+                {
+                    double? alterZ = ctx.TageSeit(z.ZeitpunkteUtc.Where(t => t != null).OrderByDescending(t => t, StringComparer.Ordinal).FirstOrDefault());
+                    var bz = Neu("systemschutz.punkte", Zustand.Ok, "Rückweg über die Zeitpunktwiederherstellung",
+                        "Es gibt keinen klassischen Wiederherstellungspunkt, aber " + zeitpunkte + (zeitpunkte == 1 ? " Punkt" : " Punkte")
+                            + " der Zeitpunktwiederherstellung" + (alterZ.HasValue ? "; der jüngste ist " + TageAlt(alterZ.Value) + " alt." : "."),
+                        null, "Win32_ShadowCopy (ohne Verfasser) und Aufgabe PITRTask", Messwert.Von(zeitpunkte, "Zeitpunkte", ">= 1"));
+                    bz.Detail.Add("Die Zeitpunktwiederherstellung setzt den ganzen PC samt eigener Dateien auf den Stand des Punkts zurück, startet aus der Wiederherstellungsumgebung und hält einen Punkt höchstens 72 Stunden.");
+                    Zeitpunkte(bz, z);
+                    Konfig(bz, z);
+                    Verdraengt(ctx, bz);
+                    e.Befunde.Add(bz);
+                    return;
+                }
                 var b = Neu("systemschutz.punkte", Zustand.Warn, "Kein Wiederherstellungspunkt vorhanden",
                     "Es gibt keinen Wiederherstellungspunkt; vor jeder Reparatur sollte einer angelegt werden.",
                     "Legen Sie einen Wiederherstellungspunkt an; das dauert unter einer Minute und kostet wenig Platz.",
                     "SystemRestore (root\\default)", Messwert.Von(0, "Punkte", ">= 1"));
                 b.Massnahmen.Add(MPunktAnlegen);
+                Zeitpunkte(b, z);
                 Konfig(b, z);
+                Verdraengt(ctx, b);
                 e.Befunde.Add(b);
                 return;
             }
@@ -694,8 +715,68 @@ namespace WartungsToolbox.Kern.Regeln
                 null, "SystemRestore (root\\default)", Messwert.Von(z.Punkte.Count, "Punkte", ">= 1"));
             foreach (var p in z.Punkte.OrderByDescending(p => p.ZeitUtc).Take(5))
                 ok.Detail.Add((p.ZeitUtc ?? "?") + " Nr. " + p.Nummer + " Typ " + p.Typ + (p.Beschreibung != null ? ": " + p.Beschreibung : ""));
+            Zeitpunkte(ok, z);
             Konfig(ok, z);
+            Verdraengt(ctx, ok);
             e.Befunde.Add(ok);
+        }
+
+        /// <summary>Zahl der Punkte der Zeitpunktwiederherstellung, die als Rueckweg zaehlen: nur mit belegter Aufgabe PITRTask.</summary>
+        static int ZeitpunktAnzahl(Systemschutz z)
+        {
+            return z.ZeitpunktAktiv == true && z.ZeitpunkteUtc != null ? z.ZeitpunkteUtc.Count : 0;
+        }
+
+        /// <summary>
+        /// Detailzeile zu den Schattenkopien ohne Verfasser. Ohne belegte Aufgabe PITRTask werden sie
+        /// genannt, aber nicht als Rueckweg gezaehlt: eine fremde Sicherungssoftware legt Kopien
+        /// derselben Art an, und die lassen sich nicht ueber Windows zurueckspielen.
+        /// </summary>
+        static void Zeitpunkte(Befund b, Systemschutz z)
+        {
+            if (z.ZeitpunkteUtc == null || z.ZeitpunkteUtc.Count == 0) return;
+            if (z.ZeitpunktAktiv == true)
+                b.Detail.Add("Zeitpunktwiederherstellung: " + z.ZeitpunkteUtc.Count + (z.ZeitpunkteUtc.Count == 1 ? " Punkt (" : " Punkte (")
+                    + string.Join(", ", z.ZeitpunkteUtc.Where(t => t != null).OrderByDescending(t => t, StringComparer.Ordinal).Take(5)) + ")");
+            else
+                b.Detail.Add(z.ZeitpunkteUtc.Count + " Schattenkopien ohne Verfasser auf dem Windows-Laufwerk, aber die Aufgabe PITRTask "
+                    + (z.ZeitpunktAktiv == false ? "fehlt oder ist ausgeschaltet" : "war nicht lesbar") + "; ob sie ein Rückweg sind, ist nicht belegt.");
+        }
+
+        /// <summary>Volsnap 33 im Fenster: wie oft der aelteste Punkt verdraengt wurde, weil der Speicher voll war (ohne Befund, nur Detail).</summary>
+        static void Verdraengt(Kontext ctx, Befund b)
+        {
+            int n = ctx.S.Ereignisse.Von("Volsnap", 33).Count(x => ctx.Innerhalb(x.ZeitUtc, Schwellen.SchattenVerlustTage));
+            if (n == 0) return;
+            b.Detail.Add("In den letzten " + Schwellen.SchattenVerlustTage + " Tagen hat Windows " + Text.Mal(n)
+                + " den ältesten Punkt gelöscht, um unter der Obergrenze für Schattenkopien zu bleiben (Volsnap 33); Punkte halten deshalb nur kurz.");
+        }
+
+        /// <summary>
+        /// Volsnap 25/36 im Fenster: Windows hat ALLE Schattenkopien eines Laufwerks verworfen (25: der
+        /// Speicher wuchs nicht rechtzeitig, 36: Obergrenze erreicht). Danach gibt es keinen Rueckweg,
+        /// auch wenn die Liste spaeter wieder Punkte zeigt. Laufwerk aus dem Feld VolumeName.
+        /// </summary>
+        static void PruefeSchattenVerlust(Kontext ctx, BereichErgebnis e)
+        {
+            var verloren = ctx.S.Ereignisse.Von("Volsnap", 25, 36)
+                .Where(x => ctx.Innerhalb(x.ZeitUtc, Schwellen.SchattenVerlustTage))
+                .OrderByDescending(x => x.ZeitUtc, StringComparer.Ordinal).ToList();
+            if (verloren.Count == 0) return;
+            var letzter = verloren[0];
+            string lw = letzter.Feld("VolumeName");
+            double? vor = ctx.TageSeit(letzter.ZeitUtc);
+            var b = Neu("systemschutz.verworfen", Zustand.Warn, "Windows hat Wiederherstellungspunkte verworfen",
+                "In den letzten " + Schwellen.SchattenVerlustTage + " Tagen hat Windows " + Text.Mal(verloren.Count) + " alle Wiederherstellungspunkte"
+                    + (string.IsNullOrEmpty(lw) ? "" : " von " + lw) + " gelöscht"
+                    + (vor.HasValue ? ", zuletzt " + Text.Vor(vor.Value) : "") + ", weil der Speicher für Schattenkopien nicht reichte.",
+                "Schaffen Sie Platz auf dem Laufwerk und vergrößern Sie den Speicher für Wiederherstellungspunkte („Systemsteuerung > System > Computerschutz > Konfigurieren“); die Obergrenze gilt auch für die Zeitpunktwiederherstellung.",
+                "Volsnap 25/36 (Protokoll System)", Messwert.Von(verloren.Count, "Verluste", "0"));
+            foreach (var x in verloren.Take(5))
+                b.Detail.Add((x.ZeitUtc ?? "?") + " Volsnap " + x.Id + (x.Id == 25 ? " (Speicher wuchs nicht rechtzeitig)" : " (Obergrenze erreicht)") + (x.Feld("VolumeName") != null ? ", Laufwerk " + x.Feld("VolumeName") : ""));
+            if (ctx.S.Systemschutz.SchattenBelegt.HasValue)
+                b.Detail.Add("Schattenkopien belegen jetzt " + Text.Gb1(ctx.S.Systemschutz.SchattenBelegt.Value) + SchattenGrenze(ctx.S.Systemschutz));
+            e.Befunde.Add(b);
         }
 
         static void Konfig(Befund b, Systemschutz z)

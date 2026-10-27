@@ -24,6 +24,14 @@ namespace WartungsToolbox.Kern.Regeln
     /// </summary>
     public static class Stabilitaet
     {
+        // Massnahmen-Kennungen (kern/Massnahmen.cs, docs/M4-ENTWURF.md, Abschnitt 1 und 2.4): der
+        // Speichertest (Stufe 3, bcdedit bootsequence memdiag) haengt an stabilitaet.blauschirm mit
+        // RAM-Klasse; die Reparatur der Windows-Dateien (Stufe 3, DISM RestoreHealth und SFC) an
+        // Programmabstuerzen mit einem Modul aus System32/SysWOW64 (WindowsModul) und in Updates.cs
+        // an Fehlercodes des Komponentenspeichers.
+        public const string MSpeichertestPlanen = "stabilitaet.speichertest.planen";
+        public const string MDateienReparieren = "dateien.reparieren";
+
         const string LogSystem = "System";
         const string LogApplication = "Application";
         const string DiagnosePerfLog = "Microsoft-Windows-Diagnostics-Performance/Operational";
@@ -223,7 +231,7 @@ namespace WartungsToolbox.Kern.Regeln
                 int n = blauschirme.Count;
                 string zustand = n >= Schwellen.BlauschirmBad ? Zustand.Bad : Zustand.Warn;
                 var massnahmen = new List<string>();
-                if (klassen.Contains(Bugchecks.Ram)) massnahmen.Add("stabilitaet.speichertest.planen");
+                if (klassen.Contains(Bugchecks.Ram)) massnahmen.Add(MSpeichertestPlanen);
                 e.Befunde.Add(new Befund
                 {
                     Bereich = Bereich.Stabilitaet,
@@ -389,17 +397,28 @@ namespace WartungsToolbox.Kern.Regeln
                 var module = g.GroupBy(x => x.Feld("ModuleName") ?? x.Feld("3") ?? "?").OrderByDescending(m => m.Count()).ToList();
                 var detail = new List<string>();
                 var treiberModule = new List<string>();
+                var opferModule = new List<string>();
                 bool windowsModul = false;
                 foreach (var m in module)
                 {
                     string zeile = "Modul " + m.Key + ": " + Text.Mal(m.Count());
                     string ml = m.Key.ToLowerInvariant();
                     string pfad = m.Select(x => x.Feld("ModulePath") ?? x.Feld("11")).FirstOrDefault(p => !string.IsNullOrEmpty(p)) ?? "";
+                    // ntdll/kernelbase/kernel32 sind laut Doku Opfer des Programms, nicht Ursache; der
+                    // Name liefert nur diesen Zusatztext. Die Kennung dateien.reparieren haengt allein
+                    // am Pfad (WindowsModul, Vertrag M4 2.4): ohne Pfad oder mit fremdem Pfad keine.
+                    bool opferName = ml.StartsWith("ntdll") || ml.StartsWith("kernelbase") || ml.StartsWith("kernel32");
                     // Treiberordner VOR dem System32-Test: der DriverStore liegt unter System32, und
                     // SFC/DISM pruefen Fremdtreiberpakete nicht (gemessen: nvml.dll von NVIDIA).
                     if (IstTreiberpfad(pfad)) { zeile += " (Treibermodul, " + pfad + ")"; treiberModule.Add(m.Key); }
-                    else if (ml.StartsWith("ntdll") || ml.StartsWith("kernelbase") || ml.StartsWith("kernel32")) { zeile += " (Windows-Modul: Opfer, nicht Ursache)"; windowsModul = true; }
-                    else if (pfad.IndexOf("\\System32\\", StringComparison.OrdinalIgnoreCase) >= 0) windowsModul = true;
+                    else if (WindowsModul(pfad))
+                    {
+                        zeile += opferName ? " (Windows-Modul: Opfer, nicht Ursache, " + pfad + ")" : " (Windows-Modul, " + pfad + ")";
+                        windowsModul = true;
+                        if (opferName) opferModule.Add(m.Key);
+                    }
+                    else if (pfad.Length == 0) zeile += opferName ? " (Pfad nicht überliefert; ohne Pfad gilt es nicht als Windows-Modul)" : " (Pfad nicht überliefert)";
+                    else if (opferName) zeile += " (Pfad " + pfad + " liegt nicht im Windows-Ordner; kein Windows-Modul)";
                     if (IstPlatzhalter(ml)) zeile += " (Modul unbekannt)";
                     detail.Add(zeile);
                 }
@@ -410,16 +429,23 @@ namespace WartungsToolbox.Kern.Regeln
                 if (s.Sicherheit != null && s.Sicherheit.WerDeaktiviert == true)
                     detail.Add("Fehlerberichte (Windows Error Reporting) sind auf diesem PC abgeschaltet: Berichte 1001/1002 fehlen deshalb, die Abstürze selbst nicht.");
 
+                // Ein Windows-Modul im Absturz (Pfad unter System32/SysWOW64) haengt die Reparatur der
+                // Windows-Dateien an (Stufe 3, DISM RestoreHealth und SFC); ein Treiberpaket des
+                // Herstellers deckt sie nicht ab. Bei ntdll/kernelbase/kernel32 sagt der Rat ehrlich,
+                // dass das Modul meist Opfer ist und die Reparatur nur eine Beschaedigung ausschliesst.
+                string windowsRat = opferModule.Count > 0
+                    ? "Das Windows-Modul „" + opferModule[0] + "“ ist dabei meist Opfer des Programms, nicht die Ursache; die Reparatur der Systemdateien (Maßnahme an dieser Karte: DISM und SFC) schließt eine Beschädigung von Windows aus, ersetzt aber kein Programm-Update."
+                    : "Da ein Windows-Modul beteiligt ist, zusätzlich die Systemdateien reparieren lassen (Maßnahme an dieser Karte: DISM und SFC).";
                 string rat;
                 if (treiberModule.Count > 0)
                     rat = "Das abgestürzte Modul „" + treiberModule[0] + "“ ist ein Gerätetreiber: den Treiber des Herstellers aktualisieren oder neu installieren, danach das Programm aktualisieren. SFC und DISM prüfen Treiberpakete des Herstellers nicht."
-                        + (windowsModul ? " Da auch ein Windows-Modul beteiligt ist, zusätzlich die Systemdateien prüfen lassen (SFC und DISM im Werkzeugkasten)." : "");
+                        + (windowsModul ? " " + windowsRat : "");
                 else if (windowsModul)
-                    rat = "Das Programm aktualisieren oder neu installieren; da ein Windows-Modul beteiligt ist, zusätzlich die Systemdateien prüfen lassen (SFC und DISM im Werkzeugkasten).";
+                    rat = "Das Programm aktualisieren oder neu installieren. " + windowsRat;
                 else
                     rat = "Das Programm aktualisieren oder neu installieren; hilft das nicht, beim Hersteller nach dem Fehler fragen (Modul und Ausnahmecode stehen in den Einzelheiten).";
 
-                e.Befunde.Add(new Befund
+                var b = new Befund
                 {
                     Bereich = Bereich.Stabilitaet,
                     Schluessel = "stabilitaet.programmabsturz." + app.ToLowerInvariant(),
@@ -430,8 +456,23 @@ namespace WartungsToolbox.Kern.Regeln
                     Satz = "„" + app + "“ ist in den letzten " + Schwellen.ProgrammabsturzTage + " Tagen " + Text.Mal(g.Count()) + " abgestürzt, ab " + Schwellen.ProgrammabsturzWarn + "-mal gilt das als Muster.",
                     Rat = rat,
                     Detail = detail,
-                });
+                };
+                if (windowsModul) b.Massnahmen.Add(MDateienReparieren);
+                e.Befunde.Add(b);
             }
+        }
+
+        /// <summary>
+        /// Ob ein Modulpfad zu Windows selbst gehoert (docs/M4-ENTWURF.md, Abschnitt 2.4): unter
+        /// \Windows\System32\ oder \Windows\SysWOW64\, Gross/Klein egal, auf jedem Laufwerk. Der
+        /// DriverStore und \System32\drivers\ liegen zwar darunter, sind aber Treiberpakete
+        /// (IstTreiberpfad), die SFC und DISM nicht pruefen: sie zaehlen nicht. Reine Funktion.
+        /// </summary>
+        public static bool WindowsModul(string pfad)
+        {
+            if (string.IsNullOrEmpty(pfad) || IstTreiberpfad(pfad)) return false;
+            return pfad.IndexOf("\\Windows\\System32\\", StringComparison.OrdinalIgnoreCase) >= 0
+                || pfad.IndexOf("\\Windows\\SysWOW64\\", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         static string AppName(Ereignis x) { return x.Feld("AppName") ?? x.Feld("0") ?? "?"; }
@@ -575,7 +616,10 @@ namespace WartungsToolbox.Kern.Regeln
                 string name = geraet != null && !string.IsNullOrEmpty(geraet.Name) ? "„" + geraet.Name + "“ (" + instanz + ")" : instanz;
                 detail.Add("Treiberstart-Verlauf (Kernel-PnP 219) in " + tage + " Tagen: " + Text.Mal(g.Count()) + " für " + name
                     + ", Treiber " + treiber + ", Status " + (status.Count > 0 ? string.Join(", ", status) : "nicht angegeben")
-                    + (geraet == null ? ", Gerät derzeit nicht in der Geräteliste" : ", Gerät derzeit " + (geraet.Present ? "vorhanden" : "nicht vorhanden") + ", Problemcode " + geraet.ProblemCode)
+                    + (geraet == null ? ", Gerät derzeit nicht in der Geräteliste" : ", Gerät derzeit " + (geraet.Present ? "vorhanden" : "nicht vorhanden")
+                        // Seit M4 ist ProblemCode int? (null = nicht gelesen): ohne diese Weiche stuende
+                        // ", Problemcode ; nur Verlauf" mit leerer Zahl in der Zeile.
+                        + (geraet.ProblemCode.HasValue ? ", Problemcode " + geraet.ProblemCode.Value.ToString(CultureInfo.InvariantCulture) : ", Problemcode nicht gelesen"))
                     + "; nur Verlauf, kein Befund");
             }
             var e411 = s.Ereignisse.Von("Microsoft-Windows-Kernel-PnP", 411).Where(x => ctx.Innerhalb(x.ZeitUtc, tage)).ToList();

@@ -1,10 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Security;
+using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading;
 using System.Web.Script.Serialization;
 using WartungsToolbox.Kern;
 
@@ -264,6 +268,203 @@ namespace WartungsToolbox
         public const string Zeitbudget = "PT4H";
         public const int ZeitbudgetStunden = 4;
 
+        // ---- Zeitbudget einer bestehenden Aufgabe auffrischen (Meilenstein 4) ----
+        // Create setzt PT4H nur beim Neu-Einrichten; eine Aufgabe aus 8.1 traegt weiter PT2H,
+        // und die Aufgabenplanung beendete damit den Lauf mitten in DISM (docs\M4-ENTWURF.md,
+        // Abschnitt 5). Der ERHOEHTE Helfer ruft ZeitbudgetAuffrischen bei jedem Start:
+        // Schedule.Service per spaeter Bindung (kein PowerShell, kein Parsen der lokalisierten
+        // schtasks-Ausgabe). Angefasst wird die Aufgabe nur, wenn ihre erste Aktion ein
+        // Programmstart ist und auf die eigene EXE zeigt (Definition.Actions.Item(1).Path ohne
+        // Anfuehrungszeichen gegen <Programmordner>\WindowsWartung.exe): eine Aufgabe einer
+        // anderen Installation (auf dem Rechner des Betreibers D:\Tools\WindowsWartung.exe, 7.3.1)
+        // bleibt unveraendert, ebenso jede Aufgabe, deren Aktion sich nicht lesen laesst. Dann
+        // Definition.Settings.ExecutionTimeLimit lesen: genau PT2H (der Wert aus 8.1) -> PT4H und
+        // RegisterTaskDefinition mit TASK_UPDATE; jeder andere Wert (leer = Vorgabe PT72H, PT4H,
+        // laenger, PT0S) bleibt. Konto und Anmeldeart bleiben, wie sie registriert sind, ein
+        // Passwort wird nie mitgegeben.
+
+        /// <summary>Pfad der Wartungsaufgabe im Wurzelordner der Aufgabenplanung.</summary>
+        public const string TaskPfad = "\\" + TaskName;
+
+        /// <summary>Das Zeitbudget, das Create bis 8.1 setzte; nur genau dieses wird angehoben.</summary>
+        public const string ZeitbudgetAlt = "PT2H";
+        const long ZeitbudgetAltSekunden = 2 * 3600L;
+        /// <summary>TASK_ACTION_TYPE: Programmstart (IExecAction), nur der traegt einen Pfad.</summary>
+        const int AktionProgrammstart = 0;
+
+        /// <summary>TASK_CREATION: bestehende Aufgabe aendern, nie eine neue anlegen.</summary>
+        const int TaskUpdate = 4;
+        /// <summary>TASK_LOGON_TYPE: interaktives Token, so legt schtasks ohne /RU an.</summary>
+        const int AnmeldungInteraktiv = 3;
+        /// <summary>Zeitgrenze fuer den ganzen COM-Block; ein haengender Dienst darf den Helferstart nicht festhalten.</summary>
+        const int ZeitbudgetZeitgrenzeMs = 30000;
+
+        /// <summary>
+        /// Hebt das Zeitbudget der bestehenden Aufgabe von genau PT2H auf Zeitbudget (PT4H), und
+        /// nur, wenn die Aufgabe dieses Programm startet (erste Aktion = eigene EXE).
+        /// Rueckgabe: ein Satz fuer die Protokollzeile "zeitbudget" (vorher, nachher; auch "nichts
+        /// geaendert" mit dem Grund), null wenn die Aufgabe fehlt. Wirft nie: jeder Fehler steht
+        /// als warn im app.log und im Satz, die Aufgabe bleibt dann, wie sie war. Eine Aenderung
+        /// steht als info im app.log. Nicht erhoeht wird nur gelesen, nie registriert.
+        /// </summary>
+        public static string ZeitbudgetAuffrischen()
+        {
+            try
+            {
+                return Helfer.Zeitgrenze.Mit(ZeitbudgetAuffrischenCom, ZeitbudgetZeitgrenzeMs, "Zeitbudget der Aufgabe " + TaskName);
+            }
+            catch (Exception ex)
+            {
+                string satz = "Zeitbudget der Aufgabe „" + TaskName + "“ nicht geprüft (" + Grund(ex) + "); nichts geändert.";
+                AppLog.Warn(satz);
+                return satz;
+            }
+        }
+
+        // Laeuft auf dem Thread der Zeitgrenze: Anlegen, Nutzen und Freigeben der COM-Objekte
+        // bleiben zusammen. Aufgabe fehlt -> null (HRESULT 0x80070002 aus GetTask).
+        static string ZeitbudgetAuffrischenCom()
+        {
+            object dienst = null, ordner = null, aufgabe = null, definition = null, einstellungen = null, aktionen = null, aktion = null, konto = null, neu = null;
+            try
+            {
+                dienst = Helfer.Com.Neu("Schedule.Service");
+                // Connect hat vier optionale Parameter; ueber IDispatch muessen sie als Type.Missing
+                // mitgehen (sonst DISP_E_BADPARAMCOUNT), wie in sammler\Quellen\Autostartquelle.cs.
+                Helfer.Com.Rufe(dienst, "Connect", Type.Missing, Type.Missing, Type.Missing, Type.Missing);
+                ordner = Helfer.Com.Rufe(dienst, "GetFolder", "\\");
+                try { aufgabe = Helfer.Com.Rufe(ordner, "GetTask", TaskName); }
+                catch (Exception ex) when (ex.HResult == unchecked((int)0x80070002)) { return null; }
+
+                definition = Helfer.Com.Hole(aufgabe, "Definition");
+                einstellungen = Helfer.Com.Hole(definition, "Settings");
+                string vorher = Helfer.Com.Hole(einstellungen, "ExecutionTimeLimit") as string;
+                // Leer heisst in der Aufgabenplanung: die Vorgabe (72 Stunden) gilt.
+                string anzeige = string.IsNullOrEmpty(vorher) ? "leer (Windows-Vorgabe PT72H)" : vorher;
+
+                // Waechter: nur die Aufgabe, die DIESES Programm startet, wird angefasst. Item ist
+                // eine indizierte Eigenschaft (1-basiert), deshalb Hole, nicht Rufe. Ein Fehler beim
+                // Lesen der Aktion zaehlt als "nicht die eigene EXE": dann wird nichts registriert.
+                string eigene = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "WindowsWartung.exe");
+                string pfad = "";
+                string fremd;
+                try
+                {
+                    aktionen = Helfer.Com.Hole(definition, "Actions");
+                    aktion = Helfer.Com.Hole(aktionen, "Item", 1);
+                    int typ = Convert.ToInt32(Helfer.Com.Hole(aktion, "Type"), CultureInfo.InvariantCulture);
+                    pfad = ((Helfer.Com.Hole(aktion, "Path") as string) ?? "").Trim().Trim('"');
+                    if (typ != AktionProgrammstart)
+                        fremd = "die erste Aktion der Aufgabe ist kein Programmstart (Typ " + typ.ToString(CultureInfo.InvariantCulture) + ")";
+                    else if (!string.Equals(pfad, eigene, StringComparison.OrdinalIgnoreCase))
+                        fremd = "die Aufgabe startet „" + pfad + "“, nicht dieses Programm";
+                    else
+                        fremd = null;
+                }
+                catch (Exception ex)
+                {
+                    fremd = "die Aktion der Aufgabe ist nicht lesbar (" + Grund(ex) + ")";
+                }
+                if (fremd != null)
+                    return "Zeitbudget der Aufgabe „" + TaskName + "“ bleibt " + anzeige + ": " + fremd + "; nichts geändert.";
+
+                if (string.IsNullOrEmpty(vorher))
+                    return "Zeitbudget der Aufgabe „" + TaskName + "“ bleibt " + anzeige + " (nur " + ZeitbudgetAlt + " wird auf " + Zeitbudget + " angehoben); nichts geändert.";
+                long sekunden;
+                if (!DauerSekunden(vorher, out sekunden))
+                {
+                    // Unlesbar ist kein Freibrief zum Schreiben: eine Aufgabe, deren Budget wir nicht
+                    // verstehen, wird nicht angefasst.
+                    string unlesbar = "Zeitbudget der Aufgabe „" + TaskName + "“ nicht lesbar („" + vorher + "“); nichts geändert.";
+                    AppLog.Warn(unlesbar);
+                    return unlesbar;
+                }
+                // Nur der Wert aus 8.1 wird angehoben (PT2H, auch als PT120M geschrieben); alles andere
+                // (PT0S = ohne Grenze, PT4H, laenger, aber auch PT1H von Hand) bleibt, wie es ist.
+                if (sekunden != ZeitbudgetAltSekunden)
+                    return "Zeitbudget der Aufgabe „" + TaskName + "“ bleibt " + vorher + " (nur " + ZeitbudgetAlt + " wird auf " + Zeitbudget + " angehoben); nichts geändert.";
+                if (!Sammler.Quellen.Rechte.Erhoeht())
+                    return "Zeitbudget der Aufgabe „" + TaskName + "“ ist " + vorher + " und wird erst bei einem Start mit Administratorrechten auf " + Zeitbudget + " angehoben; nichts geändert.";
+
+                // Anmeldung wie registriert: Konto und Anmeldeart aus dem Principal, kein Passwort.
+                // Ein leeres Konto (Gruppen-Principal) bleibt leer, dann gilt der Principal der Definition.
+                konto = Helfer.Com.Hole(definition, "Principal");
+                string benutzer = Helfer.Com.Hole(konto, "UserId") as string;
+                int anmeldung = Convert.ToInt32(Helfer.Com.Hole(konto, "LogonType"), CultureInfo.InvariantCulture);
+                if (anmeldung == 0) anmeldung = AnmeldungInteraktiv;
+                try
+                {
+                    Helfer.Com.Setze(einstellungen, "ExecutionTimeLimit", Zeitbudget);
+                    neu = Helfer.Com.Rufe(ordner, "RegisterTaskDefinition", TaskPfad, definition, TaskUpdate,
+                                          string.IsNullOrEmpty(benutzer) ? null : benutzer, null, anmeldung, null);
+                }
+                catch (Exception ex)
+                {
+                    // Die Aenderung lag nur in der Definition im Speicher; die Aufgabe selbst ist unveraendert.
+                    string fehler = "Zeitbudget der Aufgabe „" + TaskName + "“ ließ sich nicht von " + vorher + " auf " + Zeitbudget
+                                    + " anheben (" + Grund(ex) + "); es bleibt " + vorher + ".";
+                    AppLog.Warn(fehler);
+                    return fehler;
+                }
+                string satz = "Zeitbudget der Aufgabe „" + TaskName + "“ von " + vorher + " auf " + Zeitbudget + " angehoben ("
+                              + ZeitbudgetStunden + " Stunden je Lauf, Anmeldung wie registriert, ohne Passwort).";
+                AppLog.Info(satz);
+                return satz;
+            }
+            finally
+            {
+                Helfer.Com.Freigeben(neu);
+                Helfer.Com.Freigeben(konto);
+                Helfer.Com.Freigeben(aktion);
+                Helfer.Com.Freigeben(aktionen);
+                Helfer.Com.Freigeben(einstellungen);
+                Helfer.Com.Freigeben(definition);
+                Helfer.Com.Freigeben(aufgabe);
+                Helfer.Com.Freigeben(ordner);
+                Helfer.Com.Freigeben(dienst);
+            }
+        }
+
+        /// <summary>
+        /// Fehlertext fuer das Protokoll, ohne Punkt am Ende; bei COM- und Windows-Fehlern
+        /// (FACILITY_WIN32, etwa 0x80070005 Zugriff verweigert) mit HRESULT, weil der Text
+        /// lokalisiert ist und nur die Zahl sich nachschlagen laesst.
+        /// </summary>
+        static string Grund(Exception ex)
+        {
+            string text = (ex.Message ?? ex.GetType().Name).Trim().TrimEnd('.', ' ');
+            bool windows = ex is System.Runtime.InteropServices.COMException || (unchecked((uint)ex.HResult) & 0xFFFF0000u) == 0x80070000u;
+            return windows ? text + ", HRESULT 0x" + ex.HResult.ToString("X8", CultureInfo.InvariantCulture) : text;
+        }
+
+        // Dauer der Aufgabenplanung (ISO 8601, PnYnMnDTnHnMnS). Fuer die Frage "kuerzer als
+        // 4 Stunden" reicht eine grobe Umrechnung von Jahren und Monaten (372 bzw. 31 Tage).
+        static readonly Regex DauerMuster = new Regex(@"^P(?:(\d{1,9})Y)?(?:(\d{1,9})M)?(?:(\d{1,9})D)?(?:T(?:(\d{1,9})H)?(?:(\d{1,9})M)?(?:(\d{1,9})S)?)?$",
+                                                      RegexOptions.CultureInvariant);
+
+        /// <summary>
+        /// Sekunden einer ISO-8601-Dauer; false, wenn der Text dem Muster nicht folgt oder keine
+        /// einzige Zahl traegt ("P", "PT"). PT0S (ohne Grenze) ergibt true mit 0 Sekunden.
+        /// </summary>
+        internal static bool DauerSekunden(string iso, out long sekunden)
+        {
+            sekunden = 0;
+            if (string.IsNullOrEmpty(iso)) return false;
+            Match m = DauerMuster.Match(iso.Trim());
+            if (!m.Success) return false;
+            long[] teil = new long[6];
+            bool eine = false;
+            for (int i = 0; i < 6; i++)
+            {
+                if (!m.Groups[i + 1].Success) continue;
+                if (!long.TryParse(m.Groups[i + 1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out teil[i])) return false;
+                eine = true;
+            }
+            if (!eine) return false;
+            sekunden = ((teil[0] * 372 + teil[1] * 31 + teil[2]) * 86400L) + teil[3] * 3600L + teil[4] * 60L + teil[5];
+            return true;
+        }
+
         public static void Delete()
         {
             RunCode("schtasks.exe", "/Delete /TN \"" + TaskName + "\" /F");
@@ -334,6 +535,89 @@ namespace WartungsToolbox
         static readonly object _cfgLock = new object();
         static string _cfgPath;
 
+        // ---- Sperre ueber Prozessgrenzen (Meilenstein 4) ----
+        // _cfgLock schuetzt nur innerhalb eines Prozesses. Die Datei schreiben aber drei: der
+        // Helfer (erhoeht, Write/Clear ueber zeitplan.anlegen und zeitplan.loeschen), der Host
+        // (nicht erhoeht, WriteFreigaben) und --auto liest sie unter der Aufgabenplanung. Ein
+        // Lesen-Aendern-Schreiben aus zwei Prozessen zugleich verlor bis 8.2 die Aenderung des
+        // einen (docs\M3-ENTWURF.md 10.3). Deshalb haelt jeder Lese- und Schreibweg zusaetzlich
+        // den benannten Mutex ZeitplanSperre: Global\, weil der --auto-Prozess in Sitzung 0
+        // laufen kann; die DACL erlaubt Jeder, SYSTEM und Administratoren Synchronize|Modify,
+        // sonst saehe der nicht erhoehte Host den Mutex des erhoehten Helfers nicht (CreateMutex
+        // auf einen vorhandenen Namen verlangt sonst Vollzugriff, und .NET weicht dann auf
+        // OpenMutex mit genau diesen beiden Rechten aus). Reihenfolge immer _cfgLock, dann
+        // Mutex; der Mutex gehoert dem Thread, der ihn nahm, und wird dort wieder freigegeben.
+        // Nach 5 s ohne Sperre: warn-Zeile, Lesen laeuft ohne Sperre weiter, Schreiben unterbleibt
+        // (false). Ein verlassener Mutex (Vorbesitzer abgestuerzt) zaehlt als erworben: die Datei
+        // ist ueber Temp + Replace immer ganz, es gibt nichts zu reparieren.
+        // Der Helfer ruft dieselben Funktionen (helfer\Katalog.cs: Write, Clear), die Suite greppt
+        // den Namen hier.
+        public const string ZeitplanSperre = @"Global\WindowsWartung.zeitplan";
+        const int SperreWartenMs = 5000;
+
+        /// <summary>
+        /// Fuehrt f unter _cfgLock und der prozessuebergreifenden Sperre aus. f bekommt, ob die
+        /// Sperre stand; wer schreibt, bricht ohne Sperre ab, wer liest, liest trotzdem (die
+        /// warn-Zeile steht dann schon im app.log). was und schreiben bestimmen nur den Text.
+        /// </summary>
+        static T Gesperrt<T>(string was, bool schreiben, Func<bool, T> f)
+        {
+            lock (_cfgLock)
+            {
+                bool erworben;
+                Mutex sperre = SperreHolen(was, schreiben, out erworben);
+                try { return f(erworben); }
+                finally { SperreFrei(sperre, erworben); }
+            }
+        }
+
+        static Mutex SperreHolen(string was, bool schreiben, out bool erworben)
+        {
+            erworben = false;
+            Mutex sperre = null;
+            string problem = null;
+            try
+            {
+                sperre = SperreOeffnen();
+                try { erworben = sperre.WaitOne(SperreWartenMs); }
+                catch (AbandonedMutexException) { erworben = true; }
+                if (!erworben) problem = "war nach " + (SperreWartenMs / 1000) + " s nicht frei (ein anderer Prozess hält sie länger)";
+            }
+            catch (Exception ex)
+            {
+                problem = "ließ sich nicht öffnen (" + ex.Message.TrimEnd('.', ' ') + ")";
+                if (sperre != null) { try { sperre.Dispose(); } catch (Exception) { } sperre = null; }
+            }
+            if (problem != null)
+                AppLog.Warn("zeitplan.json: die Sperre " + ZeitplanSperre + " " + problem + "; " + was
+                            + (schreiben ? " unterbleibt, nichts geschrieben." : " läuft ohne Sperre weiter."));
+            return sperre;
+        }
+
+        static void SperreFrei(Mutex sperre, bool erworben)
+        {
+            if (sperre == null) return;
+            try { if (erworben) sperre.ReleaseMutex(); } catch (Exception) { }
+            try { sperre.Dispose(); } catch (Exception) { }
+        }
+
+        /// <summary>
+        /// Oeffnet oder legt den Mutex an. Die Zugriffsliste gilt nur beim Anlegen; wer ihn spaeter
+        /// oeffnet, bekommt Synchronize|Modify ueber "Jeder". Ein Fremdprozess, der den Namen mit
+        /// engerer DACL besetzt, macht die Sperre unbenutzbar; der Aufrufer wertet das wie eine
+        /// belegte Sperre (fail closed beim Schreiben).
+        /// </summary>
+        static Mutex SperreOeffnen()
+        {
+            bool neu;
+            var rechte = MutexRights.Synchronize | MutexRights.Modify;
+            var liste = new MutexSecurity();
+            liste.AddAccessRule(new MutexAccessRule(new SecurityIdentifier(WellKnownSidType.WorldSid, null), rechte, AccessControlType.Allow));
+            liste.AddAccessRule(new MutexAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), rechte, AccessControlType.Allow));
+            liste.AddAccessRule(new MutexAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null), rechte, AccessControlType.Allow));
+            return new Mutex(false, ZeitplanSperre, out neu, liste);
+        }
+
         static string CfgPath()
         {
             lock (_cfgLock)
@@ -384,8 +668,9 @@ namespace WartungsToolbox
         // days = Wochentage (weekly), dom = Monatstag (monthly), actions = gewaehlte
         // Aufgaben-Schluessel oder null (= Standard-Satz; bewusst NICHT gespeichert,
         // damit ein spaeter geaenderter Standard automatisch gilt).
-        // Rueckgabe false, wenn die Datei nicht geschrieben werden konnte (Aufrufer meldet es;
-        // die Aufgabe ist dann angelegt, der Aufgaben-Satz aber nicht gemerkt).
+        // Rueckgabe false, wenn die Datei nicht geschrieben werden konnte oder die Sperre
+        // ZeitplanSperre binnen 5 s nicht frei war (Aufrufer meldet es; die Aufgabe ist dann
+        // angelegt, der Aufgaben-Satz aber nicht gemerkt).
         // Die Freigaben (siehe unten) bleiben dabei stehen: der Zeitplan beschreibt WANN und
         // WAS an Werkzeugen laeuft, die Freigaben sind eine eigene Einstellung derselben Datei.
         // Ist die Datei vorhanden, aber nicht lesbar, ersetzt der neue Zeitplan sie trotzdem
@@ -395,8 +680,9 @@ namespace WartungsToolbox
         {
             try
             {
-                lock (_cfgLock)
+                return Gesperrt("Zeitplan speichern", true, delegate (bool gesperrt)
                 {
+                    if (!gesperrt) return false;
                     Dictionary<string, object> d = new Dictionary<string, object>();
                     d["mode"] = mode;
                     if (mode == "weekly" && days != null) d["days"] = days;
@@ -410,7 +696,7 @@ namespace WartungsToolbox
                     string[] freigaben = FreigabenRoh(alt);
                     if (freigaben.Length > 0) d[FreigabenFeld] = freigaben;
                     return Speichern(d);
-                }
+                });
             }
             catch (Exception ex)
             {
@@ -443,7 +729,7 @@ namespace WartungsToolbox
         /// </summary>
         public static object Read()
         {
-            Dictionary<string, object> d = Roh();
+            Dictionary<string, object> d = Gesperrt("Zeitplan lesen", false, delegate (bool gesperrt) { return Roh(); });
             return d != null && d.ContainsKey("mode") ? d : null;
         }
 
@@ -454,12 +740,17 @@ namespace WartungsToolbox
         // Die Freigaben ueberleben das Abschalten: sie stehen in den Einstellungen, nicht im
         // Zeitplan, und ein spaeter neu angelegter Zeitplan soll sie wieder vorfinden. Ohne
         // Freigaben wird die Datei geloescht wie bis 8.1.
-        public static void Clear()
+        // Rueckgabe false, wenn die Sperre ZeitplanSperre binnen 5 s nicht frei war oder die Datei
+        // sich nicht schreiben bzw. loeschen liess: mode und time stehen dann weiter darin, und die
+        // Oberflaeche liest ueber Read einen Zeitplan ohne Aufgabe. Der Aufrufer
+        // (helfer\Katalog.cs, ZeitplanLoeschen) sagt das dem Nutzer; hier steht es nur im app.log.
+        public static bool Clear()
         {
             try
             {
-                lock (_cfgLock)
+                return Gesperrt("Zeitplan löschen", true, delegate (bool gesperrt)
                 {
+                    if (!gesperrt) return false;
                     bool unlesbar;
                     Dictionary<string, object> alt = Roh(out unlesbar);
                     if (unlesbar)
@@ -467,10 +758,14 @@ namespace WartungsToolbox
                     string[] freigaben = FreigabenRoh(alt);
                     var d = new Dictionary<string, object>();
                     if (freigaben.Length > 0) d[FreigabenFeld] = freigaben;
-                    Speichern(d);
-                }
+                    return Speichern(d);
+                });
             }
-            catch (Exception ex) { AppLog.Warn("Zeitplan-Einstellung ließ sich nicht löschen: " + ex.Message); }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Zeitplan-Einstellung ließ sich nicht löschen: " + ex.Message);
+                return false;
+            }
         }
 
         // ---- Freigaben fuer die geplante Wartung (Meilenstein 3) ----
@@ -490,7 +785,7 @@ namespace WartungsToolbox
         /// <summary>Freigegebene Kennungen, nur freischaltbare, ohne Doppelte; nie null.</summary>
         public static string[] ReadFreigaben()
         {
-            try { return FreigabenFiltern(FreigabenRoh(Roh()), null); }
+            try { return FreigabenFiltern(FreigabenRoh(Gesperrt("Freigaben lesen", false, delegate (bool gesperrt) { return Roh(); })), null); }
             catch (Exception ex)
             {
                 AppLog.Warn("Freigaben der geplanten Wartung nicht lesbar, es gilt: keine: " + ex.Message);
@@ -502,7 +797,8 @@ namespace WartungsToolbox
         /// Speichert die Freigaben (null oder leer = keine). Kennungen, die nicht freischaltbar
         /// sind, werden ohne Fehler weggelassen und im app.log genannt: die Oberflaeche schickt
         /// nur, was der Host ihr als freischaltbar gemeldet hat, und ein Rest aus einer aelteren
-        /// Fassung darf das Speichern nicht blockieren. false = Datei nicht geschrieben.
+        /// Fassung darf das Speichern nicht blockieren. false = Datei nicht geschrieben (auch
+        /// dann, wenn die Sperre ZeitplanSperre binnen 5 s nicht frei war).
         ///
         /// Ist zeitplan.json vorhanden, aber nicht lesbar, wird NICHT geschrieben: die Freigaben
         /// sind nur ein Feld dieser Datei, und ein Schreiben ersetzte den Zeitplan (mode, time,
@@ -517,8 +813,9 @@ namespace WartungsToolbox
                 string[] gefiltert = FreigabenFiltern(kennungen ?? new string[0], weggelassen);
                 if (weggelassen.Count > 0)
                     AppLog.Warn("Freigaben: " + Zahlwort(weggelassen.Count, "Kennung", "Kennungen") + " nicht freischaltbar und weggelassen: " + string.Join(", ", weggelassen));
-                lock (_cfgLock)
+                return Gesperrt("Freigaben speichern", true, delegate (bool gesperrt)
                 {
+                    if (!gesperrt) return false;
                     bool unlesbar;
                     Dictionary<string, object> d = Roh(out unlesbar);
                     if (unlesbar)
@@ -532,7 +829,7 @@ namespace WartungsToolbox
                     bool ok = Speichern(d);
                     if (ok) AppLog.Info("Freigaben der geplanten Wartung gespeichert: " + (gefiltert.Length == 0 ? "keine" : string.Join(", ", gefiltert)));
                     return ok;
-                }
+                });
             }
             catch (Exception ex)
             {

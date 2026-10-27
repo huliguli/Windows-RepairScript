@@ -11,6 +11,7 @@ using HardwareRegel = WartungsToolbox.Kern.Regeln.Hardware;
 using SpeicherRegel = WartungsToolbox.Kern.Regeln.Speicherplatz;
 using UpdatesRegel = WartungsToolbox.Kern.Regeln.Updates;
 using DatentraegerRegel = WartungsToolbox.Kern.Regeln.Datentraeger;
+using StabilitaetRegel = WartungsToolbox.Kern.Regeln.Stabilitaet;
 
 namespace WartungsToolbox.Proben
 {
@@ -33,17 +34,29 @@ namespace WartungsToolbox.Proben
     ///       nie bestanden); je Kennung mit Unlesbar-Zweig mindestens eine Unbestimmt-Probe, und
     ///       zwar ausschliesslich ueber committete gepflanzt-*.json (die CI hat nichts anderes); die
     ///       echte Aufzeichnung dieses PCs (dieser-pc-de.json, nur lokal) laeuft als Zusatzgruppe
-    ///       nach der Deckungspruefung und wird ohne Datei gemeldet uebersprungen, nie rot; die 14
-    ///       Nachweise ohne messbaren Zustand (13 Ja plus wiederherstellungspunkt.zurueck) sind Nein,
+    ///       nach der Deckungspruefung und wird ohne Datei gemeldet uebersprungen, nie rot; die 13
+    ///       Nachweise ohne messbaren Zustand (12 Ja plus wiederherstellungspunkt.zurueck) sind Nein,
     ///       sobald der Helfer nachweis.bestanden = 0 (oder einen anderen Wert als 1) meldet;
+    ///       dateien.reparieren und update.anwenden lesen ihre Werte (dism.zustand/sfc.zustand,
+    ///       update.version/update.vorher) und sind ohne beide bzw. mit unlesbaren Werten Unlesbar;
     ///   (c, TRIM) eine Deutung des Rohwerts DisableDeleteNotification (Massnahmen.TrimAn, Bit 0 =
     ///       NTFS): mit gepflanztem Rohwert 2 sagen Regel und Nachweis beide "an", mit 3 beide "aus",
     ///       und alle Texte der Kennung nennen "NTFS-Bit von DisableDeleteNotification";
-    ///   (c2) die 16 Paare gepflanzt-massnahmen-&lt;kennung&gt;-vorher/-nachher.json: Regeln ueber
-    ///       VORHER haengen die Kennung mit den Parametern der Tabelle (K6-Bericht 4) an, der
-    ///       Nachweis ist vorher Nein und nachher Ja, und ueber NACHHER haengt keine Regel die
-    ///       Kennung mit diesen Parametern mehr an; dazu ein 17. Paar im Speicher (Aufgabe mit
-    ///       laufender Instanz: Zustand 4 bleibt nach schtasks /DISABLE, nur Enabled kippt);
+    ///   (c2) die 26 Paare gepflanzt-massnahmen-&lt;kennung&gt;-vorher/-nachher.json: Regeln ueber
+    ///       VORHER haengen die Kennung mit den Parametern der Tabelle (K6-Bericht 4, M4-Entwurf 8.1)
+    ///       an, der Nachweis ist vorher Nein und nachher Ja, und ueber NACHHER haengt keine Regel
+    ///       die Kennung mit diesen Parametern mehr an; die 10 M4-Paare haengen an einem Problem-
+    ///       Befund (warn oder bad). Das Paar netz.stack.gestoert traegt zwei Kennungen ohne Zustand
+    ///       am Bild (netz.winsock.zuruecksetzen, netz.ip.zuruecksetzen): dort fuehrt nachweis.bestanden
+    ///       den Nachweis (0 vorher Nein, 1 nachher NachNeustart); update.zuruecksetzen bekommt die
+    ///       gesicherte Verborgen-Liste (update.verborgen.vorher) als Nachweis-Parameter. Dazu ein
+    ///       27. Paar im Speicher (Aufgabe mit laufender Instanz: Zustand 4 bleibt nach
+    ///       schtasks /DISABLE, nur Enabled kippt);
+    ///   (c, M4) Nachweise der neuen Kennungen mit messbarem Zustand (netz.hosts.bereinigen,
+    ///       sicherheit.firewall.eingehend.blockieren, sicherheit.firewall.zuruecksetzen,
+    ///       leistung.winlogon.zuruecksetzen, update.zuruecksetzen): Ja, Nein und je Unlesbar-Zweig
+    ///       eine Unbestimmt-Probe, HelferFehler zuerst; RueckwegGelungen liest fuer netz.ip.zuruecksetzen
+    ///       und netz.winsock.zuruecksetzen allein nachweis.bestanden (1 Ja, 0 Nein, fehlt Unlesbar);
     ///   (c, Aufgabe) der Nachweis leistung.aufgabe.deaktivieren liest Enabled (Feld Aktiv), nicht
     ///       TASK_STATE: Aktiv false ist Ja bei jedem Zustand, Aktiv true Nein bei jedem Zustand,
     ///       ohne Feld zaehlt der Zustand (1 Ja, 3 Nein, 0/2/4 Unlesbar);
@@ -52,7 +65,25 @@ namespace WartungsToolbox.Proben
     ///       verspricht keine Reparatur "als eigene Massnahme" (spotfix/reparatur sind Rat bis M4);
     ///   (d) Freischaltbare() sind genau die sechs Stufe-1-Massnahmen aus M3-Entwurf 8.1;
     ///   (e) jeder Befund mit Kennung traegt die Pflichtparameter der Kennung (ueber alle Bilder,
-    ///       auch ein Befund mit leerem Parameter-Woerterbuch wird geprueft).
+    ///       auch ein Befund mit leerem Parameter-Woerterbuch wird geprueft);
+    ///   (f) M4-Entwurf 2.1 und 8.1: jede Stufe-3-Kennung mit Art ausfuehren traegt Verlust (ein bis
+    ///       zwei Saetze), Sicherung export hat nie den Rueckweg "von selbst", die Stufe-3-Menge ist
+    ///       genau die aus M4-Entwurf 1, und VerlustMit setzt {dateien}/{bytes} invariant ein.
+    ///
+    /// M4 (18.09.2026 abends): die sechs Raete aus M3 sind ausfuehrbar oder ersetzt
+    /// (netz.hosts.pruefen -> netz.hosts.bereinigen), (b) prueft Verlust und export, (f) ist neu.
+    /// Nachbesserung K1: Unbestimmt-Proben im Speicher fuer volume.spotfix, volume.reparatur,
+    /// dateien.reparieren und speicher.papierkorb.leeren (MitUnlesbarZweig). Phase 3 (T1, 19.09.2026):
+    /// (c2) auf 26 Paare (10 M4-Paare als Dateien), MitUnlesbarZweig um die M4-Kennungen mit
+    /// Unlesbar-Zweig (31, darunter update.anwenden wegen der unlesbaren Fassungen),
+    /// NachweiseOhneZustand um update.anwenden, netz.winsock.zuruecksetzen,
+    /// netz.ip.zuruecksetzen und stabilitaet.speichertest.planen (16), RueckwegGelungen ohne Zustand,
+    /// neue Gruppe NachweiseM4; die Papierkorb-Regel liegt jetzt in SpeicherplatzProben (10 Klassen).
+    /// Wirksamkeitsproben 19.09.2026 (jeweils an einer Kopie, zurueckgebaut): HostsBereinigt liefert bei
+    /// HostsPfadAbweichend Nein statt Unlesbar -> "hosts: DataBasePath abweichend => Unbestimmt" rot;
+    /// Paar-Datei netz.hosts.bereinigen-nachher mit einer umleitenden Zeile -> "NACHHER => bestanden"
+    /// und "haengen die Kennung ... an keinen Befund mehr" rot; RueckwegOhneZustand ohne
+    /// netz.winsock.zuruecksetzen -> "Rueckweg Winsock: nachweis.bestanden fehlt => Unbestimmt" rot.
     ///
     /// Wirksamkeitsproben 13.09.2026: Signatur-Nachweis auf "&gt;=" gedreht -> (c) rot; Freischaltbar bei
     /// netz.dhcp.erneuern gesetzt -> (d) rot; Kennung volume.scan im Katalog umbenannt -> (a) rot.
@@ -74,31 +105,33 @@ namespace WartungsToolbox.Proben
     public static class MassnahmenProben
     {
         /// <summary>
-        /// Abgelesen aus kern/Regeln/*.cs (grep "Massnahmen.Add" und "Massnahmen = new List"), 18.09.2026.
-        /// Oeffentliche Konstanten werden direkt referenziert, private Literale stehen hier als Text.
-        /// Die Sammelkarte leistung.autostart.anzahl traegt keine Kennung mehr, der Winlogon-Rat heisst
-        /// leistung.winlogon.zuruecksetzen (M3-Entwurf 8.1/8.5).
+        /// Abgelesen aus kern/Regeln/*.cs (grep "Massnahmen.Add" und "Massnahmen = new List"), 18.09.2026
+        /// (M4 abends). Oeffentliche Konstanten werden direkt referenziert. Die Sammelkarte
+        /// leistung.autostart.anzahl traegt keine Kennung mehr (M3-Entwurf 8.1/8.5); seit M4 haengen die
+        /// Stufe-3-Kennungen aus M4-Entwurf 1 und 2.4 an den Karten, netz.hosts.pruefen ist ersetzt.
         /// </summary>
         static readonly string[] KennungenAusRegeln =
         {
             // Datentraeger.cs
-            "datentraeger.trim.einschalten", "volume.reparatur", "volume.spotfix", "volume.scan", "systemschutz.punkt.anlegen",
+            DatentraegerRegel.MTrimEinschalten, DatentraegerRegel.MReparatur, DatentraegerRegel.MSpotfix, DatentraegerRegel.MScan, DatentraegerRegel.MPunktAnlegen,
             // Hardware.cs
-            HardwareRegel.MTreiberNeu, HardwareRegel.MAktivieren,
-            // Leistung.cs (je Eintrag/Aufgabe/Dienst die drei Konstanten, Winlogon als Rat)
+            HardwareRegel.MTreiberNeu, HardwareRegel.MTreiberZurueck, HardwareRegel.MAktivieren,
+            // Leistung.cs (je Eintrag/Aufgabe/Dienst die drei Konstanten, Winlogon seit M4 ausfuehrbar)
             LeistungRegel.MAutostartDeaktivieren, LeistungRegel.MAufgabeDeaktivieren, LeistungRegel.MDienstStartart,
-            "leistung.winlogon.zuruecksetzen",
+            LeistungRegel.MWinlogonZuruecksetzen,
             // Netz.cs
-            NetzRegel.MDhcpErneuern, NetzRegel.MDnsCacheLeeren, NetzRegel.MDnsZuruecksetzen, NetzRegel.MHostsPruefen,
+            NetzRegel.MDhcpErneuern, NetzRegel.MDnsCacheLeeren, NetzRegel.MDnsZuruecksetzen, NetzRegel.MHostsBereinigen,
+            NetzRegel.MWinsockZuruecksetzen, NetzRegel.MIpZuruecksetzen,
             // Sicherheit.cs (auch Stabilitaet.cs: MassnahmeSignaturen)
             SicherheitRegel.MassnahmeSignaturen, SicherheitRegel.MassnahmeSchnellscan, SicherheitRegel.MassnahmeFirewall,
             SicherheitRegel.MassnahmeUac, SicherheitRegel.MassnahmeSmartScreen,
+            SicherheitRegel.MassnahmeEingehendBlockieren, SicherheitRegel.MassnahmeFirewallReset,
             // Speicherplatz.cs
-            SpeicherRegel.MAufraeumen,
+            SpeicherRegel.MAufraeumen, SpeicherRegel.MPapierkorbLeeren,
             // Stabilitaet.cs
-            "stabilitaet.speichertest.planen",
+            StabilitaetRegel.MSpeichertestPlanen, StabilitaetRegel.MDateienReparieren,
             // Updates.cs
-            UpdatesRegel.Verbergen, UpdatesRegel.EinstellungenOeffnen, UpdatesRegel.DienstAktivieren,
+            UpdatesRegel.Verbergen, UpdatesRegel.EinstellungenOeffnen, UpdatesRegel.DienstAktivieren, UpdatesRegel.Zuruecksetzen,
         };
 
         /// <summary>M3-Entwurf 8.1: die sechs Kaestchen der Freischaltung (volume.optimieren haengt an keiner Regel).</summary>
@@ -116,7 +149,7 @@ namespace WartungsToolbox.Proben
         /// </summary>
         static readonly string[] Stufe2OhneRueckweg = { "update.dienst.aktivieren" };
 
-        /// <summary>M3-Entwurf Abschnitt 1: Kennung -> Pflichtparameter, wie sie die Regeln setzen muessen.</summary>
+        /// <summary>M3-Entwurf Abschnitt 1 und M4-Entwurf Abschnitt 1: Kennung -> Pflichtparameter, wie sie die Regeln setzen muessen.</summary>
         static readonly Dictionary<string, string[]> Pflichtparameter = new Dictionary<string, string[]>
         {
             { "netz.dhcp.erneuern", new[] { "adapter" } },
@@ -131,14 +164,52 @@ namespace WartungsToolbox.Proben
             { "update.verbergen", new[] { "updateId" } },
             { "geraet.aktivieren", new[] { "instanzId" } },
             { "rueckweg", new[] { "sicherung" } },
+            // M4-Entwurf 1 (Stufe 3 und die neuen Stufe-2-Kennungen); die Papierkorb-Zahlen
+            // dateien/bytes sind Befund-Parameter fuer den Verlust-Text, keine Pflichtparameter.
+            { "netz.hosts.bereinigen", new string[0] },
+            { "netz.winsock.zuruecksetzen", new string[0] },
+            { "netz.ip.zuruecksetzen", new string[0] },
+            { "sicherheit.firewall.eingehend.blockieren", new[] { "profil" } },
+            { "sicherheit.firewall.zuruecksetzen", new string[0] },
+            { "volume.spotfix", new[] { "buchstabe" } },
+            { "volume.reparatur", new[] { "buchstabe" } },
+            { "dateien.reparieren", new string[0] },
+            { "geraet.treiber.neu", new[] { "instanzId" } },
+            { "leistung.winlogon.zuruecksetzen", new string[0] },
+            { "speicher.papierkorb.leeren", new string[0] },
+            { "stabilitaet.speichertest.planen", new string[0] },
+            { "update.zuruecksetzen", new string[0] },
+            { "wiederherstellungspunkt.zurueck", new[] { "folge" } },
+            { "update.anwenden", new[] { "sha256" } },
+        };
+
+        /// <summary>M4-Entwurf 1: genau diese Kennungen sind Stufe 3 mit Art ausfuehren (jede mit Verlust).</summary>
+        static readonly string[] Stufe3Ausfuehrbar =
+        {
+            "dateien.reparieren", "geraet.treiber.neu", "netz.ip.zuruecksetzen", "netz.winsock.zuruecksetzen",
+            "sicherheit.firewall.zuruecksetzen", "speicher.papierkorb.leeren", "stabilitaet.speichertest.planen",
+            "update.zuruecksetzen", "volume.reparatur", "volume.spotfix", "wiederherstellungspunkt.zurueck",
         };
 
         /// <summary>
-        /// Parametertabelle der 16 Paare (docs/werkzeuge/m3-phase1-berichte.md, K6 Abschnitt 4): mit
-        /// genau diesen Werten muss der Befund ueber dem Vorher-Bild die Kennung tragen.
+        /// Parametertabelle der 26 Paare (docs/werkzeuge/m3-phase1-berichte.md, K6 Abschnitt 4;
+        /// M4-Entwurf 8.1): mit genau diesen Werten muss der Befund ueber dem Vorher-Bild die Kennung
+        /// tragen. Der Schluessel ist der Name im Dateinamen; bei netz.stack.gestoert ist das der
+        /// Befund, die Kennungen stehen in PaarKennungen.
         /// </summary>
         static readonly Dictionary<string, Dictionary<string, string>> PaarParameter = new Dictionary<string, Dictionary<string, string>>
         {
+            // M4-Paare (Phase 3, T1): Problem-Befunde der Stufe 2 und 3.
+            { "netz.hosts.bereinigen", P() },
+            { "netz.stack.gestoert", P() },
+            { "sicherheit.firewall.eingehend.blockieren", P("profil", "2") },
+            { "sicherheit.firewall.zuruecksetzen", P() },
+            { "volume.spotfix", P("buchstabe", "D") },
+            { "volume.reparatur", P("buchstabe", "C") },
+            { "geraet.treiber.neu", P("instanzId", "PCI\\VEN_8086&DEV_125C&SUBSYS_88731043&REV_04\\4&3B2C1D0E&0&00E4") },
+            { "leistung.winlogon.zuruecksetzen", P() },
+            { "speicher.papierkorb.leeren", P() },
+            { "update.zuruecksetzen", P() },
             { "sicherheit.signaturen.aktualisieren", P() },
             { "sicherheit.firewall.einschalten", P("profil", "4") },
             { "sicherheit.smartscreen.warn", P() },
@@ -160,6 +231,42 @@ namespace WartungsToolbox.Proben
         /// <summary>Frage-Id des Code-22-Geraets im Paar geraet.aktivieren; ohne Antwort "reparieren" ist es eine Frage, keine Massnahme.</summary>
         const string GeraetFrage = "geraet:PCI\\VEN_1002&DEV_13C0&SUBSYS_88771043&REV_C1\\4&1EBE6A9C&0&0041:22";
 
+        /// <summary>Die 10 Paare aus M4-Entwurf 8.1 (Dateiname): ihr Traeger ueber VORHER ist ein Problem-Befund (warn oder bad), kein Kandidat.</summary>
+        static readonly string[] PaareM4 =
+        {
+            "netz.hosts.bereinigen", "netz.stack.gestoert", "sicherheit.firewall.eingehend.blockieren", "sicherheit.firewall.zuruecksetzen",
+            "volume.spotfix", "volume.reparatur", "geraet.treiber.neu", "leistung.winlogon.zuruecksetzen", "speicher.papierkorb.leeren",
+            "update.zuruecksetzen",
+        };
+
+        /// <summary>Paare, deren Dateiname ein Befund ist und mehrere Kennungen deckt (M4-Entwurf 2.4: beide Reset-Kennungen an einer Karte, in dieser Reihenfolge).</summary>
+        static readonly Dictionary<string, string[]> PaarKennungen = new Dictionary<string, string[]>
+        {
+            { "netz.stack.gestoert", new[] { "netz.winsock.zuruecksetzen", "netz.ip.zuruecksetzen" } },
+        };
+
+        /// <summary>
+        /// Kennungen ohne messbaren Zustand am Bild (M4-Entwurf 1): ihr Nachweis ist immer NachNeustart,
+        /// gedreht wird er ueber nachweis.bestanden des Helfers (0 vorher Nein, 1 nachher NachNeustart).
+        /// </summary>
+        static readonly string[] PaarOhneZustand = { "netz.winsock.zuruecksetzen", "netz.ip.zuruecksetzen" };
+
+        /// <summary>Kennungen, deren Nachher-Nachweis NachNeustart ist (Neustart-Flag gesetzt).</summary>
+        static readonly string[] PaarNachNeustart = { "netz.winsock.zuruecksetzen", "netz.ip.zuruecksetzen", "update.zuruecksetzen" };
+
+        /// <summary>Kennung des verborgenen HP-USB-Updates (dieselbe wie im Paar update.verbergen und in der Uebergabe).</summary>
+        const string HpUpdateId = "4340b239-4b90-4305-9c2e-6a24dfcb6757";
+
+        /// <summary>
+        /// Zusaetzliche Nachweis-Parameter je Kennung (Werte des Helfers, die der Host nach dem Lauf in p
+        /// reicht, M4-Entwurf 4): der Nachweis von update.zuruecksetzen liest die gesicherte Liste
+        /// update.verborgen.vorher; sie ist kein Befund-Parameter und steht deshalb nicht in PaarParameter.
+        /// </summary>
+        static readonly Dictionary<string, Dictionary<string, string>> PaarNachweisZusatz = new Dictionary<string, Dictionary<string, string>>
+        {
+            { "update.zuruecksetzen", P("update.verborgen.vorher", HpUpdateId) },
+        };
+
         /// <summary>
         /// Kennungen, deren Nachweis einen Unlesbar-Zweig hat: fuer jede muss (c) mindestens einen
         /// Nachweis mit Unbestimmt == true und Bestanden == false liefern (M3-Entwurf 8.1).
@@ -173,7 +280,28 @@ namespace WartungsToolbox.Proben
             "leistung.autostart.deaktivieren", "leistung.aufgabe.deaktivieren", "leistung.dienst.startart",
             "update.dienst.aktivieren", "update.verbergen", "geraet.aktivieren", "rueckweg",
             "zeitplan.anlegen", "zeitplan.loeschen",
+            // M4 (Nachbesserung K1): Reparatur-Nachweise mit ungelesenem Status, DISM/SFC ohne
+            // Ergebnis, Papierkorb ohne gelesene Groesse.
+            "volume.spotfix", "volume.reparatur", "dateien.reparieren", "speicher.papierkorb.leeren",
+            // M4 (Phase 3, T1): hosts-Datei an fremdem Ort oder nicht gelesen, Firewall-Profil
+            // fehlt oder Standardaktion nicht gelesen, Winlogon-Werte beide nicht gelesen,
+            // Verborgen-Liste des Helfers oder des Bilds fehlt, Geraet ohne gelesenen Code.
+            "netz.hosts.bereinigen", "sicherheit.firewall.eingehend.blockieren", "sicherheit.firewall.zuruecksetzen",
+            "leistung.winlogon.zuruecksetzen", "update.zuruecksetzen", "geraet.treiber.neu",
+            // M4 (Phase 3, T1): unlesbare Fassungen update.version/update.vorher (Proben "update.version
+            // = abc (unlesbar)" und "update.vorher = ? (unlesbar)" in NachweiseOhneZustand); ohne diesen
+            // Eintrag meldete die Deckungspruefung nichts, wenn beide Proben entfielen.
+            "update.anwenden",
         };
+
+        /// <summary>
+        /// Kennungen aus MitUnlesbarZweig, deren Unlesbar-Zweig an Werten des Helfers haengt
+        /// (update.version/update.vorher), nicht am Bild und nicht am Pflichtparameter (sha256 liest
+        /// der Nachweis nie): ohne Parameter ist ihr Nachweis der ehrliche Ja-Satz (M4-Entwurf 1,
+        /// Zeile update.anwenden; EintragenOhneZustand), nicht Unbestimmt. Die Pflichtparameter-Probe
+        /// in (b) verlangt von ihnen deshalb den Ja-Satz statt Unbestimmt.
+        /// </summary>
+        static readonly string[] UnlesbarAusWerten = { "update.anwenden" };
 
         static readonly SortedSet<string> UnbestimmtGesehen = new SortedSet<string>(StringComparer.Ordinal);
 
@@ -184,21 +312,25 @@ namespace WartungsToolbox.Proben
 
             KennungenDerRegeln(h);
             Eintraege(h, saetze);
+            Stufe3Verlust(h, saetze);
             Freischaltung(h);
             NachweiseNetz(h, saetze);
             NachweiseSicherheit(h, saetze);
             NachweiseDatentraeger(h, saetze);
+            NachweiseSpeicher(h, saetze);
             TrimRohwert(h, saetze);
             NachweiseLeistung(h, saetze);
             NachweiseUpdates(h, saetze);
             NachweiseHardware(h, saetze);
+            NachweiseM4(h, saetze);
             NachweiseRueckweg(h, saetze);
             NachweiseOhneZustand(h, saetze);
             NachweisePaare(h, saetze);
             Parameterpflicht(h);
 
             h.Gruppe("Massnahmen (c): jede Kennung mit Unlesbar-Zweig hat eine Unbestimmt-Probe");
-            h.Ist("Grundmenge: mindestens 15 Kennungen mit Unlesbar-Zweig gelistet", MitUnlesbarZweig.Length >= 15, MitUnlesbarZweig.Length.ToString());
+            h.Ist("Grundmenge: mindestens 30 Kennungen mit Unlesbar-Zweig gelistet", MitUnlesbarZweig.Length >= 30, MitUnlesbarZweig.Length.ToString());
+            h.Ist("Grundmenge: jede Kennung aus UnlesbarAusWerten (1) steht in MitUnlesbarZweig", UnlesbarAusWerten.Length == 1 && UnlesbarAusWerten.All(MitUnlesbarZweig.Contains));
             foreach (string k in MitUnlesbarZweig)
                 h.Ist(k + ": mindestens ein Nachweis war Unbestimmt (nicht bestanden)", UnbestimmtGesehen.Contains(k));
 
@@ -228,6 +360,15 @@ namespace WartungsToolbox.Proben
         static bool Sauber(string text)
         {
             return text != null && text.IndexOf('—') < 0 && text.IndexOf('–') < 0 && text.IndexOf('"') < 0;
+        }
+
+        /// <summary>Anzahl der Saetze: 0 ohne Text oder ohne Schlusspunkt, sonst 1 plus jedes ". " im Text (Abkuerzungen wie "z. B." kommen im Verlust nicht vor).</summary>
+        static int Saetze(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text) || !text.TrimEnd().EndsWith(".")) return 0;
+            int n = 1, i = 0;
+            while ((i = text.IndexOf(". ", i, StringComparison.Ordinal)) >= 0) { n++; i += 2; }
+            return n;
         }
 
         static Dictionary<string, string> P(params string[] paare)
@@ -275,14 +416,16 @@ namespace WartungsToolbox.Proben
         static void KennungenDerRegeln(Harness h)
         {
             h.Gruppe("Massnahmen (a): jede Kennung aus den Regeln existiert im Katalog");
-            h.Ist("Grundmenge: mindestens 20 Kennungen abgelesen", KennungenAusRegeln.Length >= 20, KennungenAusRegeln.Length.ToString());
-            h.Ist("Grundmenge: Katalog hat mindestens 35 Eintraege", Massnahmen.Alle().Count() >= 35, Massnahmen.Alle().Count().ToString());
+            h.Ist("Grundmenge: mindestens 30 Kennungen abgelesen", KennungenAusRegeln.Length >= 30, KennungenAusRegeln.Length.ToString());
+            h.Ist("Grundmenge: Katalog hat mindestens 45 Eintraege", Massnahmen.Alle().Count() >= 45, Massnahmen.Alle().Count().ToString());
             foreach (string k in KennungenAusRegeln)
                 h.Ist("Katalog kennt " + k, Massnahmen.Finde(k) != null);
             // Die beiden alten Kennungen sind weg (M3-Entwurf 8.1): die Sammelkarte fuehrt keine
-            // Kennung mehr, der Winlogon-Rat traegt den Bereich im Namen.
+            // Kennung mehr, der Winlogon-Rat traegt den Bereich im Namen. Seit M4 ist auch der Rat
+            // netz.hosts.pruefen weg (ersetzt durch netz.hosts.bereinigen, M4-Entwurf 1).
             h.Ist("Katalog kennt autostart.deaktivieren NICHT mehr", Massnahmen.Finde("autostart.deaktivieren") == null);
             h.Ist("Katalog kennt autostart.winlogon.zuruecksetzen NICHT mehr", Massnahmen.Finde("autostart.winlogon.zuruecksetzen") == null);
+            h.Ist("Katalog kennt netz.hosts.pruefen NICHT mehr (ersetzt durch netz.hosts.bereinigen)", Massnahmen.Finde("netz.hosts.pruefen") == null);
             // Die Parameternamen der Regeln sind die des Vertrags (M3-Entwurf 1), sonst findet der
             // Nachweis den Wert nicht, obwohl der Befund ihn traegt.
             h.Ist("Regeln nennen den Parameter adapter", NetzRegel.ParamAdapter == "adapter");
@@ -318,7 +461,7 @@ namespace WartungsToolbox.Proben
             var alle = Massnahmen.Alle().ToList();
             var bereiche = new HashSet<string>(Kern.Bereich.Reihenfolge);
             var arten = new[] { Massnahme.ArtAusfuehren, Massnahme.ArtAnsicht, Massnahme.ArtRat };
-            var sicherungen = new[] { Massnahme.SicherungKeine, Massnahme.SicherungWerte, Massnahme.SicherungPunkt, Massnahmen.SicherungRegExport };
+            var sicherungen = new[] { Massnahme.SicherungKeine, Massnahme.SicherungWerte, Massnahme.SicherungPunkt, Massnahme.SicherungExport, Massnahmen.SicherungRegExport };
             var rueckwege = new[] { Massnahme.RueckwegVonSelbst, Massnahme.RueckwegSicherung, Massnahme.RueckwegKeiner };
             h.Ist("Kennungen sind eindeutig", alle.Select(m => m.Kennung).Distinct().Count() == alle.Count);
             foreach (var m in alle)
@@ -354,6 +497,19 @@ namespace WartungsToolbox.Proben
                 }
                 if (m.Rueckweg == Massnahme.RueckwegSicherung)
                     h.Ist(k + ": Rueckweg 'sicherung' nur mit Sicherung", m.Sicherung != Massnahme.SicherungKeine, m.Sicherung);
+                // M4-Entwurf 2.1: Stufe 3 (ausfuehren) traegt Verlust mit mindestens einem Satz, sonst
+                // ist das Feld null; die Sicherungsmarke export (Datei oder Ordner unter
+                // sicherungen\massnahmen\export) hat den Rueckweg sicherung oder keiner, nie von selbst.
+                if (m.Stufe == Massnahme.StufeUnumkehrbar && m.Art == Massnahme.ArtAusfuehren)
+                {
+                    h.Ist(k + ": Stufe 3 hat einen Verlust-Text mit mindestens 1 Satz", Saetze(m.Verlust) >= 1, m.Verlust);
+                    saetze.Add(new KeyValuePair<string, string>(k + " / Verlust", m.Verlust));
+                }
+                else
+                    h.Ist(k + ": Verlust nur bei Stufe 3 (ausfuehren), sonst null", m.Verlust == null, m.Verlust);
+                if (m.Sicherung == Massnahme.SicherungExport)
+                    h.Ist(k + ": Sicherung export hat den Rueckweg sicherung oder keiner, nie von selbst",
+                          m.Rueckweg == Massnahme.RueckwegSicherung || m.Rueckweg == Massnahme.RueckwegKeiner, m.Rueckweg);
                 if (m.Freischaltbar)
                     h.Ist(k + ": Freischaltbar nur bei Stufe 1 und Art ausfuehren", m.Stufe == 1 && m.Art == Massnahme.ArtAusfuehren);
                 if (m.Art == Massnahme.ArtRat)
@@ -371,8 +527,12 @@ namespace WartungsToolbox.Proben
                 if (leer != null) h.Ist(k + ": leeres Bild ist nie bestanden und unbestimmt zugleich", !(leer.Bestanden && leer.Unbestimmt));
                 // Wo der Nachweis das Bild wirklich misst (MitUnlesbarZweig), macht ein fehlender
                 // Pflichtparameter ihn Unbestimmt; Nachweise ohne messbaren Zustand lesen keine Parameter.
-                if (leer != null && m.Parameter.Length > 0 && MitUnlesbarZweig.Contains(k))
+                // Ausnahme UnlesbarAusWerten (update.anwenden): der Unlesbar-Zweig haengt an den Werten
+                // des Helfers, ohne sie gilt der ehrliche Ja-Satz (M4-Entwurf 1), nie Unbestimmt.
+                if (leer != null && m.Parameter.Length > 0 && MitUnlesbarZweig.Contains(k) && !UnlesbarAusWerten.Contains(k))
                     h.Ist(k + ": fehlende Pflichtparameter machen den Nachweis Unbestimmt, nicht Nein", leer.Unbestimmt && !leer.Bestanden, leer.Satz);
+                else if (leer != null && UnlesbarAusWerten.Contains(k))
+                    h.Ist(k + ": ohne Werte des Helfers bleibt der ehrliche Ja-Satz (Unlesbar-Zweig haengt an update.version/update.vorher)", leer.Bestanden && !leer.Unbestimmt, leer.Satz);
                 try { leer = m.Pruefen(new Systembild(), null); } catch (Exception) { wirft = true; }
                 h.Ist(k + ": Nachweis wirft nicht bei Parameter null", !wirft && leer != null);
                 if (leer != null) saetze.Add(new KeyValuePair<string, string>(k + " / Nachweis leeres Bild", leer.Satz));
@@ -419,17 +579,19 @@ namespace WartungsToolbox.Proben
             h.Ist("leistung.dienst.startart: WasPassiert nennt die Folge von Manuell (nur noch auf Anforderung)",
                   ds != null && ds.WasPassiert.Contains("nicht mehr von selbst") && ds.WasPassiert.Contains("anfordert"), ds == null ? "(fehlt)" : ds.WasPassiert);
 
-            // volume.scan: die Reparatur danach ist bis M4 Rat (volume.spotfix, volume.reparatur: Art rat,
-            // Stufe 3, kein Knopf). Das Risiko darf keine "eigene Massnahme" versprechen, die es nicht gibt.
+            // volume.scan: die Reparatur danach ist seit M4 eine eigene Stufe-3-Massnahme mit Knopf
+            // (volume.spotfix, volume.reparatur). Das Risiko darf nicht mehr sagen, es gebe keinen
+            // Knopf, und die beiden Kennungen duerfen nicht mehr "bis auf Weiteres nicht" versprechen.
             var vs = Massnahmen.Finde("volume.scan");
-            h.Ist("volume.scan: Risiko verspricht keine Reparatur als eigene Massnahme", vs != null && !vs.Risiko.Contains("eigene Maßnahme"), vs == null ? "(fehlt)" : vs.Risiko);
-            h.Ist("volume.scan: Risiko sagt, dass die Reparatur bis auf Weiteres selbst auszufuehren ist und es keinen Knopf gibt",
-                  vs != null && vs.Risiko.Contains("bis auf Weiteres selbst") && vs.Risiko.Contains("keinen Knopf"), vs == null ? "(fehlt)" : vs.Risiko);
+            h.Ist("volume.scan: Risiko nennt den Knopf fuer die Reparatur und die Bestaetigung",
+                  vs != null && vs.Risiko.Contains("Knopf") && vs.Risiko.Contains("nie ohne Ihre Bestätigung"), vs == null ? "(fehlt)" : vs.Risiko);
+            h.Ist("volume.scan: Risiko sagt nicht mehr, dass es keinen Knopf gibt", vs != null && !vs.Risiko.Contains("keinen Knopf") && !vs.Risiko.Contains("bis auf Weiteres selbst"), vs == null ? "(fehlt)" : vs.Risiko);
             foreach (string k in new[] { "volume.spotfix", "volume.reparatur" })
             {
                 var r = Massnahmen.Finde(k);
-                h.Ist(k + ": bleibt Rat (Stufe 3, Art rat), also kein Knopf nach dem Scan", r != null && r.Art == Massnahme.ArtRat && r.Stufe == 3, r == null ? "(fehlt)" : r.Art + "/" + r.Stufe);
-                h.Ist(k + ": WasPassiert sagt, dass dieses Programm es bis auf Weiteres nicht ausfuehrt", r != null && r.WasPassiert.Contains("bis auf Weiteres nicht aus"), r == null ? "(fehlt)" : r.WasPassiert);
+                h.Ist(k + ": ausfuehrbar (Stufe 3, Art ausfuehren, buchstabe), also Knopf nach dem Scan",
+                      r != null && r.Art == Massnahme.ArtAusfuehren && r.Stufe == Massnahme.StufeUnumkehrbar && r.Parameter.SequenceEqual(new[] { "buchstabe" }), r == null ? "(fehlt)" : r.Art + "/" + r.Stufe);
+                h.Ist(k + ": kein Text sagt mehr, dass dieses Programm es nicht ausfuehrt", r != null && !r.WasPassiert.Contains("bis auf Weiteres nicht aus"), r == null ? "(fehlt)" : r.WasPassiert);
             }
 
             // leistung.aufgabe.deaktivieren: WasPassiert sagt, dass eine laufende Instanz nicht beendet
@@ -437,6 +599,97 @@ namespace WartungsToolbox.Proben
             var ad = Massnahmen.Finde("leistung.aufgabe.deaktivieren");
             h.Ist("leistung.aufgabe.deaktivieren: WasPassiert nennt die laufende Instanz, die nicht beendet wird",
                   ad != null && ad.WasPassiert.Contains("wird nicht beendet") && ad.WasPassiert.Contains("startet nicht neu"), ad == null ? "(fehlt)" : ad.WasPassiert);
+        }
+
+        // ------------------------------------------------------------ (f) Stufe 3: Verlust und export
+
+        /// <summary>
+        /// M4-Entwurf 2.1 und 8.1: die ausfuehrbaren Stufe-3-Kennungen sind genau die aus Abschnitt 1,
+        /// jede traegt Verlust (ein bis zwei Saetze, Zahl/Bedingung/Absage, sauber), Sicherung export
+        /// hat nie den Rueckweg "von selbst", der einzige Rat der Stufe 3 ist geraet.treiber.zurueck,
+        /// und VerlustMit setzt die Befund-Parameter invariant ein (bytes als GB mit einer
+        /// Nachkommastelle, fehlende Werte als "?", ohne Woerterbuch der Text mit Platzhaltern).
+        /// </summary>
+        static void Stufe3Verlust(Harness h, List<KeyValuePair<string, string>> saetze)
+        {
+            h.Gruppe("Massnahmen (f): Stufe 3 traegt Verlust, Sicherung export nie von selbst");
+            h.Ist("Massnahme.StufeUnumkehrbar ist 3", Massnahme.StufeUnumkehrbar == 3);
+            h.Ist("Massnahme.SicherungExport ist „export“", Massnahme.SicherungExport == "export");
+            h.Ist("Grundmenge: 11 erwartete Stufe-3-Kennungen", Stufe3Ausfuehrbar.Length == 11);
+            var stufe3 = Massnahmen.Alle().Where(m => m.Stufe == Massnahme.StufeUnumkehrbar && m.Art == Massnahme.ArtAusfuehren)
+                                   .Select(m => m.Kennung).OrderBy(x => x, StringComparer.Ordinal).ToList();
+            h.Ist("Stufe 3 (ausfuehren) sind genau die 11 Kennungen aus M4-Entwurf 1",
+                  stufe3.SequenceEqual(Stufe3Ausfuehrbar.OrderBy(x => x, StringComparer.Ordinal)), string.Join(", ", stufe3));
+            foreach (string k in Stufe3Ausfuehrbar)
+            {
+                var m = Massnahmen.Finde(k);
+                h.Ist(k + ": im Katalog, Stufe 3, Art ausfuehren", m != null && m.Stufe == 3 && m.Art == Massnahme.ArtAusfuehren);
+                if (m == null) continue;
+                int n = Saetze(m.Verlust);
+                h.Ist(k + ": Verlust hat 1 bis 2 Saetze", n >= 1 && n <= 2, n + ": " + m.Verlust);
+                h.Ist(k + ": Verlust traegt Zahl, Bedingung oder Absage", Traegt(m.Verlust), m.Verlust);
+                h.Ist(k + ": Verlust ohne Strich und ohne gerade Anfuehrungszeichen", Sauber(m.Verlust), m.Verlust);
+                h.Ist(k + ": VerlustMit(null) ist der Verlust-Text selbst", m.VerlustMit(null) == m.Verlust);
+                if (m.Sicherung == Massnahme.SicherungExport)
+                    h.Ist(k + ": export hat nicht den Rueckweg von selbst", m.Rueckweg != Massnahme.RueckwegVonSelbst, m.Rueckweg);
+            }
+            // Die Marke export tragen genau die zwei Kennungen mit Datei bzw. Ordner unter export\.
+            var export = Massnahmen.Alle().Where(m => m.Sicherung == Massnahme.SicherungExport).Select(m => m.Kennung).OrderBy(x => x, StringComparer.Ordinal).ToList();
+            h.Ist("Sicherung export tragen genau geraet.treiber.neu und sicherheit.firewall.zuruecksetzen", export.SequenceEqual(new[] { "geraet.treiber.neu", "sicherheit.firewall.zuruecksetzen" }), string.Join(", ", export));
+            // Raete der Stufe 3: nur noch der vorherige Treiber (M4-Entwurf 1, letzte Zeile).
+            var raete = Massnahmen.Alle().Where(m => m.Art == Massnahme.ArtRat).Select(m => m.Kennung).ToList();
+            h.Ist("Rat ist genau geraet.treiber.zurueck", raete.Count == 1 && raete[0] == "geraet.treiber.zurueck", string.Join(", ", raete));
+            foreach (string k in new[] { "volume.spotfix", "volume.reparatur", "stabilitaet.speichertest.planen", "leistung.winlogon.zuruecksetzen", "geraet.treiber.neu" })
+                h.Ist(k + ": frueherer Rat ist jetzt ausfuehrbar", Massnahmen.Finde(k) != null && Massnahmen.Finde(k).Art == Massnahme.ArtAusfuehren);
+            h.Ist("leistung.winlogon.zuruecksetzen ist Stufe 2 mit werte-merken und Rueckweg sicherung",
+                  Massnahmen.Finde("leistung.winlogon.zuruecksetzen").Stufe == 2 && Massnahmen.Finde("leistung.winlogon.zuruecksetzen").Sicherung == Massnahme.SicherungWerte && Massnahmen.Finde("leistung.winlogon.zuruecksetzen").Rueckweg == Massnahme.RueckwegSicherung);
+            h.Ist("dateien.reparieren: Wiederherstellungspunkt als Sicherung, Rueckweg keiner (M4-Entwurf 1)",
+                  Massnahmen.Finde("dateien.reparieren").Sicherung == Massnahme.SicherungPunkt && Massnahmen.Finde("dateien.reparieren").Rueckweg == Massnahme.RueckwegKeiner);
+            // Neustart nur beim Windows-Laufwerk (M4-Entwurf 1 "ja (Windows-Laufwerk)"): die Marke
+            // gilt fuer jedes Laufwerk und bleibt deshalb bei beiden Reparaturen aus; der bedingte
+            // Neustart kommt aus dem Wert neustart = "1" des Helfers (NachweiseDatentraeger misst es).
+            // Ein Datenlaufwerk repariert der Helfer sofort und offline, ohne Neustart.
+            foreach (string k in new[] { "volume.spotfix", "volume.reparatur" })
+                h.Ist(k + ": Marke Neustart aus (Neustart nur beim Windows-Laufwerk ueber neustart = 1)", Massnahmen.Finde(k) != null && !Massnahmen.Finde(k).Neustart);
+            h.Ist("volume.reparatur: WasPassiert nennt die Bedingung (Windows-Laufwerk beim naechsten Start, anderes sofort)",
+                  Massnahmen.Finde("volume.reparatur").WasPassiert.Contains("Windows-Laufwerk beim nächsten Start") && Massnahmen.Finde("volume.reparatur").WasPassiert.Contains("sofort"));
+
+            // VerlustMit am Papierkorb: {dateien} und {bytes} aus den Befund-Parametern, bytes als GB.
+            var pk = Massnahmen.Finde("speicher.papierkorb.leeren");
+            h.Ist("speicher.papierkorb.leeren: Verlust traegt die Platzhalter {dateien} und {bytes}", pk != null && pk.Verlust.Contains("{dateien}") && pk.Verlust.Contains("{bytes}"), pk == null ? "(fehlt)" : pk.Verlust);
+            if (pk != null)
+            {
+                string v = pk.VerlustMit(P("dateien", "12", "bytes", "1610612736"));
+                h.Ist("VerlustMit setzt 12 Dateien und 1.5 GB ein, kein Platzhalter bleibt", v.Contains("12 Dateien") && v.Contains("1.5 GB") && !v.Contains("{") && !v.Contains("}"), v);
+                saetze.Add(new KeyValuePair<string, string>("speicher.papierkorb.leeren / VerlustMit", v));
+                v = pk.VerlustMit(P("dateien", "1", "bytes", "1000000000"));
+                h.Ist("VerlustMit rundet auf eine Nachkommastelle mit Punkt (1000000000 Byte = 0.9 GB)", v.Contains("0.9 GB"), v);
+                v = pk.VerlustMit(P("dateien", "3", "bytes", "0"));
+                h.Ist("VerlustMit bei 0 Byte: 0.0 GB", v.Contains("0.0 GB"), v);
+                v = pk.VerlustMit(P());
+                h.Ist("VerlustMit ohne Werte setzt ? ein, erfindet keine Zahl", v.Contains("? Dateien") && v.Contains("? GB") && !v.Contains("{"), v);
+                v = pk.VerlustMit(P("dateien", "3", "bytes", "x"));
+                h.Ist("VerlustMit mit unlesbaren bytes setzt ? GB ein", v.Contains("3 Dateien") && v.Contains("? GB"), v);
+                v = pk.VerlustMit(P("dateien", "3", "bytes", "-5"));
+                h.Ist("VerlustMit mit negativen bytes setzt ? GB ein", v.Contains("? GB"), v);
+                // Jeder Platzhalter ist eine nicht negative ganze Zahl (M4-Entwurf 2.4: "Zahlen,
+                // invariant"): Rohtext aus dem Verlauf (JSON) geht nie in die Vorschau.
+                v = pk.VerlustMit(P("dateien", "<b>x</b>", "bytes", "1073741824"));
+                h.Ist("VerlustMit mit Rohtext in dateien setzt ? Dateien ein, reicht den Text nicht durch", v.Contains("? Dateien") && !v.Contains("<b>") && v.Contains("1.0 GB"), v);
+                v = pk.VerlustMit(P("dateien", "12 34", "bytes", "0"));
+                h.Ist("VerlustMit mit „12 34“ in dateien setzt ? Dateien ein", v.Contains("? Dateien") && !v.Contains("12 34"), v);
+                v = pk.VerlustMit(P("dateien", "1\n2", "bytes", "0"));
+                h.Ist("VerlustMit mit Zeilenumbruch in dateien setzt ? Dateien ein", v.Contains("? Dateien") && !v.Contains("\n"), v);
+                v = pk.VerlustMit(P("dateien", "-1", "bytes", "0"));
+                h.Ist("VerlustMit mit negativen dateien setzt ? Dateien ein", v.Contains("? Dateien"), v);
+                v = pk.VerlustMit(P("dateien", " 7 ", "bytes", " 2147483648 "));
+                h.Ist("VerlustMit trimmt Leerraum um die Zahlen (7 Dateien, 2.0 GB)", v.Contains("7 Dateien") && v.Contains("2.0 GB"), v);
+                v = pk.VerlustMit(P("dateien", "007", "bytes", "0"));
+                h.Ist("VerlustMit gibt die Zahl kanonisch aus (007 -> 7 Dateien)", v.Contains("(7 Dateien"), v);
+                h.Ist("VerlustMit(null) laesst die Platzhalter stehen", pk.VerlustMit(null).Contains("{dateien}"));
+            }
+            var vs = Massnahmen.Finde("volume.scan");
+            h.Ist("VerlustMit bei Stufe 1 ist null", vs != null && vs.VerlustMit(P("buchstabe", "C")) == null && vs.VerlustMit(null) == null);
         }
 
         // ------------------------------------------------------------ (d) Freischaltung
@@ -754,6 +1007,94 @@ namespace WartungsToolbox.Proben
 
             n = N(h, saetze, "volume.optimieren: kein messbarer Zustand", "volume.optimieren", s, P("buchstabe", "C"), true);
             h.Ist("Satz nennt das Laufwerk und die Grenze des Bildes", n != null && n.Satz.Contains("Laufwerk C:") && n.Satz.Contains("nicht möglich"), n == null ? "" : n.Satz);
+
+            // M4 (Nachbesserung K1): volume.spotfix und volume.reparatur teilen den Nachweis
+            // VolumeRepariert. Die Regel haengt beide nur an OpStatus 0xD00E/0xD00F, nie an Dirty:
+            // ein leerer Status (MSFT_Volume im neuen Bild nicht gelesen) belegt nichts, auch mit
+            // Dirty false (das war schon vor der Massnahme wahr). Der Neustart kommt allein aus dem
+            // Wert neustart = 1 des Helfers (Windows-Laufwerk), die Marke Neustart ist bei beiden aus.
+            foreach (string k in new[] { "volume.spotfix", "volume.reparatur" })
+            {
+                c.OpStatus = new List<int> { 0xD00E }; c.Dirty = false;
+                N(h, saetze, k + " vorher: 0xD00E steht noch", k, s, P("buchstabe", "C"), false, null, false);
+                c.OpStatus = new List<int> { 0xD00F };
+                N(h, saetze, k + " vorher: 0xD00F steht noch", k, s, P("buchstabe", "C"), false, null, false);
+                c.OpStatus = new List<int> { 2 }; c.Dirty = false;
+                n = N(h, saetze, k + " nachher: Status OK gelesen, Dirty 0", k, s, P("buchstabe", "C"), true, false);
+                h.Ist(k + ": Ja-Satz nennt den gelesenen Status", n != null && n.Satz.Contains("Status gelesen"), n == null ? "" : n.Satz);
+                c.Dirty = null;
+                N(h, saetze, k + " nachher: Status OK gelesen, Dirty nicht gelesen (Regel haengt am Status)", k, s, P("buchstabe", "C"), true, false);
+                c.OpStatus = new List<int> { 0xD00D }; c.Dirty = false;
+                N(h, saetze, k + " nachher: 0xD00D (Scan noetig, keine Reparatur)", k, s, P("buchstabe", "C"), true, false);
+                c.OpStatus = new List<int> { 2 }; c.Dirty = true;
+                N(h, saetze, k + " nachher: Status OK, aber Dirty gesetzt", k, s, P("buchstabe", "C"), false, null, false);
+                c.OpStatus = new List<int>(); c.Dirty = false;
+                n = N(h, saetze, k + " nachher: OperationalStatus leer, Dirty false (MSFT_Volume nicht gelesen)", k, s, P("buchstabe", "C"), false, null, true);
+                h.Ist(k + ": Satz nennt den ungelesenen OperationalStatus und den Vermerk 0xD00E/0xD00F", n != null && n.Satz.Contains("OperationalStatus") && n.Satz.Contains("0xD00E/0xD00F"), n == null ? "" : n.Satz);
+                s.Fehlerliste.Add(new Fehler { Quelle = "wmi.storage.volume", Art = Fehler.Fehlt, Text = "Probe: MSFT_Volume lieferte keine Instanz" });
+                n = N(h, saetze, k + " nachher: OperationalStatus leer, Quelle wmi.storage.volume meldet fehlt", k, s, P("buchstabe", "C"), false, null, true);
+                h.Ist(k + ": Satz nennt die Fehlerart der Quelle (fehlt)", n != null && n.Satz.Contains(", fehlt)"), n == null ? "" : n.Satz);
+                s.Fehlerliste.RemoveAll(f => f.Quelle == "wmi.storage.volume");
+                c.Dirty = null;
+                N(h, saetze, k + " nachher: weder OperationalStatus noch Dirty", k, s, P("buchstabe", "C"), false, null, true);
+                c.OpStatus = new List<int> { 0xD00F }; c.Dirty = true;
+                n = N(h, saetze, k + ": Helfer meldet neustart = 1 (Windows-Laufwerk, Vermerke bleiben bis dahin)", k, s, P("buchstabe", "C", "neustart", "1"), true, true);
+                h.Ist(k + ": NachNeustart-Satz nennt den naechsten Start", n != null && n.Satz.Contains("nächsten Start"), n == null ? "" : n.Satz);
+                // HelferFehler zuerst (M4-Entwurf 2.2): die Meldung des Helfers schlaegt das Bild.
+                c.OpStatus = new List<int> { 2 }; c.Dirty = false;
+                n = N(h, saetze, k + ": Bild OK, aber Helfer meldet nachweis.bestanden = 0", k, s, P("buchstabe", "C", "nachweis.bestanden", "0", "nachweis.satz", "Probe: Repair lieferte 1."), false, false, false);
+                h.Ist(k + ": Satz beginnt mit dem Titel und zitiert den Helfer", n != null && n.Satz.StartsWith(Massnahmen.Finde(k).Titel + " lief mit Fehler; ") && n.Satz.Contains("Repair lieferte 1"), n == null ? "" : n.Satz);
+                N(h, saetze, k + ": Bild OK, Helfer meldet nachweis.bestanden = 1", k, s, P("buchstabe", "C", "nachweis.bestanden", "1"), true, false);
+                N(h, saetze, k + ": Laufwerk Z nicht im Bild", k, s, P("buchstabe", "Z"), false, null, true);
+                N(h, saetze, k + ": buchstabe fehlt", k, s, P(), false, null, true);
+            }
+            c.OpStatus = new List<int> { 2 }; c.Dirty = false;
+        }
+
+        // ------------------------------------------------------------ (c) Nachweise: Speicher (Papierkorb)
+
+        /// <summary>
+        /// speicher.papierkorb.leeren liest Speicher.PapierkorbBytes/PapierkorbDateien (M4-Entwurf 1):
+        /// 0 Byte ist nur dann Ja, wenn keine Dateien gelesen wurden oder 0; SHQueryRecycleBin zaehlt
+        /// leere Dateien mit 0 Byte, der Korb ist dann nicht leer. null (Quelle shell.papierkorb) ist
+        /// Unlesbar, und die Meldung des Helfers zaehlt zuerst.
+        /// </summary>
+        static void NachweiseSpeicher(Harness h, List<KeyValuePair<string, string>> saetze)
+        {
+            h.Gruppe("Massnahmen (c): Nachweis speicher.papierkorb.leeren (Bytes und Dateien)");
+            var s = h.Bild("gepflanzt-sicherheit-gesund.json"); if (s == null) return;
+            const string K = "speicher.papierkorb.leeren";
+            if (s.Speicher == null) s.Speicher = new Speicher();
+            s.Speicher.PapierkorbBytes = 1610612736; s.Speicher.PapierkorbDateien = 12;
+            var n = N(h, saetze, "vorher: 1.5 GB in 12 Dateien", K, s, P(), false, null, false);
+            h.Ist("Nein-Satz nennt 1.5 GB und 12 Dateien", n != null && n.Satz.Contains("1.5 GB") && n.Satz.Contains("12 Dateien"), n == null ? "" : n.Satz);
+            s.Speicher.PapierkorbBytes = 0; s.Speicher.PapierkorbDateien = 5;
+            n = N(h, saetze, "nachher: 0 Byte, aber 5 Dateien gelesen (leere Dateien)", K, s, P(), false, null, false);
+            h.Ist("Nein-Satz nennt die 5 Dateien und 0 Byte", n != null && n.Satz.Contains("5 Dateien") && n.Satz.Contains("0 Byte"), n == null ? "" : n.Satz);
+            s.Speicher.PapierkorbDateien = 1;
+            N(h, saetze, "nachher: 0 Byte, 1 Datei gelesen", K, s, P(), false, null, false);
+            s.Speicher.PapierkorbDateien = 0;
+            n = N(h, saetze, "nachher: 0 Byte, 0 Dateien", K, s, P(), true, false);
+            h.Ist("Ja-Satz nennt 0 Byte und 0 Dateien", n != null && n.Satz.Contains("0 Byte") && n.Satz.Contains("0 Dateien"), n == null ? "" : n.Satz);
+            s.Speicher.PapierkorbDateien = null;
+            N(h, saetze, "nachher: 0 Byte, Anzahl nicht gelesen", K, s, P(), true, false);
+            s.Speicher.PapierkorbBytes = 1; s.Speicher.PapierkorbDateien = 1;
+            N(h, saetze, "nachher: 1 Byte, 1 Datei", K, s, P(), false, null, false);
+            s.Speicher.PapierkorbBytes = -1;
+            N(h, saetze, "nachher: Groesse -1 (unlesbar)", K, s, P(), false, null, true);
+            s.Speicher.PapierkorbBytes = null;
+            n = N(h, saetze, "nachher: Groesse nicht gelesen (null)", K, s, P(), false, null, true);
+            s.Fehlerliste.Add(new Fehler { Quelle = "shell.papierkorb", Art = Fehler.Ausnahme, Text = "Probe: SHQueryRecycleBin warf" });
+            n = N(h, saetze, "nachher: Groesse nicht gelesen, Quelle shell.papierkorb meldet ausnahme", K, s, P(), false, null, true);
+            h.Ist("Satz nennt die Fehlerart der Quelle (ausnahme)", n != null && n.Satz.Contains("(ausnahme)"), n == null ? "" : n.Satz);
+            s.Fehlerliste.RemoveAll(f => f.Quelle == "shell.papierkorb");
+            s.Speicher = null;
+            N(h, saetze, "nachher: Speicher fehlt im Bild (alte Aufzeichnung)", K, s, P(), false, null, true);
+            s.Speicher = new Speicher { PapierkorbBytes = 0, PapierkorbDateien = 0 };
+            // HelferFehler zuerst: SHEmptyRecycleBin scheiterte, das Bild zeigt trotzdem 0 Byte.
+            n = N(h, saetze, "Bild leer, aber Helfer meldet nachweis.bestanden = 0", K, s, P("nachweis.bestanden", "0", "nachweis.satz", "Probe: SHEmptyRecycleBin lieferte 0x80070005."), false, false, false);
+            h.Ist("Satz beginnt mit dem Titel und zitiert den Helfer", n != null && n.Satz.StartsWith(Massnahmen.Finde(K).Titel + " lief mit Fehler; ") && n.Satz.Contains("0x80070005"), n == null ? "" : n.Satz);
+            N(h, saetze, "Bild leer, Helfer meldet nachweis.bestanden = 1", K, s, P("nachweis.bestanden", "1"), true, false);
         }
 
         // ------------------------------------------------------------ (c) TRIM: eine Deutung des Rohwerts
@@ -1048,6 +1389,242 @@ namespace WartungsToolbox.Proben
             N(h, saetze, "Instanz-Id in anderer Schreibung", K, s, P("instanzId", g.InstanzId.ToLowerInvariant()), true);
             N(h, saetze, "unbekannte Instanz-Id", K, s, P("instanzId", "PCI\\VEN_0000&DEV_0000\\0"), false, null, true);
             N(h, saetze, "instanzId fehlt", K, s, P(), false, null, true);
+            // M4-Entwurf 10.2: ProblemCode null = nicht gelesen. Bis dahin schrieb der Sammler 0, und der
+            // Nachweis machte aus der Luecke ein Ja. Jetzt Unlesbar, auch mit neustart = 1 (ohne Code ist
+            // nicht einmal belegt, dass das Geraet noch Code 22 traegt).
+            g.ProblemCode = null;
+            n = N(h, saetze, "nachher: Code nicht gelesen (null)", K, s, p, false, null, true);
+            h.Ist("Satz sagt, dass der Fehlercode nicht gelesen wurde", n != null && n.Satz.Contains("nicht gelesen"), n == null ? "" : n.Satz);
+            N(h, saetze, "nachher: Code nicht gelesen (null), neustart=1", K, s, P("instanzId", g.InstanzId, "neustart", "1"), false, null, true);
+            g.ProblemCode = 22;
+
+            // geraet.treiber.neu (M4, Stufe 3) ueber demselben Geraet: Code 0 Ja, neustart=1 NachNeustart
+            // (auch ohne gelesenen Code, K1-Entscheidung: der Neustart hat Vorrang vor dem Bild),
+            // null ohne Neustart Unlesbar, Code 22 Nein. Die Paare (c2) fuer diese Kennung baut T1.
+            const string T = "geraet.treiber.neu";
+            N(h, saetze, "treiber.neu: Code 22 bleibt", T, s, p, false, false, false);
+            g.ProblemCode = null;
+            n = N(h, saetze, "treiber.neu: Code nicht gelesen (null)", T, s, p, false, null, true);
+            h.Ist("treiber.neu: Satz sagt, dass der Fehlercode nicht gelesen wurde", n != null && n.Satz.Contains("nicht gelesen"), n == null ? "" : n.Satz);
+            n = N(h, saetze, "treiber.neu: Code nicht gelesen, Windows verlangt Neustart (neustart=1)", T, s, P("instanzId", g.InstanzId, "neustart", "1"), true, true);
+            h.Ist("treiber.neu: NachNeustart-Satz nennt den nicht gelesenen Code statt einer Zahl", n != null && n.Satz.Contains("nicht gelesen") && !n.Satz.Contains("Code "), n == null ? "" : n.Satz);
+            g.ProblemCode = 0;
+            N(h, saetze, "treiber.neu: Code 0", T, s, p, true, false);
+            N(h, saetze, "treiber.neu: instanzId fehlt", T, s, P(), false, null, true);
+            g.ProblemCode = 22;
+        }
+
+        // ------------------------------------------------------------ (c, M4) Nachweise der neuen Kennungen
+
+        /// <summary>
+        /// M4-Entwurf 1 und 2.2: die fuenf neuen Nachweise mit messbarem Zustand (hosts, Firewall
+        /// eingehend, Firewall Werkseinstellung, Winlogon, Update-Reset) je Ja, Nein und jeder
+        /// Unlesbar-Zweig, HelferFehler zuerst; dazu die drei ohne Zustand (Winsock, IP-Stack,
+        /// Speichertest), die immer NachNeustart sind. Die Bilder sind die Vorher-Dateien der Paare
+        /// (c2), im Speicher gedreht; die Paare selbst laufen in NachweisePaare.
+        /// Wirksamkeitsproben 19.09.2026 (an einer Kopie des Katalogs, zurueckgebaut): HostsBereinigt
+        /// liefert bei HostsPfadAbweichend Nein statt Unlesbar -> "DataBasePath abweichend => Unbestimmt"
+        /// rot; FirewallWerkseinstellung wertet Ausgehend nicht mehr -> "1 Profil blockiert ausgehend
+        /// => NICHT bestanden" rot; UpdateZurueckgesetzt ohne die Sperre nachweis.bestanden == 1 ->
+        /// "keine Liste des Helfers, kein Ergebnis => Unbestimmt" rot.
+        /// </summary>
+        static void NachweiseM4(Harness h, List<KeyValuePair<string, string>> saetze)
+        {
+            h.Gruppe("Massnahmen (c, M4): Nachweise hosts, Firewall eingehend und Werkseinstellung, Winlogon, Update-Reset, Winsock, IP-Stack, Speichertest");
+
+            // hosts: das Vorher-Bild des Paars traegt 2 umleitende Zeilen (Windows Update, ESET) neben
+            // 3 Docker-Zeilen, die bleiben duerfen; DataBasePath ist Standard (null).
+            const string Ho = "netz.hosts.bereinigen";
+            var s = h.Bild("gepflanzt-massnahmen-" + Ho + "-vorher.json"); if (s == null) return;
+            var umleitend = s.Netz.Hosts.Where(z => NetzRegel.HostsZeileUmleitung(z.Ip, z.Host)).ToList();
+            h.Ist("Grundmenge hosts: mindestens 2 umleitende und mindestens 1 harmlose Zeile, DataBasePath Standard, Quelle datei.netz.hosts ohne Fehler",
+                  umleitend.Count >= 2 && s.Netz.Hosts.Count > umleitend.Count && string.IsNullOrEmpty(s.Netz.HostsPfadAbweichend) && !s.FehlerVon("datei.netz.hosts").Any(), umleitend.Count + " von " + s.Netz.Hosts.Count);
+            if (umleitend.Count == 0) return;
+            string hoTitel = Massnahmen.Finde(Ho).Titel;
+            var n = N(h, saetze, "hosts vorher: umleitende Zeilen stehen noch", Ho, s, P(), false, null, false);
+            h.Ist("hosts: Nein-Satz nennt die Zahl der Zeilen und ein Beispiel", n != null && n.Satz.Contains(umleitend.Count + " umleitende") && n.Satz.Contains(umleitend[0].Host), n == null ? "" : n.Satz);
+            s.Netz.Hosts.RemoveAll(z => NetzRegel.HostsZeileUmleitung(z.Ip, z.Host));
+            n = N(h, saetze, "hosts nachher: keine umleitende Zeile, die harmlosen Zeilen bleiben", Ho, s, P(), true, false);
+            h.Ist("hosts: Ja-Satz nennt die verbleibenden Zeilen", n != null && n.Satz.Contains(s.Netz.Hosts.Count + " aktive"), n == null ? "" : n.Satz);
+            var harmlos = s.Netz.Hosts.ToList();
+            s.Netz.Hosts.Clear();
+            N(h, saetze, "hosts nachher: Datei ohne aktive Zeile (0)", Ho, s, P(), true, false);
+            s.Netz.Hosts.AddRange(harmlos);
+            s.Netz.HostsPfadAbweichend = "D:\\etc";
+            n = N(h, saetze, "hosts: DataBasePath abweichend => Unbestimmt", Ho, s, P(), false, null, true);
+            h.Ist("hosts: Unlesbar-Satz nennt den abweichenden Pfad", n != null && n.Satz.Contains("D:\\etc"), n == null ? "" : n.Satz);
+            s.Netz.HostsPfadAbweichend = null;
+            s.Fehlerliste.Add(new Fehler { Quelle = "datei.netz.hosts", Art = Fehler.Zugriff, Text = "Probe: hosts nicht lesbar" });
+            n = N(h, saetze, "hosts: Quelle datei.netz.hosts meldet zugriff => Unbestimmt", Ho, s, P(), false, null, true);
+            h.Ist("hosts: Unlesbar-Satz nennt die Fehlerart (zugriff)", n != null && n.Satz.Contains("(zugriff)"), n == null ? "" : n.Satz);
+            s.Fehlerliste.RemoveAll(f2 => f2.Quelle == "datei.netz.hosts");
+            // HelferFehler zuerst (M4-Entwurf 2.2): die Datei war zu gross, der Helfer brach ab, das Bild
+            // zeigt zufaellig keine Umleitung (etwa, weil ein Schutzprogramm sie inzwischen entfernt hat).
+            n = N(h, saetze, "hosts: Bild ohne Umleitung, aber Helfer meldet nachweis.bestanden = 0", Ho, s, P("nachweis.bestanden", "0", "nachweis.satz", "Probe: die Datei ist 300000 Byte groß, mehr als 262144."), false, false, false);
+            h.Ist("hosts: Satz beginnt mit dem Titel und zitiert den Helfer", n != null && n.Satz.StartsWith(hoTitel + " lief mit Fehler; ") && n.Satz.Contains("300000"), n == null ? "" : n.Satz);
+            N(h, saetze, "hosts: Bild ohne Umleitung, Helfer meldet nachweis.bestanden = 1", Ho, s, P("nachweis.bestanden", "1"), true, false);
+            n = N(h, saetze, "hosts: Helfer meldet nachweis.bestanden = x (unlesbar)", Ho, s, P("nachweis.bestanden", "x"), false, false, false);
+            h.Ist("hosts: Satz nennt den unlesbaren Wert", n != null && n.Satz.Contains("„x“"), n == null ? "" : n.Satz);
+
+            // Firewall eingehend blockieren: das Vorher-Bild des Paars hat Profil Privat (2) auf Zulassen (1).
+            const string Fe = "sicherheit.firewall.eingehend.blockieren";
+            var f = h.Bild("gepflanzt-massnahmen-" + Fe + "-vorher.json"); if (f == null) return;
+            var privat = f.Sicherheit.Firewall.FirstOrDefault(x => x.Profil == 2);
+            h.Ist("Grundmenge Firewall eingehend: 3 Profile, Privat eingehend 1 (Zulassen), die anderen 0",
+                  f.Sicherheit.Firewall.Count == 3 && privat != null && privat.Eingehend == 1 && f.Sicherheit.Firewall.Where(x => x.Profil != 2).All(x => x.Eingehend == 0));
+            if (privat == null) return;
+            string feTitel = Massnahmen.Finde(Fe).Titel;
+            var p2 = P("profil", "2");
+            n = N(h, saetze, "eingehend vorher: Profil Privat laesst zu (1)", Fe, f, p2, false, null, false);
+            h.Ist("eingehend: Nein-Satz nennt Privat und DefaultInboundAction 1", n != null && n.Satz.Contains("Privat") && n.Satz.Contains("DefaultInboundAction 1"), n == null ? "" : n.Satz);
+            privat.Eingehend = 0;
+            n = N(h, saetze, "eingehend nachher: Profil Privat blockiert (0)", Fe, f, p2, true, false);
+            h.Ist("eingehend: Ja-Satz nennt DefaultInboundAction 0", n != null && n.Satz.Contains("DefaultInboundAction 0"), n == null ? "" : n.Satz);
+            N(h, saetze, "eingehend: Profil Domaene (1) stand schon auf 0", Fe, f, P("profil", "1"), true, false);
+            N(h, saetze, "eingehend: Profil Oeffentlich (4) stand schon auf 0", Fe, f, P("profil", "4"), true, false);
+            privat.Eingehend = null;
+            n = N(h, saetze, "eingehend: Standardaktion nicht gelesen (null) => Unbestimmt", Fe, f, p2, false, null, true);
+            h.Ist("eingehend: Unlesbar-Satz sagt nicht lesen", n != null && n.Satz.Contains("nicht lesen"), n == null ? "" : n.Satz);
+            privat.Eingehend = 2;
+            n = N(h, saetze, "eingehend: unbekannter Wert 2 => Unbestimmt", Fe, f, p2, false, null, true);
+            h.Ist("eingehend: Unlesbar-Satz nennt den Wert 2 (weder 0 noch 1)", n != null && n.Satz.Contains("2 (weder 0 noch 1)"), n == null ? "" : n.Satz);
+            privat.Eingehend = 0;
+            N(h, saetze, "eingehend: profil 3 (kein Profil) => Unbestimmt", Fe, f, P("profil", "3"), false, null, true);
+            N(h, saetze, "eingehend: profil x => Unbestimmt", Fe, f, P("profil", "x"), false, null, true);
+            N(h, saetze, "eingehend: profil fehlt => Unbestimmt", Fe, f, P(), false, null, true);
+            f.Sicherheit.Firewall.Remove(privat);
+            n = N(h, saetze, "eingehend: Profil Privat fehlt im Bild => Unbestimmt", Fe, f, p2, false, null, true);
+            h.Ist("eingehend: Unlesbar-Satz nennt das fehlende Profil", n != null && n.Satz.Contains("fehlt im neuen Systembild"), n == null ? "" : n.Satz);
+            f.Sicherheit.Firewall.Add(privat);
+            n = N(h, saetze, "eingehend: Bild 0, aber Helfer meldet nachweis.bestanden = 0", Fe, f, P("profil", "2", "nachweis.bestanden", "0", "nachweis.satz", "Probe: HNetCfg.FwPolicy2 warf 0x80070005."), false, false, false);
+            h.Ist("eingehend: Satz beginnt mit dem Titel und zitiert den Helfer", n != null && n.Satz.StartsWith(feTitel + " lief mit Fehler; ") && n.Satz.Contains("0x80070005"), n == null ? "" : n.Satz);
+            N(h, saetze, "eingehend: Bild 0, Helfer meldet nachweis.bestanden = 1", Fe, f, P("profil", "2", "nachweis.bestanden", "1"), true, false);
+
+            // Firewall Werkseinstellung: das Vorher-Bild des Paars hat genau 1 Profil mit ausgehend Blockieren (0).
+            const string Fr = "sicherheit.firewall.zuruecksetzen";
+            var w = h.Bild("gepflanzt-massnahmen-" + Fr + "-vorher.json"); if (w == null) return;
+            var ab = w.Sicherheit.Firewall.FirstOrDefault(x => x.Ausgehend == 0);
+            h.Ist("Grundmenge Werkseinstellung: 3 Profile an, alle eingehend 0, genau 1 Profil ausgehend 0",
+                  w.Sicherheit.Firewall.Count == 3 && w.Sicherheit.Firewall.All(x => x.An && x.Eingehend == 0) && w.Sicherheit.Firewall.Count(x => x.Ausgehend == 0) == 1 && ab != null);
+            if (ab == null) return;
+            string frTitel = Massnahmen.Finde(Fr).Titel;
+            var anderes = w.Sicherheit.Firewall.First(x => x.Profil != ab.Profil);
+            n = N(h, saetze, "Werkseinstellung vorher: 1 Profil blockiert ausgehend", Fr, w, P(), false, null, false);
+            h.Ist("Werkseinstellung: Nein-Satz nennt 1 von 3 Profilen und ausgehend", n != null && n.Satz.Contains("1 von 3") && n.Satz.Contains("ausgehend"), n == null ? "" : n.Satz);
+            ab.Ausgehend = 1;
+            n = N(h, saetze, "Werkseinstellung nachher: alle 3 Profile an, eingehend 0, ausgehend 1", Fr, w, P(), true, false);
+            h.Ist("Werkseinstellung: Ja-Satz nennt alle 3 Profile", n != null && n.Satz.Contains("Alle 3 Profile"), n == null ? "" : n.Satz);
+            ab.An = false;
+            n = N(h, saetze, "Werkseinstellung: 1 Profil aus => Nein", Fr, w, P(), false, null, false);
+            h.Ist("Werkseinstellung: Nein-Satz nennt Firewall aus", n != null && n.Satz.Contains("Firewall aus"), n == null ? "" : n.Satz);
+            ab.An = true; ab.Eingehend = 1;
+            n = N(h, saetze, "Werkseinstellung: 1 Profil eingehend Zulassen => Nein", Fr, w, P(), false, null, false);
+            h.Ist("Werkseinstellung: Nein-Satz nennt eingehend Zulassen (1)", n != null && n.Satz.Contains("eingehend „Zulassen“ (1)"), n == null ? "" : n.Satz);
+            anderes.Ausgehend = 0;
+            n = N(h, saetze, "Werkseinstellung: 2 Profile abweichend => Nein", Fr, w, P(), false, null, false);
+            h.Ist("Werkseinstellung: Nein-Satz nennt 2 von 3", n != null && n.Satz.Contains("2 von 3"), n == null ? "" : n.Satz);
+            anderes.Ausgehend = 1;
+            ab.Eingehend = null;
+            n = N(h, saetze, "Werkseinstellung: eingehend nicht gelesen => Unbestimmt", Fr, w, P(), false, null, true);
+            h.Ist("Werkseinstellung: Unlesbar-Satz nennt eingehend nicht gelesen", n != null && n.Satz.Contains("eingehend nicht gelesen"), n == null ? "" : n.Satz);
+            ab.Eingehend = 0; ab.Ausgehend = null;
+            n = N(h, saetze, "Werkseinstellung: ausgehend nicht gelesen (aeltere Aufzeichnung) => Unbestimmt", Fr, w, P(), false, null, true);
+            h.Ist("Werkseinstellung: Unlesbar-Satz nennt ausgehend nicht gelesen", n != null && n.Satz.Contains("ausgehend nicht gelesen"), n == null ? "" : n.Satz);
+            // Eine lesbare Abweichung schlaegt einen ungelesenen Wert: Nein, nicht Unlesbar.
+            anderes.Ausgehend = 0;
+            N(h, saetze, "Werkseinstellung: 1 Profil lesbar abweichend, 1 Wert nicht gelesen => Nein (Abweichung zaehlt zuerst)", Fr, w, P(), false, null, false);
+            anderes.Ausgehend = 1; ab.Ausgehend = 1;
+            w.Sicherheit.Firewall.Remove(ab);
+            n = N(h, saetze, "Werkseinstellung: nur 2 von 3 Profilen im Bild => Unbestimmt", Fr, w, P(), false, null, true);
+            h.Ist("Werkseinstellung: Unlesbar-Satz nennt 2 von 3 gelesen", n != null && n.Satz.Contains("2 von 3 gelesen"), n == null ? "" : n.Satz);
+            w.Sicherheit.Firewall.Add(ab);
+            var alleProfile = w.Sicherheit.Firewall.ToList();
+            w.Sicherheit.Firewall.Clear();
+            n = N(h, saetze, "Werkseinstellung: kein Profil im Bild => Unbestimmt", Fr, w, P(), false, null, true);
+            h.Ist("Werkseinstellung: Unlesbar-Satz nennt 0 von 3", n != null && n.Satz.Contains("0 von 3"), n == null ? "" : n.Satz);
+            w.Sicherheit.Firewall.AddRange(alleProfile);
+            // HelferFehler zuerst: Fremd-Firewall, der Helfer lehnte ab, das Bild steht zufaellig im Werkszustand.
+            n = N(h, saetze, "Werkseinstellung: Bild im Werkszustand, aber Helfer meldet nachweis.bestanden = 0", Fr, w, P("nachweis.bestanden", "0", "nachweis.satz", "Probe: netsh advfirewall reset lieferte Exit 1."), false, false, false);
+            h.Ist("Werkseinstellung: Satz beginnt mit dem Titel und zitiert den Helfer", n != null && n.Satz.StartsWith(frTitel + " lief mit Fehler; ") && n.Satz.Contains("Exit 1"), n == null ? "" : n.Satz);
+            N(h, saetze, "Werkseinstellung: Bild im Werkszustand, Helfer meldet nachweis.bestanden = 1", Fr, w, P("nachweis.bestanden", "1"), true, false);
+
+            // Winlogon: das Vorher-Bild des Paars hat Shell im Standard und Userinit mit angehaengtem Programm.
+            const string Wl = "leistung.winlogon.zuruecksetzen";
+            var l = h.Bild("gepflanzt-massnahmen-" + Wl + "-vorher.json"); if (l == null) return;
+            string userinitAlt = l.Autostart.Userinit;
+            h.Ist("Grundmenge Winlogon: Shell Standard, Userinit gesetzt und nicht Standard, Quelle registry.winlogon ohne Fehler",
+                  LeistungRegel.WinlogonShellStandard(l.Autostart.Shell) && userinitAlt != null && !LeistungRegel.WinlogonUserinitStandard(userinitAlt) && !l.FehlerVon("registry.winlogon").Any(), userinitAlt ?? "(null)");
+            if (userinitAlt == null) return;
+            string wlTitel = Massnahmen.Finde(Wl).Titel;
+            n = N(h, saetze, "Winlogon vorher: Userinit mit Anhang", Wl, l, P(), false, null, false);
+            h.Ist("Winlogon: Nein-Satz nennt Userinit und den alten Wert", n != null && n.Satz.Contains("Userinit steht weiterhin") && n.Satz.Contains(userinitAlt), n == null ? "" : n.Satz);
+            l.Autostart.Userinit = "C:\\WINDOWS\\system32\\userinit.exe,";
+            n = N(h, saetze, "Winlogon nachher: beide Werte Standard", Wl, l, P(), true, false);
+            h.Ist("Winlogon: Ja-Satz nennt Shell, Userinit und den Windows-Standard", n != null && n.Satz.Contains("Shell steht auf") && n.Satz.Contains("Userinit auf") && n.Satz.Contains("Windows-Standard"), n == null ? "" : n.Satz);
+            l.Autostart.Userinit = "C:\\WINDOWS\\system32\\userinit.exe";
+            N(h, saetze, "Winlogon nachher: Userinit ohne Schlusskomma (Standard)", Wl, l, P(), true, false);
+            l.Autostart.Shell = "explorer.exe, C:\\Users\\Public\\x.exe";
+            n = N(h, saetze, "Winlogon: Shell mit Anhang => Nein", Wl, l, P(), false, null, false);
+            h.Ist("Winlogon: Nein-Satz nennt Shell", n != null && n.Satz.Contains("Shell steht weiterhin"), n == null ? "" : n.Satz);
+            l.Autostart.Userinit = userinitAlt;
+            n = N(h, saetze, "Winlogon: beide Werte fremd => Nein", Wl, l, P(), false, null, false);
+            h.Ist("Winlogon: Nein-Satz nennt beide Werte", n != null && n.Satz.Contains("Shell (") && n.Satz.Contains("Userinit ("), n == null ? "" : n.Satz);
+            l.Autostart.Shell = null; l.Autostart.Userinit = null;
+            n = N(h, saetze, "Winlogon: beide Werte nicht gelesen (null) => Unbestimmt", Wl, l, P(), false, null, true);
+            h.Ist("Winlogon: Unlesbar-Satz sagt, dass beide fehlen", n != null && n.Satz.Contains("fehlen beide"), n == null ? "" : n.Satz);
+            l.Fehlerliste.Add(new Fehler { Quelle = "registry.winlogon", Art = Fehler.Zugriff, Text = "Probe" });
+            n = N(h, saetze, "Winlogon: beide null, Quelle registry.winlogon meldet zugriff => Unbestimmt", Wl, l, P(), false, null, true);
+            h.Ist("Winlogon: Unlesbar-Satz nennt die Fehlerart (zugriff)", n != null && n.Satz.Contains("(zugriff)"), n == null ? "" : n.Satz);
+            l.Fehlerliste.RemoveAll(f2 => f2.Quelle == "registry.winlogon");
+            l.Autostart.Shell = "explorer.exe";
+            n = N(h, saetze, "Winlogon: Shell gesetzt, Userinit nicht gesetzt (Windows nimmt den Standard) => Ja", Wl, l, P(), true, false);
+            h.Ist("Winlogon: Ja-Satz nennt Userinit als nicht gesetzt", n != null && n.Satz.Contains("nicht gesetzt (Standard userinit.exe)"), n == null ? "" : n.Satz);
+            n = N(h, saetze, "Winlogon: Bild Standard, aber Helfer meldet nachweis.bestanden = 0", Wl, l, P("nachweis.bestanden", "0", "nachweis.satz", "Probe: der Schlüssel ließ sich nicht öffnen (Win32-Fehler 5)."), false, false, false);
+            h.Ist("Winlogon: Satz beginnt mit dem Titel und zitiert den Helfer", n != null && n.Satz.StartsWith(wlTitel + " lief mit Fehler; ") && n.Satz.Contains("Win32-Fehler 5"), n == null ? "" : n.Satz);
+            N(h, saetze, "Winlogon: Bild Standard, Helfer meldet nachweis.bestanden = 1", Wl, l, P("nachweis.bestanden", "1"), true, false);
+
+            // Update-Reset: das Nachher-Bild des Paars fuehrt genau das HP-USB-Update als verborgen; der
+            // Helfer reicht die gesicherte Liste als update.verborgen.vorher (M4-Entwurf 4).
+            const string Ur = "update.zuruecksetzen";
+            var u = h.Bild("gepflanzt-massnahmen-" + Ur + "-nachher.json"); if (u == null) return;
+            h.Ist("Grundmenge Update-Reset: genau 1 verborgenes Update (HP-USB), Quelle com.windowsupdate.suche.verborgen ohne Fehler",
+                  u.WindowsUpdate.Verborgen.Count == 1 && string.Equals(u.WindowsUpdate.Verborgen[0].UpdateId, HpUpdateId, StringComparison.OrdinalIgnoreCase) && !u.FehlerVon("com.windowsupdate.suche.verborgen").Any(), u.WindowsUpdate.Verborgen.Count.ToString());
+            string urTitel = Massnahmen.Finde(Ur).Titel;
+            var pu = P("update.verborgen.vorher", HpUpdateId);
+            n = N(h, saetze, "Update-Reset: 1 von 1 wieder verborgen => NachNeustart", Ur, u, pu, true, true);
+            h.Ist("Update-Reset: Satz nennt 1 von 1 und den Neustart", n != null && n.Satz.Contains("1 von 1") && n.Satz.Contains("Neustart"), n == null ? "" : n.Satz);
+            N(h, saetze, "Update-Reset: Kennung in Grossschreibung mit Leerraum und Schluss-Semikolon", Ur, u, P("update.verborgen.vorher", " " + HpUpdateId.ToUpperInvariant() + "; "), true, true);
+            const string Zweite = "00000000-0000-0000-0000-000000000002";
+            n = N(h, saetze, "Update-Reset: 2 gesichert, 1 wieder verborgen => Nein", Ur, u, P("update.verborgen.vorher", HpUpdateId + ";" + Zweite), false, null, false);
+            h.Ist("Update-Reset: Nein-Satz nennt 1 von 2 und die fehlende Kennung", n != null && n.Satz.Contains("1 von 2") && n.Satz.Contains(Zweite), n == null ? "" : n.Satz);
+            var verborgen = u.WindowsUpdate.Verborgen.ToList();
+            u.WindowsUpdate.Verborgen.Clear();
+            n = N(h, saetze, "Update-Reset: 1 gesichert, Bild-Liste leer => Nein", Ur, u, pu, false, null, false);
+            h.Ist("Update-Reset: Nein-Satz nennt 0 von 1", n != null && n.Satz.Contains("0 von 1"), n == null ? "" : n.Satz);
+            n = N(h, saetze, "Update-Reset: keine Liste des Helfers, kein Ergebnis => Unbestimmt", Ur, u, P(), false, null, true);
+            h.Ist("Update-Reset: Unlesbar-Satz nennt update.verborgen.vorher und nachweis.bestanden", n != null && n.Satz.Contains("update.verborgen.vorher") && n.Satz.Contains("nachweis.bestanden"), n == null ? "" : n.Satz);
+            N(h, saetze, "Update-Reset: keine Liste, nachweis.bestanden leer (Trockenlauf) => Unbestimmt", Ur, u, P("nachweis.bestanden", ""), false, null, true);
+            n = N(h, saetze, "Update-Reset: keine Liste, nachweis.bestanden = 1, Bild-Liste leer => NachNeustart (es war kein Update verborgen)", Ur, u, P("nachweis.bestanden", "1"), true, true);
+            h.Ist("Update-Reset: Satz nennt 0 gesichert und 0 Eintraege", n != null && n.Satz.Contains("0 gesichert") && n.Satz.Contains("0 Einträge"), n == null ? "" : n.Satz);
+            u.WindowsUpdate.Verborgen.AddRange(verborgen);
+            n = N(h, saetze, "Update-Reset: keine Liste, nachweis.bestanden = 1, aber 1 verborgen im Bild => Unbestimmt", Ur, u, P("nachweis.bestanden", "1"), false, null, true);
+            h.Ist("Update-Reset: Unlesbar-Satz nennt das 1 Update im Bild", n != null && n.Satz.Contains("führt aber 1"), n == null ? "" : n.Satz);
+            u.Fehlerliste.Add(new Fehler { Quelle = "com.windowsupdate.suche.verborgen", Art = Fehler.Ausnahme, Text = "Probe: Search warf" });
+            n = N(h, saetze, "Update-Reset: Liste des Helfers da, Bild-Quelle meldet ausnahme => Unbestimmt", Ur, u, pu, false, null, true);
+            h.Ist("Update-Reset: Unlesbar-Satz nennt die Fehlerart und die 1 gesicherte Kennung", n != null && n.Satz.Contains("(ausnahme)") && n.Satz.Contains("1 gesicherten"), n == null ? "" : n.Satz);
+            N(h, saetze, "Update-Reset: keine Liste, nachweis.bestanden = 1, Bild-Quelle meldet ausnahme => Unbestimmt", Ur, u, P("nachweis.bestanden", "1"), false, null, true);
+            u.Fehlerliste.RemoveAll(f2 => f2.Quelle == "com.windowsupdate.suche.verborgen");
+            n = N(h, saetze, "Update-Reset: Liste stimmt, aber Helfer meldet nachweis.bestanden = 0", Ur, u, P("update.verborgen.vorher", HpUpdateId, "nachweis.bestanden", "0", "nachweis.satz", "Probe: wuauserv ließ sich in 60 s nicht anhalten."), false, false, false);
+            h.Ist("Update-Reset: Satz beginnt mit dem Titel und zitiert den Helfer", n != null && n.Satz.StartsWith(urTitel + " lief mit Fehler; ") && n.Satz.Contains("60 s"), n == null ? "" : n.Satz);
+            N(h, saetze, "Update-Reset: Liste stimmt, Helfer meldet nachweis.bestanden = 1 => NachNeustart", Ur, u, P("update.verborgen.vorher", HpUpdateId, "nachweis.bestanden", "1"), true, true);
+
+            // Ohne Zustand am Bild (M4-Entwurf 1): Winsock, IP-Stack und Speichertest sind immer
+            // NachNeustart, gleich welches Bild; die Fehlerfaelle des Helfers deckt NachweiseOhneZustand.
+            foreach (string k in new[] { "netz.winsock.zuruecksetzen", "netz.ip.zuruecksetzen", "stabilitaet.speichertest.planen" })
+            {
+                n = N(h, saetze, k + ": ohne Zustand am Bild => NachNeustart", k, u, P(), true, true);
+                h.Ist(k + ": Satz nennt das Systembild als Grenze", n != null && n.Satz.Contains("Systembild"), n == null ? "" : n.Satz);
+            }
         }
 
         // ------------------------------------------------------------ (c) Nachweise: Rueckweg
@@ -1070,8 +1647,19 @@ namespace WartungsToolbox.Proben
             // Kennung gesetzt, Pflichtparameter der Hin-Massnahme fehlt: nicht messbar, nie bestanden.
             N(h, saetze, "Rueckweg Firewall: kennung gesetzt, profil fehlt", R, f, P("sicherung", "x.json", "kennung", "sicherheit.firewall.einschalten"), false, null, true);
             N(h, saetze, "Rueckweg Firewall: kennung gesetzt, profil = 9 (Profil nicht im Bild)", R, f, P("sicherung", "x.json", "kennung", "sicherheit.firewall.einschalten", "profil", "9"), false, null, true);
+            // HelferFehler zuerst (M4-Entwurf 2.2), auch bei messbarer Hin-Kennung: meldet der Helfer
+            // den Rueckweg mit nachweis.bestanden = 0, ist er Nein, gleich was das Bild zeigt (hier:
+            // Profil 4 aus, das Bild allein saehe wie "gelungen" aus).
+            n = N(h, saetze, "Rueckweg Firewall: Profil 4 aus, aber Helfer meldet nachweis.bestanden = 0", R, f, P("sicherung", "x.json", "rueckweg.kennung", "sicherheit.firewall.einschalten", "rueckweg.parameter.profil", "4", "nachweis.bestanden", "0", "nachweis.satz", "Probe: FirewallEnabled ließ sich nicht setzen."), false, false, false);
+            h.Ist("Satz beginnt mit „Rückgängig: Firewall einschalten lief mit Fehler“ und zitiert den Helfer",
+                  n != null && n.Satz.StartsWith("Rückgängig: Firewall einschalten lief mit Fehler; ") && n.Satz.Contains("FirewallEnabled"), n == null ? "" : n.Satz);
+            n = N(h, saetze, "Rueckweg Firewall: Helfer meldet nachweis.bestanden = x (unlesbar)", R, f, P("sicherung", "x.json", "kennung", "sicherheit.firewall.einschalten", "profil", "4", "nachweis.bestanden", "x"), false, false, false);
+            h.Ist("Satz nennt den unlesbaren Wert des Rueckwegs", n != null && n.Satz.StartsWith("Rückgängig: ") && n.Satz.Contains("„x“"), n == null ? "" : n.Satz);
+            N(h, saetze, "Rueckweg Firewall: Profil 4 aus, Helfer meldet nachweis.bestanden = 1 (Bild entscheidet)", R, f, P("sicherung", "x.json", "kennung", "sicherheit.firewall.einschalten", "profil", "4", "nachweis.bestanden", "1"), true, false);
             oeff.An = true;
             N(h, saetze, "Rueckweg Firewall: Profil 4 noch an (nicht zurueckgeschrieben)", R, f, P("sicherung", "x.json", "kennung", "sicherheit.firewall.einschalten", "profil", "4"), false, null, false);
+            // nachweis.bestanden = 1 macht aus einem Bild mit altem Zustand kein Ja: das Bild entscheidet.
+            N(h, saetze, "Rueckweg Firewall: Profil 4 noch an, Helfer meldet nachweis.bestanden = 1", R, f, P("sicherung", "x.json", "kennung", "sicherheit.firewall.einschalten", "profil", "4", "nachweis.bestanden", "1"), false, null, false);
             // UAC: die Hin-Massnahme braucht einen Neustart, der Rueckweg auch.
             f.Sicherheit.EnableLua = 0;
             f.Sicherheit.ConsentAdmin = 5;
@@ -1134,6 +1722,53 @@ namespace WartungsToolbox.Proben
             N(h, saetze, "Rueckweg mit unbekannter kennung", R, f, P("sicherung", "x.json", "kennung", "gibt.es.nicht"), false, null, true);
             N(h, saetze, "Rueckweg mit kennung rueckweg (keine Endlosschleife)", R, f, P("sicherung", "x.json", "kennung", "rueckweg"), false, null, true);
             N(h, saetze, "Rueckweg mit leerer kennung", R, f, P("sicherung", "x.json", "kennung", ""), false, null, true);
+            RueckwegOhneZustand(h, saetze, f);
+        }
+
+        /// <summary>
+        /// M4-Entwurf 2.2: die Hin-Massnahmen netz.ip.zuruecksetzen und netz.winsock.zuruecksetzen
+        /// haben keinen Zustand am Bild (ihr Hin-Nachweis ist immer NachNeustart); gedreht ergaebe das
+        /// immer "Nein", obwohl der Helfer die Adressen wirklich zurueckgeschrieben hat. Dort zaehlt
+        /// allein die Meldung des Helfers: nachweis.bestanden 1 ist Ja (mit neustart = 1 NachNeustart),
+        /// 0 ist Nein mit seinem Satz, ein fehlender oder leerer Wert ist Unlesbar, ein anderer Wert
+        /// Nein (fail closed). Das Bild spielt keine Rolle; die Gegenprobe ist eine messbare Kennung
+        /// (sicherheit.firewall.einschalten), bei der nachweis.bestanden = 1 das Bild NICHT ersetzt.
+        /// Wirksamkeitsprobe 19.09.2026: netz.winsock.zuruecksetzen aus RueckwegOhneZustand des
+        /// Katalogs entfernt -> "Rueckweg Winsock: nachweis.bestanden fehlt => Unbestimmt" rot.
+        /// </summary>
+        static void RueckwegOhneZustand(Harness h, List<KeyValuePair<string, string>> saetze, Systembild f)
+        {
+            h.Gruppe("Massnahmen (c): Rueckweg ohne messbaren Zustand (IP-Stack, Winsock) liest nur nachweis.bestanden");
+            const string R = "rueckweg";
+            foreach (var paar in new[] { new[] { "netz.ip.zuruecksetzen", "IP-Stack" }, new[] { "netz.winsock.zuruecksetzen", "Winsock" } })
+            {
+                string k = paar[0], wer = paar[1];
+                string titel = Massnahmen.Finde(k).Titel;
+                var n = N(h, saetze, "Rueckweg " + wer + ": nachweis.bestanden = 1 => Ja", R, f, P("sicherung", "x.json", "kennung", k, "nachweis.bestanden", "1"), true, false);
+                h.Ist("Rueckweg " + wer + ": Ja-Satz nennt den Titel und den Helfer", n != null && n.Satz.Contains("„" + titel + "“") && n.Satz.Contains("Helfer"), n == null ? "" : n.Satz);
+                n = N(h, saetze, "Rueckweg " + wer + ": nachweis.bestanden = 1 mit Satz (Helfer-Schreibweise)", R, f, P("sicherung", "x.json", "rueckweg.kennung", k, "nachweis.bestanden", "1", "nachweis.satz", "Probe: 2 von 2 Anschlüssen zurückgeschrieben."), true, false);
+                h.Ist("Rueckweg " + wer + ": Ja-Satz zitiert den Satz des Helfers", n != null && n.Satz.Contains("2 von 2"), n == null ? "" : n.Satz);
+                N(h, saetze, "Rueckweg " + wer + ": nachweis.bestanden = 1 und neustart = 1 => NachNeustart", R, f, P("sicherung", "x.json", "kennung", k, "nachweis.bestanden", "1", "neustart", "1"), true, true);
+                n = N(h, saetze, "Rueckweg " + wer + ": nachweis.bestanden = 0 => Nein", R, f, P("sicherung", "x.json", "kennung", k, "nachweis.bestanden", "0", "nachweis.satz", "Probe: EnableStatic lieferte 91."), false, false, false);
+                h.Ist("Rueckweg " + wer + ": Nein-Satz beginnt mit Rückgängig und zitiert den Helfer", n != null && n.Satz.StartsWith("Rückgängig: " + titel + " lief mit Fehler; ") && n.Satz.Contains("EnableStatic lieferte 91"), n == null ? "" : n.Satz);
+                n = N(h, saetze, "Rueckweg " + wer + ": nachweis.bestanden fehlt => Unbestimmt", R, f, P("sicherung", "x.json", "kennung", k), false, null, true);
+                h.Ist("Rueckweg " + wer + ": Unlesbar-Satz nennt das fehlende Ergebnis", n != null && n.Satz.Contains("nachweis.bestanden fehlt") && n.Satz.Contains("nicht am Systembild messbar"), n == null ? "" : n.Satz);
+                n = N(h, saetze, "Rueckweg " + wer + ": nachweis.bestanden leer, nur ein Satz => Unbestimmt", R, f, P("sicherung", "x.json", "kennung", k, "nachweis.bestanden", "", "nachweis.satz", "Probe: nichts gemeldet (0 Werte)."), false, null, true);
+                h.Ist("Rueckweg " + wer + ": Unlesbar-Satz zitiert den Satz ohne Ergebnis", n != null && n.Satz.Contains("0 Werte") && n.Satz.Contains("ohne Ergebnis"), n == null ? "" : n.Satz);
+                n = N(h, saetze, "Rueckweg " + wer + ": nachweis.bestanden = x (unlesbar) => Nein", R, f, P("sicherung", "x.json", "kennung", k, "nachweis.bestanden", "x"), false, false, false);
+                h.Ist("Rueckweg " + wer + ": Satz nennt den unlesbaren Wert", n != null && n.Satz.Contains("„x“"), n == null ? "" : n.Satz);
+            }
+            // Gegenprobe: bei einer messbaren Hin-Kennung entscheidet das Bild, nachweis.bestanden = 1
+            // allein macht keinen Rueckweg (Profil 4 ist im Bild aus, die Hin-Massnahme "einschalten"
+            // gilt also nicht mehr: gelungen; steht es an, bleibt es Nein).
+            var oeff = f.Sicherheit.Firewall.FirstOrDefault(x => x.Profil == 4);
+            if (oeff != null)
+            {
+                bool war = oeff.An;
+                oeff.An = true;
+                N(h, saetze, "Gegenprobe Firewall (messbar): Profil 4 noch an, nachweis.bestanden = 1 => Nein (das Bild entscheidet)", R, f, P("sicherung", "x.json", "kennung", "sicherheit.firewall.einschalten", "profil", "4", "nachweis.bestanden", "1"), false, null, false);
+                oeff.An = war;
+            }
         }
 
         // ------------------------------------------------------------ (c) Nachweise ohne messbaren Zustand
@@ -1142,13 +1777,22 @@ namespace WartungsToolbox.Proben
         {
             h.Gruppe("Massnahmen (c): Nachweise ohne messbaren Zustand sagen das ehrlich");
             var s = h.Bild("gepflanzt-sicherheit-gesund.json"); if (s == null) return;
-            string[] ehrlich = { "netz.dnscache.leeren", "volume.optimieren", "tiefenpruefung", "dateien.reparieren", "werkzeug", "wartung.auto",
+            // dateien.reparieren steht nicht mehr hier: sein Nachweis liest dism.zustand und
+            // sfc.zustand, ohne beide ist er Unlesbar (unten), nie ein ehrliches Ja. Seit M4 dazu
+            // (M4-Entwurf 1, 8.1): update.anwenden (ohne Fassungen der ehrliche Satz) und die drei
+            // NachNeustart-Kennungen netz.winsock.zuruecksetzen, netz.ip.zuruecksetzen und
+            // stabilitaet.speichertest.planen (bestanden heisst dort: nach dem Neustart).
+            string[] ehrlich = { "netz.dnscache.leeren", "volume.optimieren", "tiefenpruefung", "werkzeug", "wartung.auto",
                                  "apps.entfernen", "netz.diagnose", "treiber.sichern", "selbststart.loeschen", "registrierung.entfernen",
-                                 "speicher.aufraeumen", "update.einstellungen.oeffnen" };
-            h.Ist("Grundmenge: 13 Kennungen ohne messbaren Zustand", ehrlich.Length == 13);
+                                 "speicher.aufraeumen", "update.einstellungen.oeffnen",
+                                 "update.anwenden", "netz.winsock.zuruecksetzen", "netz.ip.zuruecksetzen", "stabilitaet.speichertest.planen" };
+            h.Ist("Grundmenge: 16 Kennungen ohne messbaren Zustand", ehrlich.Length == 16);
+            string[] nachNeustart = { "netz.winsock.zuruecksetzen", "netz.ip.zuruecksetzen", "stabilitaet.speichertest.planen" };
             foreach (string k in ehrlich)
             {
-                var n = N(h, saetze, k + ": bestanden mit ehrlichem Satz", k, s, P("buchstabe", "C"), true);
+                // Die drei NachNeustart-Kennungen tragen das Neustart-Flag, alle anderen nicht.
+                bool neustart = Array.IndexOf(nachNeustart, k) >= 0;
+                var n = N(h, saetze, k + ": bestanden mit ehrlichem Satz" + (neustart ? " (nach Neustart)" : ""), k, s, P("buchstabe", "C"), true, neustart);
                 h.Ist(k + ": Satz nennt Ausgabe, Bericht, Protokoll oder das Bild als Grenze",
                       n != null && (n.Satz.Contains("Systembild") || n.Satz.Contains("Ausgabe") || n.Satz.Contains("Bericht") || n.Satz.Contains("Protokoll")), n == null ? "" : n.Satz);
                 // Der Kern sieht die Ausfuehrung nicht: meldet der Helfer nachweis.bestanden = 0 (Werte-
@@ -1177,6 +1821,57 @@ namespace WartungsToolbox.Proben
             foreach (var m in Massnahmen.Alle().Where(x => x.Art == Massnahme.ArtRat))
                 N(h, saetze, m.Kennung + " (Rat): nicht bestanden", m.Kennung, s, P(), false, null, false);
             h.Ist("apps.entfernen: WasPassiert ohne Fachjargon Remove-AppxPackage", !Massnahmen.Finde("apps.entfernen").WasPassiert.Contains("Remove-AppxPackage"));
+
+            // dateien.reparieren (M4-Entwurf 1, 3.4): der Satz kommt aus dism.zustand und sfc.zustand.
+            // Der Helfer schreibt beide vor jeder Meldung (helfer/Massnahmen/System.cs); ein Paar ohne
+            // beide ist ein Lauf, der nicht bis dorthin kam, keine Reparatur: Unlesbar, auch mit
+            // nachweis.bestanden = 1 (eine leere Antwort ist kein bestandener Lauf). Ein fehlender
+            // Wert neben einem vorhandenen ist Nein (fail closed).
+            const string Dr = "dateien.reparieren";
+            string drTitel = Massnahmen.Finde(Dr).Titel;
+            var d = N(h, saetze, Dr + ": dism.zustand und sfc.zustand fehlen, nachweis.bestanden fehlt", Dr, s, P(), false, null, true);
+            h.Ist(Dr + ": Satz nennt die fehlenden Werte", d != null && d.Satz.Contains("dism.zustand") && d.Satz.Contains("sfc.zustand"), d == null ? "" : d.Satz);
+            N(h, saetze, Dr + ": beide Werte fehlen, nachweis.bestanden = 1 (widerspruechliches Paar)", Dr, s, P("nachweis.bestanden", "1", "nachweis.satz", "Probe"), false, null, true);
+            N(h, saetze, Dr + ": beide Werte fehlen, nachweis.bestanden leer (Trockenlauf)", Dr, s, P("nachweis.bestanden", ""), false, null, true);
+            d = N(h, saetze, Dr + ": healthy + ohneBefund", Dr, s, P("dism.zustand", "healthy", "sfc.zustand", "ohneBefund"), true, false);
+            h.Ist(Dr + ": Ja-Satz nennt DISM und SFC", d != null && d.Satz.Contains("DISM:") && d.Satz.Contains("SFC:"), d == null ? "" : d.Satz);
+            N(h, saetze, Dr + ": healthy (repariert) + repariert", Dr, s, P("dism.zustand", "healthy", "dism.repariert", "1", "sfc.zustand", "repariert"), true, false);
+            d = N(h, saetze, Dr + ": healthy + repariert, neustart = 1 (SFC Exit 3010)", Dr, s, P("dism.zustand", "healthy", "sfc.zustand", "repariert", "neustart", "1", "sfc.exit", "3010"), true, true);
+            h.Ist(Dr + ": NachNeustart-Satz nennt 1 Neustart", d != null && d.Satz.Contains("1 Neustart"), d == null ? "" : d.Satz);
+            d = N(h, saetze, Dr + ": healthy, sfc.zustand fehlt", Dr, s, P("dism.zustand", "healthy"), false, null, false);
+            h.Ist(Dr + ": Nein-Satz nennt das fehlende SFC-Ergebnis", d != null && d.Satz.Contains("sfc.zustand fehlt"), d == null ? "" : d.Satz);
+            d = N(h, saetze, Dr + ": dism.zustand fehlt, ohneBefund", Dr, s, P("sfc.zustand", "ohneBefund"), false, null, false);
+            h.Ist(Dr + ": Nein-Satz nennt das fehlende DISM-Ergebnis", d != null && d.Satz.Contains("dism.zustand fehlt"), d == null ? "" : d.Satz);
+            N(h, saetze, Dr + ": repairable + ohneBefund", Dr, s, P("dism.zustand", "repairable", "sfc.zustand", "ohneBefund"), false, null, false);
+            N(h, saetze, Dr + ": nonrepairable + ohneBefund", Dr, s, P("dism.zustand", "nonrepairable", "sfc.zustand", "ohneBefund"), false, null, false);
+            d = N(h, saetze, Dr + ": fehler (HRESULT) + ohneBefund", Dr, s, P("dism.zustand", "fehler", "dism.hresult", "0x800F081F", "sfc.zustand", "ohneBefund"), false, null, false);
+            h.Ist(Dr + ": Nein-Satz nennt den HRESULT", d != null && d.Satz.Contains("0x800F081F"), d == null ? "" : d.Satz);
+            N(h, saetze, Dr + ": healthy + nichtRepariert", Dr, s, P("dism.zustand", "healthy", "sfc.zustand", "nichtRepariert"), false, null, false);
+            N(h, saetze, Dr + ": healthy + fehler (Exit 1)", Dr, s, P("dism.zustand", "healthy", "sfc.zustand", "fehler", "sfc.exit", "1"), false, null, false);
+            d = N(h, saetze, Dr + ": unlesbare Werte (x + y)", Dr, s, P("dism.zustand", "x", "sfc.zustand", "y"), false, null, false);
+            h.Ist(Dr + ": Nein-Satz zitiert die unlesbaren Werte", d != null && d.Satz.Contains("„x“") && d.Satz.Contains("„y“"), d == null ? "" : d.Satz);
+            // HelferFehler zuerst: nachweis.bestanden = 0 schlaegt gute Werte.
+            d = N(h, saetze, Dr + ": healthy + ohneBefund, aber nachweis.bestanden = 0", Dr, s, P("dism.zustand", "healthy", "sfc.zustand", "ohneBefund", "nachweis.bestanden", "0", "nachweis.satz", "Probe: der Punkt fehlte (0 Punkte)."), false, false, false);
+            h.Ist(Dr + ": Satz beginnt mit dem Titel und zitiert den Helfer", d != null && d.Satz.StartsWith(drTitel + " lief mit Fehler; ") && d.Satz.Contains("0 Punkte"), d == null ? "" : d.Satz);
+            N(h, saetze, Dr + ": healthy + ohneBefund, nachweis.bestanden = 1", Dr, s, P("dism.zustand", "healthy", "sfc.zustand", "ohneBefund", "nachweis.bestanden", "1"), true, false);
+
+            // update.anwenden (M4-Entwurf 1, 3.6): der Satz nennt die Fassungen; fehlen sie, bleibt der
+            // ehrliche Satz (der Nachweis ist nachweis.bestanden); sind beide da, muessen beide als
+            // Versionsnummer lesbar sein (sonst Unlesbar), und ein Rueckschritt ist Nein.
+            const string Ua = "update.anwenden";
+            var u = N(h, saetze, Ua + ": Fassungen fehlen (ehrlicher Satz)", Ua, s, P("sha256", "00"), true, false);
+            h.Ist(Ua + ": Satz nennt die Ausgabe des Helfers als Grenze", u != null && u.Satz.Contains("update.version"), u == null ? "" : u.Satz);
+            u = N(h, saetze, Ua + ": 8.2.0.0 -> 8.3.0.0", Ua, s, P("sha256", "00", "update.version", "8.3.0.0", "update.vorher", "8.2.0.0"), true, false);
+            h.Ist(Ua + ": Ja-Satz nennt beide Fassungen", u != null && u.Satz.Contains("8.3.0.0") && u.Satz.Contains("8.2.0.0"), u == null ? "" : u.Satz);
+            N(h, saetze, Ua + ": 8.3.0.0 -> 8.3.0.0 (gleiche Fassung, kein Rueckschritt)", Ua, s, P("sha256", "00", "update.version", "8.3.0.0", "update.vorher", "8.3.0.0"), true, false);
+            u = N(h, saetze, Ua + ": 8.3.0.0 -> 8.2.0.0 (Rueckschritt)", Ua, s, P("sha256", "00", "update.version", "8.2.0.0", "update.vorher", "8.3.0.0"), false, null, false);
+            h.Ist(Ua + ": Nein-Satz nennt den Rueckschritt", u != null && u.Satz.Contains("Rückschritt"), u == null ? "" : u.Satz);
+            u = N(h, saetze, Ua + ": update.version = abc (unlesbar)", Ua, s, P("sha256", "00", "update.version", "abc", "update.vorher", "8.3.0.0"), false, null, true);
+            h.Ist(Ua + ": Unlesbar-Satz zitiert beide Werte", u != null && u.Satz.Contains("„abc“") && u.Satz.Contains("„8.3.0.0“"), u == null ? "" : u.Satz);
+            N(h, saetze, Ua + ": update.vorher = ? (unlesbar)", Ua, s, P("sha256", "00", "update.version", "8.3.0.0", "update.vorher", "?"), false, null, true);
+            N(h, saetze, Ua + ": nur update.version da (ehrlicher Satz)", Ua, s, P("sha256", "00", "update.version", "8.3.0.0"), true, false);
+            u = N(h, saetze, Ua + ": Helfer meldet nachweis.bestanden = 0", Ua, s, P("sha256", "00", "update.version", "8.3.0.0", "update.vorher", "8.2.0.0", "nachweis.bestanden", "0", "nachweis.satz", "Probe: die Prüfsumme stimmt nicht (0 von 64 Zeichen)."), false, false, false);
+            h.Ist(Ua + ": Satz beginnt mit dem Titel und zitiert den Helfer", u != null && u.Satz.StartsWith(Massnahmen.Finde(Ua).Titel + " lief mit Fehler; ") && u.Satz.Contains("0 von 64 Zeichen"), u == null ? "" : u.Satz);
         }
 
         // ------------------------------------------------------------ (c, dieser PC) Zusatz, nur lokal
@@ -1268,63 +1963,117 @@ namespace WartungsToolbox.Proben
             N(h, saetze, "vorher: andere Kennung nicht verborgen", Vb, s, P("updateId", "00000000-0000-0000-0000-000000000001"), false, null, false);
         }
 
-        // ------------------------------------------------------------ (c2) die 16 Paare
+        // ------------------------------------------------------------ (c2) die 26 Paare
 
         /// <summary>
         /// Dynamisch ueber gepflanzt-massnahmen-*-vorher.json (Kennung aus dem Dateinamen). Die
         /// Einzelkarten der Leistung sind absichtlich "ok" (Kandidat, kein Fehler), deshalb zaehlt
         /// ueber VORHER jeder Befund mit Kennung und passenden Parametern, ueber NACHHER darf es keinen
         /// mehr geben (gleich welchen Zustands). Sonderfall geraet.aktivieren: ohne Antwort
-        /// "reparieren" ist der Befund eine Frage ohne Massnahme.
+        /// "reparieren" ist der Befund eine Frage ohne Massnahme. Die 10 M4-Paare (PaareM4) haengen
+        /// an einem Problem-Befund (warn oder bad); das Paar netz.stack.gestoert traegt im Namen den
+        /// Befund und deckt zwei Kennungen ohne Zustand am Bild (PaarKennungen, PaarOhneZustand): dort
+        /// dreht nachweis.bestanden den Nachweis (0 vorher Nein, 1 nachher NachNeustart). Kennungen aus
+        /// PaarNachweisZusatz bekommen die Werte des Helfers (update.verborgen.vorher) in beide Nachweise.
+        /// Wirksamkeitsprobe 19.09.2026: Paar-Datei netz.hosts.bereinigen-nachher mit einer umleitenden
+        /// Zeile -> "NACHHER => bestanden" und "haengen die Kennung ... an keinen Befund mehr" rot.
         /// </summary>
         static void NachweisePaare(Harness h, List<KeyValuePair<string, string>> saetze)
         {
-            h.Gruppe("Massnahmen (c2): 16 Paare gepflanzt-massnahmen-<kennung>-vorher/-nachher");
+            h.Gruppe("Massnahmen (c2): 26 Paare gepflanzt-massnahmen-<kennung>-vorher/-nachher");
             const string Praefix = "gepflanzt-massnahmen-", Vorher = "-vorher.json", Nachher = "-nachher.json";
             var dateien = Directory.GetFiles(h.Aufzeichnungen, Praefix + "*" + Vorher).Select(Path.GetFileName).OrderBy(x => x).ToList();
-            h.Ist("Grundmenge: genau 16 Paare (Vorher-Dateien)", dateien.Count == 16, dateien.Count.ToString());
-            h.Ist("Grundmenge: genau 16 Nachher-Dateien", Directory.GetFiles(h.Aufzeichnungen, Praefix + "*" + Nachher).Length == 16);
-            h.Ist("Grundmenge: Parametertabelle mit 16 Kennungen", PaarParameter.Count == 16);
+            h.Ist("Grundmenge: genau 26 Paare (Vorher-Dateien)", dateien.Count == 26, dateien.Count.ToString());
+            h.Ist("Grundmenge: genau 26 Nachher-Dateien", Directory.GetFiles(h.Aufzeichnungen, Praefix + "*" + Nachher).Length == 26);
+            h.Ist("Grundmenge: Parametertabelle mit 26 Kennungen", PaarParameter.Count == 26, PaarParameter.Count.ToString());
+            h.Ist("Grundmenge: 10 M4-Paare, jedes in der Parametertabelle und als Datei", PaareM4.Length == 10 && PaareM4.All(k => PaarParameter.ContainsKey(k) && dateien.Contains(Praefix + k + Vorher)), string.Join(", ", PaareM4.Where(k => !dateien.Contains(Praefix + k + Vorher))));
+            h.Ist("Grundmenge: jede Kennung ohne Zustand gehoert zu einem Mehrfach-Paar", PaarOhneZustand.All(k => PaarKennungen.Values.Any(v => v.Contains(k))));
             int gelaufen = 0;
             foreach (string datei in dateien)
             {
-                string kennung = datei.Substring(Praefix.Length, datei.Length - Praefix.Length - Vorher.Length);
+                // Der Name im Dateinamen: die Kennung oder (bei PaarKennungen) der Befund.
+                string name = datei.Substring(Praefix.Length, datei.Length - Praefix.Length - Vorher.Length);
                 Dictionary<string, string> erwartet;
-                h.Ist(kennung + ": Parametertabelle kennt die Kennung", PaarParameter.TryGetValue(kennung, out erwartet));
+                h.Ist(name + ": Parametertabelle kennt den Namen", PaarParameter.TryGetValue(name, out erwartet));
                 if (erwartet == null) continue;
-                var m = Massnahmen.Finde(kennung);
-                h.Ist(kennung + ": Katalog kennt die Kennung", m != null);
-                if (m == null) continue;
-                h.Ist(kennung + ": Tabelle nennt genau die Pflichtparameter", m.Parameter.All(erwartet.ContainsKey) && erwartet.Keys.All(m.Parameter.Contains), string.Join(",", erwartet.Keys));
+                string[] kennungen;
+                if (!PaarKennungen.TryGetValue(name, out kennungen)) kennungen = new[] { name };
                 var vorher = h.Bild(datei);
-                var nachher = h.Bild(Praefix + kennung + Nachher);
+                var nachher = h.Bild(Praefix + name + Nachher);
                 if (vorher == null || nachher == null) continue;
                 gelaufen++;
+                bool m4 = Array.IndexOf(PaareM4, name) >= 0;
 
                 var e = new Entscheidungen();
-                if (kennung == "geraet.aktivieren") e.Setze(GeraetFrage, Entscheidungen.Reparieren, vorher.AufgezeichnetUtc);
+                if (name == "geraet.aktivieren") e.Setze(GeraetFrage, Entscheidungen.Reparieren, vorher.AufgezeichnetUtc);
+                var ergVorher = Harness.Befunde(h.Pruefen(vorher, e)).ToList();
+                var ergNachher = Harness.Befunde(h.Pruefen(nachher, e)).ToList();
 
-                var traeger = Harness.Befunde(h.Pruefen(vorher, e)).Where(b => b.Massnahmen.Contains(kennung) && Passt(b.Parameter, erwartet)).ToList();
-                h.Ist(kennung + ": Regeln ueber VORHER haengen die Kennung mit den Tabellen-Parametern an einen Befund (" + string.Join(",", erwartet.Select(kv => kv.Key + "=" + kv.Value)) + ")",
-                      traeger.Count >= 1, string.Join("; ", Harness.Befunde(h.Pruefen(vorher, e)).Where(b => b.Massnahmen.Contains(kennung)).Select(b => b.Schluessel + " [" + string.Join(",", b.Parameter.Select(kv => kv.Key + "=" + kv.Value)) + "]")));
-                if (traeger.Count > 0)
-                    h.Ist(kennung + ": der Befund " + traeger[0].Schluessel + " traegt alle Pflichtparameter", m.Parameter.All(n => traeger[0].Parameter.ContainsKey(n) && !string.IsNullOrEmpty(traeger[0].Parameter[n])));
+                foreach (string kennung in kennungen)
+                {
+                    var m = Massnahmen.Finde(kennung);
+                    h.Ist(kennung + ": Katalog kennt die Kennung", m != null);
+                    if (m == null) continue;
+                    h.Ist(kennung + ": Tabelle nennt genau die Pflichtparameter", m.Parameter.All(erwartet.ContainsKey) && erwartet.Keys.All(m.Parameter.Contains), string.Join(",", erwartet.Keys));
 
-                // Der Nachweis laeuft mit den Tabellen-Parametern, damit er auch dann geprueft wird,
-                // wenn die Regel-Seite die Kennung (noch) nicht anhaengt.
-                var p = new Dictionary<string, string>(erwartet);
-                N(h, saetze, kennung + " VORHER", kennung, vorher, p, false, null, false);
-                N(h, saetze, kennung + " NACHHER", kennung, nachher, p, true);
+                    var traeger = ergVorher.Where(b => b.Massnahmen.Contains(kennung) && Passt(b.Parameter, erwartet)).ToList();
+                    h.Ist(kennung + ": Regeln ueber VORHER haengen die Kennung mit den Tabellen-Parametern an einen Befund (" + string.Join(",", erwartet.Select(kv => kv.Key + "=" + kv.Value)) + ")",
+                          traeger.Count >= 1, string.Join("; ", ergVorher.Where(b => b.Massnahmen.Contains(kennung)).Select(b => b.Schluessel + " [" + string.Join(",", b.Parameter.Select(kv => kv.Key + "=" + kv.Value)) + "]")));
+                    if (traeger.Count > 0)
+                    {
+                        h.Ist(kennung + ": der Befund " + traeger[0].Schluessel + " traegt alle Pflichtparameter", m.Parameter.All(n => traeger[0].Parameter.ContainsKey(n) && !string.IsNullOrEmpty(traeger[0].Parameter[n])));
+                        // M4-Entwurf 8.1: die neuen Paare haengen an einem Problem, nicht an einem Kandidaten
+                        // (die Stufe-3-Knoepfe stehen nur an Karten mit Befund, M4-Entwurf 0).
+                        if (m4) h.Ist(kennung + ": der Traeger " + traeger[0].Schluessel + " ist ein Problem-Befund (warn oder bad)", traeger[0].IstProblem, traeger[0].Zustand);
+                        if (kennungen.Length > 1) h.Ist(kennung + ": der Traeger ist der Befund " + name, traeger[0].Schluessel == name, traeger[0].Schluessel);
+                    }
 
-                var danach = Harness.Befunde(h.Pruefen(nachher, e)).Where(b => b.Massnahmen.Contains(kennung) && Passt(b.Parameter, erwartet)).ToList();
-                h.Ist(kennung + ": Regeln ueber NACHHER haengen die Kennung mit diesen Parametern an keinen Befund mehr", danach.Count == 0, string.Join("; ", danach.Select(b => b.Schluessel + " (" + b.Zustand + ")")));
+                    // Der Nachweis laeuft mit den Tabellen-Parametern (plus die Werte des Helfers aus
+                    // PaarNachweisZusatz), damit er auch dann geprueft wird, wenn die Regel-Seite die
+                    // Kennung (noch) nicht anhaengt.
+                    var p = new Dictionary<string, string>(erwartet);
+                    Dictionary<string, string> zusatz;
+                    if (PaarNachweisZusatz.TryGetValue(kennung, out zusatz)) foreach (var kv in zusatz) p[kv.Key] = kv.Value;
+                    bool nachNeustart = Array.IndexOf(PaarNachNeustart, kennung) >= 0;
+                    if (Array.IndexOf(PaarOhneZustand, kennung) >= 0)
+                    {
+                        // Kein Zustand am Bild: der Nachweis ist immer NachNeustart, gedreht wird er ueber
+                        // die Meldung des Helfers (M4-Entwurf 8.1, "Nachweis ueber nachweis.bestanden").
+                        var pv = new Dictionary<string, string>(p);
+                        pv["nachweis.bestanden"] = "0"; pv["nachweis.satz"] = "Probe: netsh meldete Exit 1.";
+                        var nv = N(h, saetze, kennung + " VORHER (nachweis.bestanden = 0, kein Zustand am Bild)", kennung, vorher, pv, false, false, false);
+                        h.Ist(kennung + " VORHER: Satz beginnt mit dem Titel und zitiert den Helfer", nv != null && nv.Satz.StartsWith(m.Titel + " lief mit Fehler; ") && nv.Satz.Contains("Exit 1"), nv == null ? "" : nv.Satz);
+                        var pn = new Dictionary<string, string>(p);
+                        pn["nachweis.bestanden"] = "1";
+                        N(h, saetze, kennung + " NACHHER (nachweis.bestanden = 1)", kennung, nachher, pn, true, nachNeustart);
+                    }
+                    else
+                    {
+                        // Das Neustart-Flag wird nur fuer die M4-Kennungen aus PaarNachNeustart festgelegt;
+                        // die M3-Paare (etwa sicherheit.uac.standard, NachNeustart) laufen wie bisher ohne Vorgabe.
+                        N(h, saetze, kennung + " VORHER", kennung, vorher, p, false, null, false);
+                        N(h, saetze, kennung + " NACHHER" + (nachNeustart ? " (nach Neustart)" : ""), kennung, nachher, p, true, nachNeustart ? (bool?)true : null);
+                    }
+
+                    var danach = ergNachher.Where(b => b.Massnahmen.Contains(kennung) && Passt(b.Parameter, erwartet)).ToList();
+                    h.Ist(kennung + ": Regeln ueber NACHHER haengen die Kennung mit diesen Parametern an keinen Befund mehr", danach.Count == 0, string.Join("; ", danach.Select(b => b.Schluessel + " (" + b.Zustand + ")")));
+                }
+                if (kennungen.Length > 1)
+                {
+                    // M4-Entwurf 2.4: beide Reset-Kennungen an EINEM Befund, in dieser Reihenfolge (erst
+                    // Winsock, dann IP-Stack); ueber NACHHER gibt es den Befund nicht mehr.
+                    var b = ergVorher.FirstOrDefault(x => x.Schluessel == name);
+                    h.Ist(name + ": der Befund traegt genau die Kennungen " + string.Join(", ", kennungen) + " in dieser Reihenfolge", b != null && b.Massnahmen.SequenceEqual(kennungen), b == null ? "(Befund fehlt)" : string.Join(", ", b.Massnahmen));
+                    h.Ist(name + ": der Befund ist bad", b != null && b.Zustand == Zustand.Bad, b == null ? "(Befund fehlt)" : b.Zustand);
+                    h.Ist(name + ": ueber NACHHER gibt es den Befund nicht mehr", !ergNachher.Any(x => x.Schluessel == name));
+                }
             }
-            h.Ist("Grundmenge: 16 Paare gelaufen", gelaufen == 16, gelaufen.ToString());
+            h.Ist("Grundmenge: 26 Paare gelaufen", gelaufen == 26, gelaufen.ToString());
             AufgabePaarLaufend(h, saetze);
         }
 
         /// <summary>
-        /// Das 17. Paar, im Speicher aus dem Aufgaben-Paar gedreht (die Dateien decken nur 3 -> 1 ab):
+        /// Das 27. Paar (bis M4 das 17.), im Speicher aus dem Aufgaben-Paar gedreht (die Dateien decken nur 3 -> 1 ab):
         /// eine Anmelde-Aufgabe, die ein residentes Programm startet, laeuft bis zur Abmeldung
         /// (Zustand 4) und meldet nach schtasks /DISABLE weiter 4, nicht 1 (Microsoft-Doku TASK_STATE:
         /// DISABLED = "no instances queued or running", RUNNING = "one or more instances running"; auf
@@ -1335,7 +2084,7 @@ namespace WartungsToolbox.Proben
         /// </summary>
         static void AufgabePaarLaufend(Harness h, List<KeyValuePair<string, string>> saetze)
         {
-            h.Gruppe("Massnahmen (c2): 17. Paar im Speicher, Aufgabe mit laufender Instanz (Zustand 4) und Enabled");
+            h.Gruppe("Massnahmen (c2): 27. Paar im Speicher, Aufgabe mit laufender Instanz (Zustand 4) und Enabled");
             const string Kennung = "leistung.aufgabe.deaktivieren", Pfad = "\\FremdUpdater";
             var erwartet = P("pfad", Pfad);
             var s = h.Bild("gepflanzt-massnahmen-" + Kennung + "-vorher.json"); if (s == null) return;

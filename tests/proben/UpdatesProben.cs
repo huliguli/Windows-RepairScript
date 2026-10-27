@@ -146,7 +146,30 @@ namespace WartungsToolbox.Proben
                 h.Ist("Massnahme update.verbergen", f != null && f.Massnahmen.Contains("update.verbergen"));
                 h.Ist("Befund traegt Parameter updateId gleich dem Schluessel-Suffix", f != null && f.Parameter.ContainsKey(Updates.ParamUpdateId) && f.Schluessel == "update.fehlschlag." + f.Parameter[Updates.ParamUpdateId], f == null ? null : f.Schluessel);
                 h.Ist("kein Schleifen-Befund", !Harness.AlleMit(erg, "update.schleife.").Any());
+                // M4 (docs/M4-ENTWURF.md, Abschnitt 2.4): 0x8024402C (Namensaufloesung) steht in keiner der beiden
+                // Mengen, also nur update.verbergen; ein einzelner Fehlschlag-Befund ergibt kein "mehrere".
+                h.Ist("0x8024402C: nur update.verbergen, kein Reset, keine Reparatur", f != null && f.Massnahmen.Count == 1, f == null ? null : string.Join(",", f.Massnahmen));
+                h.Ist("ein Fehlschlag-Befund allein: kein update.fehlschlaege.mehrere", Harness.Einer(erg, "update.fehlschlaege.mehrere") == null);
                 alle.AddRange(Harness.Befunde(erg, Bereich.Updates));
+
+                // Reset-Code (0x80070002) => update.zuruecksetzen als zweite Kennung, Rat nennt den Zwischenspeicher.
+                foreach (var v in c.WindowsUpdate.Verlauf.Where(v => v.Ergebnis == 4)) v.HResult = 0x80070002;
+                var fr = Harness.Einer(h.Pruefen(c), "update.fehlschlag.");
+                h.Ist("0x80070002: Kennungen update.verbergen, dann update.zuruecksetzen; Rat nennt den Zwischenspeicher", fr != null && fr.Massnahmen.SequenceEqual(new[] { Updates.Verbergen, Updates.Zuruecksetzen }) && (fr.Rat ?? "").Contains("Zwischenspeicher"), fr == null ? null : string.Join(",", fr.Massnahmen));
+                h.Ist("0x80070002: Detail deutet ERROR_FILE_NOT_FOUND", fr != null && fr.Detail.Any(d => d.Contains("0x80070002") && d.Contains("ERROR_FILE_NOT_FOUND")));
+                if (fr != null) alle.Add(fr);
+                // Komponentenspeicher-Code (0x800F081F) => dateien.reparieren, kein Reset.
+                foreach (var v in c.WindowsUpdate.Verlauf.Where(v => v.Ergebnis == 4)) v.HResult = 0x800F081F;
+                var fk = Harness.Einer(h.Pruefen(c), "update.fehlschlag.");
+                h.Ist("0x800F081F: Kennungen update.verbergen, dann dateien.reparieren; kein Reset; Rat nennt DISM", fk != null && fk.Massnahmen.SequenceEqual(new[] { Updates.Verbergen, Stabilitaet.MDateienReparieren }) && (fk.Rat ?? "").Contains("DISM"), fk == null ? null : string.Join(",", fk.Massnahmen));
+                if (fk != null) alle.Add(fk);
+                // Beide Codes an derselben Kennung (erst Reset-Code, dann CBS-Code) => beide Kennungen, je einmal.
+                var vier = c.WindowsUpdate.Verlauf.Where(v => v.Ergebnis == 4).ToList();
+                vier[0].HResult = 0x80070490; vier[1].HResult = 0x80073712;
+                var fb = Harness.Einer(h.Pruefen(c), "update.fehlschlag.");
+                h.Ist("0x80070490 + 0x80073712: verbergen, zuruecksetzen, reparieren, je einmal", fb != null && fb.Massnahmen.SequenceEqual(new[] { Updates.Verbergen, Updates.Zuruecksetzen, Stabilitaet.MDateienReparieren }), fb == null ? null : string.Join(",", fb.Massnahmen));
+                foreach (var v in vier) v.HResult = 0x8024402C;
+                h.Ist("Konstante traegt die Katalog-Kennung", Updates.Zuruecksetzen == "update.zuruecksetzen");
 
                 // Gegenprobe: ohne UpdateID (Verlaufseintrag ohne Kennung) gibt es nichts zu verbergen:
                 // Befund bleibt (Schluessel "?"), aber ohne Massnahme und ohne Parameter.
@@ -174,7 +197,48 @@ namespace WartungsToolbox.Proben
                 erg = h.Pruefen(d);
                 f = Harness.Einer(erg, "update.fehlschlag.");
                 h.Ist("unbekannter Code 0x80073D02 -> Befund, aber 'keine Deutung hinterlegt'", f != null && f.Detail.Any(x => x.Contains("0x80073D02") && x.Contains("keine Deutung")));
+                h.Ist("unbekannter Code: keine Kennung ausser update.verbergen (ohne Deutung keine Massnahme)", f != null && f.Massnahmen.SequenceEqual(new[] { Updates.Verbergen }), f == null ? null : string.Join(",", f.Massnahmen));
                 alle.AddRange(Harness.Befunde(erg, Bereich.Updates));
+            }
+
+            // ------------------------------------------------------------ (c2) mehrere Kennungen schlagen fehl (M4)
+            // docs/M4-ENTWURF.md, Abschnitt 2.4: zwei verschiedene Kennungen mit je >= UpdateFehlschlagMin
+            // Fehlschlaegen -> ein warn update.fehlschlaege.mehrere mit update.zuruecksetzen (einmal, ohne
+            // Parameter); die Einzelbefunde bleiben. Gepflanzt im Speicher: zweite Kennung mit zwei Fehlschlaegen.
+            h.Gruppe("Updates (c2): zwei verschiedene Kennungen je zweimal fehlgeschlagen -> update.fehlschlaege.mehrere mit Reset, Einzelbefunde bleiben");
+            var c2 = h.Bild("gepflanzt-updates-fehlschlag.json");
+            if (c2 != null)
+            {
+                const string Zweite = "dddddddd-4444-4555-8666-777777777777";
+                h.Ist("Grundmenge: genau eine Kennung mit >= 2 Fehlschlaegen im Bild", c2.WindowsUpdate.Verlauf.Where(v => v.Ergebnis == 4).Select(v => v.UpdateId).Distinct().Count() == 1);
+                c2.WindowsUpdate.Verlauf.Add(new UpdateEintrag { ZeitUtc = "2026-09-09T06:00:00Z", Titel = "Beispiel - Chipsatz - 1.2.3.4", Ergebnis = 4, HResult = 0x80070020, UpdateId = Zweite, Revision = 1 });
+                c2.WindowsUpdate.Verlauf.Add(new UpdateEintrag { ZeitUtc = "2026-09-03T06:00:00Z", Titel = "Beispiel - Chipsatz - 1.2.3.4", Ergebnis = 4, HResult = 0x80070020, UpdateId = Zweite, Revision = 1 });
+                var erg = h.Pruefen(c2);
+                var einzel = Harness.AlleMit(erg, "update.fehlschlag.").ToList();
+                h.Ist("zwei Einzelbefunde bleiben", einzel.Count == 2, string.Join(",", einzel.Select(x => x.Schluessel)));
+                var m = Harness.AlleMit(erg, "update.fehlschlaege.mehrere").ToList();
+                h.Ist("genau ein Befund update.fehlschlaege.mehrere, warn", m.Count == 1 && m[0].Zustand == Zustand.Warn, m.Count.ToString());
+                if (m.Count == 1)
+                {
+                    var b = m[0];
+                    h.Ist("genau eine Kennung update.zuruecksetzen, keine Parameter", b.Massnahmen.SequenceEqual(new[] { Updates.Zuruecksetzen }) && b.Parameter.Count == 0, string.Join(",", b.Massnahmen));
+                    h.Ist("Satz nennt 2 Updates, 90 Tage und je mindestens 2-mal", b.Satz.StartsWith("2 verschiedene Updates") && b.Satz.Contains(Schwellen.UpdateFehlschlagTage + " Tagen") && b.Satz.Contains("je mindestens 2-mal"), b.Satz);
+                    h.Ist("Messwert 2, Schwelle >= 2", b.Messwert != null && b.Messwert.Wert == "2" && b.Messwert.Schwelle == "≥ 2");
+                    h.Ist("Detail nennt beide Kennungen mit Zahl und Code", b.Detail.Any(x => x.Contains("Intel - System") && x.Contains("2-mal") && x.Contains("0x8024402C")) && b.Detail.Any(x => x.Contains(Zweite) && x.Contains("0x80070020")), string.Join(" | ", b.Detail));
+                    h.Ist("Rat nennt das Zuruecksetzen und die gesicherten verborgenen Updates", (b.Rat ?? "").Contains("zurücksetzen") && b.Rat.Contains("verborgene Updates"), b.Rat);
+                }
+                h.Ist("die Einzelkarte mit 0x80070020 traegt den Reset selbst ebenfalls (Code aus ResetHilft)", einzel.Any(x => x.Schluessel.EndsWith(Zweite) && x.Massnahmen.Contains(Updates.Zuruecksetzen)));
+                h.Ist("Bereich warn", Harness.Bereich(erg, Bereich.Updates).Zustand == Zustand.Warn);
+                alle.AddRange(Harness.Befunde(erg, Bereich.Updates));
+                // Gegenprobe: die zweite Kennung ist verborgen -> sie zaehlt nicht, kein "mehrere".
+                c2.WindowsUpdate.Verborgen.Add(new UpdateKennung { UpdateId = Zweite, Titel = "Beispiel - Chipsatz - 1.2.3.4", Typ = 2 });
+                var ergV = h.Pruefen(c2);
+                h.Ist("Gegenprobe: zweite Kennung verborgen -> ein Einzelbefund, kein update.fehlschlaege.mehrere", Harness.AlleMit(ergV, "update.fehlschlag.").Count() == 1 && Harness.Einer(ergV, "update.fehlschlaege.mehrere") == null);
+                c2.WindowsUpdate.Verborgen.Clear();
+                // Gegenprobe: die zweite Kennung nur einmal fehlgeschlagen -> unter der Schwelle, kein "mehrere".
+                c2.WindowsUpdate.Verlauf.RemoveAt(c2.WindowsUpdate.Verlauf.Count - 1);
+                var ergE = h.Pruefen(c2);
+                h.Ist("Gegenprobe: zweite Kennung nur einmal -> kein update.fehlschlaege.mehrere", Harness.Einer(ergE, "update.fehlschlaege.mehrere") == null && Harness.AlleMit(ergE, "update.fehlschlag.").Count() == 1);
             }
 
             // ------------------------------------------------------------ (c') Fehlschlaege aus dem System-Protokoll
@@ -513,12 +577,25 @@ namespace WartungsToolbox.Proben
 
             // ------------------------------------------------------------ Fehlercode-Tabelle
             h.Gruppe("Updates: eingebettete Fehlercode-Tabelle");
-            h.Ist("15 Codes hinterlegt", Fehlercodes.Anzahl == 15, Fehlercodes.Anzahl.ToString());
+            h.Ist("26 Codes hinterlegt (15 aus M1, 11 aus M4)", Fehlercodes.Anzahl == 26, Fehlercodes.Anzahl.ToString());
             h.Ist("0x8024402C gedeutet (Namensaufloesung)", (Fehlercodes.Deutung(0x8024402C) ?? "").Contains("Namensauflösung"));
             h.Ist("vorzeichenbehaftete Schreibweise (-2145107924) trifft denselben Eintrag", Fehlercodes.Deutung(-2145107924L) == Fehlercodes.Deutung(0x8024402C));
             h.Ist("0x80070422 nennt den deaktivierten Dienst", (Fehlercodes.Deutung(0x80070422) ?? "").Contains("deaktiviert"));
             h.Ist("unbekannter Code 0x80073D02 -> null", Fehlercodes.Deutung(0x80073D02) == null);
             h.Ist("0 -> null", Fehlercodes.Deutung(0) == null);
+            // M4 (docs/M4-ENTWURF.md, Abschnitt 2.4): die zwei Mengen, an denen update.zuruecksetzen und
+            // dateien.reparieren haengen, genau die Codes des Vertrags, jeder mit Deutung, keiner in beiden.
+            long[] reset = { 0x80070002, 0x80070003, 0x8007000E, 0x80070020, 0x80240034, 0x8024200D, 0x80244022, 0x80246007, 0x80240016, 0x80248007, 0x8024A105, 0x80070490 };
+            long[] cbs = { 0x800F081F, 0x800F0831, 0x800F0922, 0x80073712, 0x8007000D, 0x800F0986 };
+            h.Ist("ResetHilft: alle 12 Codes des Vertrags", reset.All(Fehlercodes.ResetHilft), string.Join(",", reset.Where(c => !Fehlercodes.ResetHilft(c)).Select(c => "0x" + c.ToString("X8"))));
+            h.Ist("Komponentenspeicher: alle 6 Codes des Vertrags", cbs.All(Fehlercodes.Komponentenspeicher), string.Join(",", cbs.Where(c => !Fehlercodes.Komponentenspeicher(c)).Select(c => "0x" + c.ToString("X8"))));
+            h.Ist("keiner der Reset-Codes ist ein Komponentenspeicher-Code und umgekehrt", !reset.Any(Fehlercodes.Komponentenspeicher) && !cbs.Any(Fehlercodes.ResetHilft));
+            h.Ist("jeder Code beider Mengen hat eine Deutung", reset.Concat(cbs).All(c => Fehlercodes.Deutung(c) != null), string.Join(",", reset.Concat(cbs).Where(c => Fehlercodes.Deutung(c) == null).Select(c => "0x" + c.ToString("X8"))));
+            h.Ist("0x8024402C, 0x80070422, 0x80240017 gehoeren in keine der Mengen", !Fehlercodes.ResetHilft(0x8024402C) && !Fehlercodes.Komponentenspeicher(0x8024402C) && !Fehlercodes.ResetHilft(0x80070422) && !Fehlercodes.ResetHilft(0x80240017));
+            h.Ist("ResetHilft: vorzeichenbehaftete Schreibweise (-2147024894 = 0x80070002)", Fehlercodes.ResetHilft(-2147024894L));
+            h.Ist("Komponentenspeicher: vorzeichenbehaftete Schreibweise (-2146498529 = 0x800F081F)", Fehlercodes.Komponentenspeicher(-2146498529L));
+            h.Ist("ResetHilft(0) und Komponentenspeicher(0) sind falsch", !Fehlercodes.ResetHilft(0) && !Fehlercodes.Komponentenspeicher(0));
+            h.Ist("Deutungen der CBS-Codes nennen den Komponentenspeicher oder DISM", cbs.All(c => (Fehlercodes.Deutung(c) ?? "").Contains("Komponentenspeicher") || (Fehlercodes.Deutung(c) ?? "").Contains("DISM")));
 
             // ------------------------------------------------------------ Saetze
             h.Gruppe("Updates: jeder Satz traegt Zahl, Bedingung oder Absage");

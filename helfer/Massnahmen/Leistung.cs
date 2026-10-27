@@ -14,8 +14,9 @@ namespace WartungsToolbox.Helfer
     public static partial class MassnahmenM3
     {
         // Leistung (docs/M3-ENTWURF.md, Abschnitt 1): leistung.autostart.deaktivieren,
-        // leistung.aufgabe.deaktivieren, leistung.dienst.startart. Anmeldung hier, Arbeit in
-        // LeistungMassnahmen.
+        // leistung.aufgabe.deaktivieren, leistung.dienst.startart; seit M4 (docs/M4-ENTWURF.md,
+        // Abschnitt 1) dazu leistung.winlogon.zuruecksetzen (Stufe 2, Rueckweg ueber
+        // ZurueckLeistung). Anmeldung hier, Arbeit in LeistungMassnahmen.
         static partial void Leistung(List<Massnahme> l)
         {
             l.Add(Massnahmenbau.Neu("leistung.autostart.deaktivieren", "Startprogramm deaktivieren", 2,
@@ -24,7 +25,27 @@ namespace WartungsToolbox.Helfer
                 LeistungMassnahmen.AufgabePruefen, LeistungMassnahmen.AufgabeDeaktivieren));
             l.Add(Massnahmenbau.Neu("leistung.dienst.startart", "Startart eines Dienstes ändern", 2,
                 LeistungMassnahmen.DienstPruefen, LeistungMassnahmen.DienstStartart));
+            l.Add(Massnahmenbau.Neu("leistung.winlogon.zuruecksetzen", "Anmeldeprogramm zurücksetzen", 2,
+                s => null, LeistungMassnahmen.WinlogonZuruecksetzen));
         }
+
+        /// <summary>true, wenn ZurueckLeistung die Kennung der Sicherung kennt (leistung.winlogon.zuruecksetzen).</summary>
+        public static bool ZurueckLeistungBekannt(string kennung) { return LeistungMassnahmen.ZurueckBekannt(kennung); }
+
+        /// <summary>
+        /// Prueft die Werte einer Winlogon-Sicherung, bevor der Rueckweg sie anfasst (Vertrag M4, 3.3):
+        /// null = gueltig, sonst der Grund (Rueckweg.cs lehnt den Plan damit ab). Shell und Userinit
+        /// muessen beide da sein, je hoechstens 260 Zeichen ohne Steuerzeichen; leer = Wert war nicht gesetzt.
+        /// ShellArt und UserinitArt duerfen fehlen (REG_SZ) oder "" bzw. "expand" (REG_EXPAND_SZ) sein.
+        /// </summary>
+        public static string ZurueckLeistungPruefen(Sicherung si) { return LeistungMassnahmen.ZurueckPruefen(si); }
+
+        /// <summary>
+        /// Rueckweg einer Winlogon-Sicherung: schreibt Shell und Userinit auf die Vorwerte zurueck,
+        /// Zeilen und Nachweiszeile selbst. true = zurueckgestellt, false = nicht (mit Problem);
+        /// Trockenlauf nur (trocken)-Zeilen; fremde Kennung → ArgumentException.
+        /// </summary>
+        public static bool ZurueckLeistung(Ausfuehrungskontext k, Sicherung si) { return LeistungMassnahmen.Zurueck(k, si); }
     }
 
     /// <summary>
@@ -52,6 +73,12 @@ namespace WartungsToolbox.Helfer
     /// traegt die Sicherung bei hive=HKCU unter parameter.profilSid die SID des eigenen Kontos, und
     /// der Rueckweg (Rueckweg.cs InhaltPruefen, AutostartZurueck ueber ProfilPruefen) stellt nur
     /// zurueck, wenn diese SID das eigene Profil ist. Bei HKLM gibt es keine Bindung.
+    ///
+    /// Winlogon (M4): Shell und Userinit unter HKLM\...\Winlogon werden auf den Standard gesetzt,
+    /// wenn die Kern-Praedikate (Regeln.Leistung.WinlogonShellStandard, WinlogonUserinitStandard)
+    /// sie ablehnen; die Sicherung traegt beide Vorwerte, der Rueckweg (Zurueck) schreibt sie
+    /// zurueck. Ein leerer Vorwert heisst "war nicht gesetzt": die Massnahme fasst ihn nicht an
+    /// (leer gilt als Standard), und der Rueckweg loescht nie einen Winlogon-Wert.
     /// </summary>
     internal static class LeistungMassnahmen
     {
@@ -471,7 +498,14 @@ namespace WartungsToolbox.Helfer
         public static int AufgabeSchalten(Ausfuehrungskontext k, string pfad, bool aktiv)
         {
             string tail;
-            return Werkzeuge.Lauf(k, "schtasks.exe", "/Change /TN \"" + pfad + "\" " + (aktiv ? "/ENABLE" : "/DISABLE"), SchtasksMs, null, false, out tail);
+            return Werkzeuge.Lauf(k, Schtasks(), "/Change /TN \"" + pfad + "\" " + (aktiv ? "/ENABLE" : "/DISABLE"), SchtasksMs, null, false, out tail);
+        }
+
+        // Fester Pfad aus System32: ein blosser Dateiname wuerde zuerst im Programmordner gesucht,
+        // und der ist bei einer ZIP-Installation fuer Benutzer beschreibbar (M4-Grundsatz, wie Pnputil()).
+        static string Schtasks()
+        {
+            return System.IO.Path.Combine(Environment.SystemDirectory, "schtasks.exe");
         }
 
         public static void AufgabeDeaktivieren(PlanSchritt s, Ausfuehrungskontext k)
@@ -740,6 +774,305 @@ namespace WartungsToolbox.Helfer
             string fehler = DienstStartartSetzen(k, name, ziel);
             if (fehler != null) Nachweise.NichtBestanden(k, kennung, fehler + " Die Startart bleibt " + StartartWort(vorher) + ".");
             else Nachweise.Bestanden(k, kennung, "Der Dienst „" + name + "“ hat jetzt die Startart " + StartartWort(ziel) + " (vorher " + StartartWort(vorher) + "); ein laufender Dienst läuft bis zum nächsten Neustart weiter.");
+        }
+
+        // ================================================================ Winlogon (M4)
+
+        public const string KWinlogon = "leistung.winlogon.zuruecksetzen";
+        public const string WinlogonSchluessel = @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon";
+        public const string WinlogonShell = "Shell";
+        public const string WinlogonUserinit = "Userinit";
+        public const string ShellStandard = "explorer.exe";
+        // Ein Winlogon-Wert ist ein Programmpfad mit Argumenten: laenger als 260 Zeichen ist er nie
+        // (MAX_PATH), Steuerzeichen haben darin nichts verloren (Rueckweg, Vertrag M4 3.3).
+        const int WinlogonWertMax = 260;
+        // Wertart in der Sicherung (Schluessel ShellArt, UserinitArt): "" = REG_SZ oder Wert nicht
+        // gesetzt, "expand" = REG_EXPAND_SZ (roh gelesen, roh zurueckgeschrieben, danach wieder
+        // expandiert). Jede andere Art (REG_MULTI_SZ, REG_BINARY, DWORD) traegt ihren Namen und wird
+        // weder zurueckgesetzt noch zurueckgeschrieben: Convert.ToString liefert dafuer nur einen
+        // Platzhalter ("System.String[]"), keine treue Sicherung.
+        public const string WinlogonShellArt = "ShellArt";
+        public const string WinlogonUserinitArt = "UserinitArt";
+        public const string ArtExpand = "expand";
+
+        /// <summary>Standardwert von Userinit auf diesem Rechner: &lt;SystemDirectory&gt;\userinit.exe mit abschliessendem Komma (Vertrag Abschnitt 1).</summary>
+        public static string UserinitStandard()
+        {
+            return System.IO.Path.Combine(Environment.SystemDirectory, "userinit.exe") + ",";
+        }
+
+        /// <summary>
+        /// Beide Werte wie in der Registrierung (ohne Aufloesung von %SystemRoot%, wie der Sammler);
+        /// fehlt ein Wert, steht "" (leer = nicht gesetzt). false = Schluessel nicht lesbar.
+        /// Die Wertart je Wert liefert die Ueberladung mit shellArt/userinitArt (ArtZulaessig).
+        /// </summary>
+        public static bool WinlogonLesen(out string shell, out string userinit)
+        {
+            string shellArt, userinitArt;
+            return WinlogonLesen(out shell, out userinit, out shellArt, out userinitArt);
+        }
+
+        public static bool WinlogonLesen(out string shell, out string userinit, out string shellArt, out string userinitArt)
+        {
+            shell = null;
+            userinit = null;
+            shellArt = null;
+            userinitArt = null;
+            try
+            {
+                using (RegistryKey key = Reg.Hklm(WinlogonSchluessel, false))
+                {
+                    if (key == null) return false;
+                    shell = WinlogonWert(key, WinlogonShell, out shellArt);
+                    userinit = WinlogonWert(key, WinlogonUserinit, out userinitArt);
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("Winlogon nicht lesbar: " + ex.Message);
+                return false;
+            }
+        }
+
+        // Wert und Wertart: REG_SZ → Text, art ""; REG_EXPAND_SZ → roher Text, art "expand"; nicht
+        // gesetzt → "", art ""; jede andere Art → "" mit dem Namen der Art (der Aufrufer lehnt sie ab,
+        // der Text eines Arrays oder einer Zahl wird nie als Wert gefuehrt).
+        static string WinlogonWert(RegistryKey key, string name, out string art)
+        {
+            art = "";
+            object v = key.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+            if (v == null) return "";
+            RegistryValueKind kind = key.GetValueKind(name);
+            if (kind == RegistryValueKind.String) return (v as string) ?? "";
+            if (kind == RegistryValueKind.ExpandString)
+            {
+                art = ArtExpand;
+                return (v as string) ?? "";
+            }
+            art = kind.ToString();
+            return "";
+        }
+
+        /// <summary>true fuer die Wertarten, die der Helfer zuruecksetzt und zurueckschreibt: "" (REG_SZ oder nicht gesetzt) und "expand" (REG_EXPAND_SZ).</summary>
+        public static bool ArtZulaessig(string art)
+        {
+            return art != null && (art.Length == 0 || art == ArtExpand);
+        }
+
+        /// <summary>Lesbarer Name der Registrierungsart zur Sicherungsmarke: "" → REG_SZ, "expand" → REG_EXPAND_SZ, sonst der .NET-Name (etwa MultiString, Binary).</summary>
+        static string ArtWort(string art)
+        {
+            if (string.IsNullOrEmpty(art)) return "REG_SZ";
+            if (art == ArtExpand) return "REG_EXPAND_SZ";
+            return art;
+        }
+
+        /// <summary>Wertart aus einer Sicherung: fehlt der Schluessel, gilt "" (REG_SZ); null = ungueltig (weder "" noch "expand").</summary>
+        static string ArtAusSicherung(Sicherung si, string schluessel)
+        {
+            string art = si.Wert(schluessel) ?? "";
+            return ArtZulaessig(art) ? art : null;
+        }
+
+        /// <summary>Vorwert aus einer Sicherung, der zurueckgeschrieben werden darf: hoechstens 260 Zeichen, keine Steuerzeichen; "" ist zulaessig (war nicht gesetzt) und wird nie geschrieben.</summary>
+        public static bool WinlogonWertZulaessig(string s)
+        {
+            if (s == null || s.Length > WinlogonWertMax) return false;
+            foreach (char c in s)
+                if (char.IsControl(c)) return false;
+            return true;
+        }
+
+        /// <summary>REG_SZ (art "") oder REG_EXPAND_SZ (art "expand") unter HKLM\...\Winlogon setzen (64-Bit-Sicht); nie loeschen, nie eine andere Art.</summary>
+        public static void WinlogonSchreiben(string name, string wert, string art)
+        {
+            if (string.IsNullOrEmpty(wert)) throw new ArgumentException("Ein Winlogon-Wert wird nie geleert oder gelöscht.");
+            if (!ArtZulaessig(art)) throw new ArgumentException("Ein Winlogon-Wert wird nur als REG_SZ oder REG_EXPAND_SZ geschrieben, nicht als " + ArtWort(art) + ".");
+            using (RegistryKey key = Reg.Hklm(WinlogonSchluessel, true))
+            {
+                if (key == null) throw new InvalidOperationException("Der Schlüssel HKLM\\" + WinlogonSchluessel + " ließ sich nicht zum Schreiben öffnen.");
+                key.SetValue(name, wert, art == ArtExpand ? RegistryValueKind.ExpandString : RegistryValueKind.String);
+            }
+        }
+
+        static string WinlogonAnzeige(string wert)
+        {
+            return string.IsNullOrEmpty(wert) ? "nicht gesetzt" : "„" + Massnahmenbau.Kurz(wert) + "“";
+        }
+
+        // Mit Wertart: REG_EXPAND_SZ wird genannt, eine fremde Art (kein Text gefuehrt) statt "nicht gesetzt".
+        static string WinlogonAnzeige(string wert, string art)
+        {
+            if (!ArtZulaessig(art)) return "Wertart " + ArtWort(art);
+            return WinlogonAnzeige(wert) + (art == ArtExpand ? " (REG_EXPAND_SZ)" : "");
+        }
+
+        /// <summary>
+        /// Shell auf explorer.exe, wenn das Kern-Praedikat den Wert ablehnt; Userinit auf
+        /// &lt;SystemDirectory&gt;\userinit.exe, ebenso. Beides in Ordnung → "schon so". Nur REG_SZ und
+        /// REG_EXPAND_SZ werden angefasst (jede andere Wertart → Zeile bad, Problem, nichts geaendert).
+        /// Sicherung mit beiden Vorwerten und Wertarten (leer = nicht gesetzt bzw. REG_SZ), dann
+        /// schreiben (REG_SZ), dann nachlesen; wirkt bei der naechsten Anmeldung, kein Neustart.
+        /// Trockenlauf: lesen, (trocken)-Zeilen, nichts schreiben.
+        /// </summary>
+        public static void WinlogonZuruecksetzen(PlanSchritt s, Ausfuehrungskontext k)
+        {
+            string shell, userinit, shellArt, userinitArt;
+            if (!WinlogonLesen(out shell, out userinit, out shellArt, out userinitArt))
+            {
+                k.Schreibe("   Der Schlüssel HKLM\\" + WinlogonSchluessel + " ist nicht lesbar; Shell und Userinit bleiben unverändert.", "bad");
+                Katalog.Problem(k);
+                return;
+            }
+            // Nur REG_SZ und REG_EXPAND_SZ lassen sich treu sichern und zurueckschreiben; jede andere
+            // Art (REG_MULTI_SZ, REG_BINARY, DWORD) wird nicht angefasst, sonst stuende ein Platzhalter
+            // in der Sicherung und der Rueckweg schriebe ihn zurueck.
+            if (!ArtZulaessig(shellArt) || !ArtZulaessig(userinitArt))
+            {
+                string wert = !ArtZulaessig(shellArt) ? WinlogonShell : WinlogonUserinit;
+                string art = !ArtZulaessig(shellArt) ? shellArt : userinitArt;
+                k.Schreibe("   " + wert + " hat die Wertart " + ArtWort(art) + "; nur REG_SZ und REG_EXPAND_SZ werden zurückgesetzt, Shell und Userinit bleiben unverändert.", "bad");
+                Katalog.Problem(k);
+                return;
+            }
+            bool shellOk = Kern.Regeln.Leistung.WinlogonShellStandard(shell);
+            bool userinitOk = Kern.Regeln.Leistung.WinlogonUserinitStandard(userinit);
+            string userinitStandard = UserinitStandard();
+            if (shellOk && userinitOk)
+            {
+                SchonSo(k, KWinlogon, "Shell (" + WinlogonAnzeige(shell) + ") und Userinit (" + WinlogonAnzeige(userinit) + ") entsprechen dem Standard; es wurde nichts geändert.");
+                return;
+            }
+            k.Schreibe("   HKLM\\...\\Winlogon: Shell = " + WinlogonAnzeige(shell) + (shellOk ? " (Standard)" : " (Standard: „" + ShellStandard + "“)")
+                + ", Userinit = " + WinlogonAnzeige(userinit) + (userinitOk ? " (Standard)" : " (Standard: „" + userinitStandard + "“)") + ".", "dim");
+
+            // Sicherung mit Vorwert und Wertart je Wert (leer = nicht gesetzt bzw. REG_SZ, "expand" = REG_EXPAND_SZ).
+            Sicherungsdatei.Schreiben(k, KWinlogon, s.Parameter, Sicherungsdatei.Werte(
+                WinlogonShell, shell, WinlogonUserinit, userinit, WinlogonShellArt, shellArt, WinlogonUserinitArt, userinitArt));
+
+            string was = !shellOk && !userinitOk ? "Shell und Userinit" : !shellOk ? "Shell" : "Userinit";
+            if (k.Trocken)
+            {
+                if (!shellOk) k.Schreibe("(trocken) Registry HKLM\\" + WinlogonSchluessel + " " + WinlogonShell + " = " + ShellStandard, "dim");
+                if (!userinitOk) k.Schreibe("(trocken) Registry HKLM\\" + WinlogonSchluessel + " " + WinlogonUserinit + " = " + userinitStandard, "dim");
+                Nachweise.Trocken(k, KWinlogon, was + " würde auf den Standard gesetzt; das wirkt bei der nächsten Anmeldung.");
+                return;
+            }
+            if (!shellOk) WinlogonSchreiben(WinlogonShell, ShellStandard, "");
+            if (!userinitOk) WinlogonSchreiben(WinlogonUserinit, userinitStandard, "");
+
+            string shellNach, userinitNach;
+            if (!WinlogonLesen(out shellNach, out userinitNach))
+            {
+                Nachweise.NichtBestanden(k, KWinlogon, "Nach dem Schreiben ist der Schlüssel Winlogon nicht lesbar; ob " + was + " auf dem Standard steht, ist nicht belegt.");
+                return;
+            }
+            if (Kern.Regeln.Leistung.WinlogonShellStandard(shellNach) && Kern.Regeln.Leistung.WinlogonUserinitStandard(userinitNach))
+                Nachweise.Bestanden(k, KWinlogon, "Shell = " + WinlogonAnzeige(shellNach) + " und Userinit = " + WinlogonAnzeige(userinitNach) + " entsprechen dem Standard (vorher Shell " + WinlogonAnzeige(shell) + ", Userinit " + WinlogonAnzeige(userinit) + "); das wirkt bei der nächsten Anmeldung.");
+            else
+                Nachweise.NichtBestanden(k, KWinlogon, "Nach dem Schreiben zeigt Winlogon Shell = " + WinlogonAnzeige(shellNach) + " und Userinit = " + WinlogonAnzeige(userinitNach) + "; mindestens ein Wert entspricht weiter nicht dem Standard.");
+        }
+
+        // ---------------------------------------------------------------- Rueckweg Winlogon
+
+        public static bool ZurueckBekannt(string kennung)
+        {
+            return kennung == KWinlogon;
+        }
+
+        /// <summary>Wertpruefung der Sicherung (Vertrag M4 3.3), Beschreibung an MassnahmenM3.ZurueckLeistungPruefen.</summary>
+        public static string ZurueckPruefen(Sicherung si)
+        {
+            if (si == null) return "Die Sicherung ist leer.";
+            if (si.Kennung != KWinlogon) return "Die Sicherung gehört zu „" + Massnahmenbau.Kurz(si.Kennung) + "“, nicht zu einer Leistungs-Maßnahme mit Rückweg.";
+            string shell = si.Wert(WinlogonShell), userinit = si.Wert(WinlogonUserinit);
+            if (shell == null || userinit == null) return "Die Sicherung nennt nicht beide Vorwerte (Shell und Userinit; leer = Wert war nicht gesetzt).";
+            if (!WinlogonWertZulaessig(shell)) return "Der Vorwert Shell ist länger als 260 Zeichen oder enthält Steuerzeichen; er wird nicht zurückgeschrieben.";
+            if (!WinlogonWertZulaessig(userinit)) return "Der Vorwert Userinit ist länger als 260 Zeichen oder enthält Steuerzeichen; er wird nicht zurückgeschrieben.";
+            // Wertart: fehlt der Schluessel, gilt REG_SZ; alles ausser "" und "expand" wird nicht zurueckgeschrieben.
+            if (ArtAusSicherung(si, WinlogonShellArt) == null) return "Die Sicherung nennt für Shell die Wertart „" + Massnahmenbau.Kurz(si.Wert(WinlogonShellArt)) + "“; nur leer (REG_SZ) und „expand“ (REG_EXPAND_SZ) werden zurückgeschrieben.";
+            if (ArtAusSicherung(si, WinlogonUserinitArt) == null) return "Die Sicherung nennt für Userinit die Wertart „" + Massnahmenbau.Kurz(si.Wert(WinlogonUserinitArt)) + "“; nur leer (REG_SZ) und „expand“ (REG_EXPAND_SZ) werden zurückgeschrieben.";
+            return null;
+        }
+
+        /// <summary>
+        /// Stellt Shell und Userinit auf die Vorwerte zurueck (Beschreibung an MassnahmenM3.ZurueckLeistung).
+        /// Erst ZurueckPruefen (ein Grund → nicht bestanden), dann je Wert: leer = war nicht gesetzt und
+        /// wurde nicht angefasst (bleibt); gleich = nichts schreiben; sonst schreiben und nachlesen.
+        /// </summary>
+        public static bool Zurueck(Ausfuehrungskontext k, Sicherung si)
+        {
+            if (si == null) throw new ArgumentNullException("si");
+            if (!ZurueckBekannt(si.Kennung)) throw new ArgumentException("Die Sicherung gehört zu „" + si.Kennung + "“, nicht zu einer Leistungs-Maßnahme mit Rückweg.");
+            const string kennung = RueckwegMassnahmen.Kennung;
+            string grund = ZurueckPruefen(si);
+            if (grund != null)
+            {
+                Nachweise.NichtBestanden(k, kennung, grund + " Nichts zurückgestellt.");
+                return false;
+            }
+            string shellAlt = si.Wert(WinlogonShell), userinitAlt = si.Wert(WinlogonUserinit);
+            // Wertart aus der Sicherung (ZurueckPruefen hat sie schon auf "" oder "expand" geprueft).
+            string shellArtAlt = ArtAusSicherung(si, WinlogonShellArt) ?? "";
+            string userinitArtAlt = ArtAusSicherung(si, WinlogonUserinitArt) ?? "";
+            string shellJetzt, userinitJetzt, shellArtJetzt, userinitArtJetzt;
+            if (!WinlogonLesen(out shellJetzt, out userinitJetzt, out shellArtJetzt, out userinitArtJetzt))
+            {
+                Nachweise.NichtBestanden(k, kennung, "Der Schlüssel HKLM\\" + WinlogonSchluessel + " ist nicht lesbar; nichts zurückgestellt.");
+                return false;
+            }
+            bool shellTun = WinlogonWertZurueck(k, WinlogonShell, shellAlt, shellArtAlt, shellJetzt, shellArtJetzt);
+            bool userinitTun = WinlogonWertZurueck(k, WinlogonUserinit, userinitAlt, userinitArtAlt, userinitJetzt, userinitArtJetzt);
+            if (!shellTun && !userinitTun)
+            {
+                SchonSo(k, kennung, "Shell (" + WinlogonAnzeige(shellAlt) + ") und Userinit (" + WinlogonAnzeige(userinitAlt) + ") stehen schon wieder wie vor der Maßnahme; es wurde nichts geändert.");
+                return true;
+            }
+            string was = shellTun && userinitTun ? "Shell und Userinit" : shellTun ? "Shell" : "Userinit";
+            if (k.Trocken)
+            {
+                Nachweise.Trocken(k, kennung, was + " würde auf den Vorwert gestellt (Shell " + WinlogonAnzeige(shellAlt) + ", Userinit " + WinlogonAnzeige(userinitAlt) + ").");
+                return true;
+            }
+            if (shellTun) WinlogonSchreiben(WinlogonShell, shellAlt, shellArtAlt);
+            if (userinitTun) WinlogonSchreiben(WinlogonUserinit, userinitAlt, userinitArtAlt);
+            string shellNach, userinitNach, shellArtNach, userinitArtNach;
+            if (!WinlogonLesen(out shellNach, out userinitNach, out shellArtNach, out userinitArtNach))
+            {
+                Nachweise.NichtBestanden(k, kennung, "Nach dem Zurückschreiben ist der Schlüssel Winlogon nicht lesbar; ob " + was + " wieder auf dem Vorwert steht, ist nicht belegt.");
+                return false;
+            }
+            // Treu heisst: Text und Wertart stimmen mit der Sicherung ueberein.
+            bool ok = (!shellTun || (string.Equals(shellNach, shellAlt, StringComparison.Ordinal) && shellArtNach == shellArtAlt))
+                   && (!userinitTun || (string.Equals(userinitNach, userinitAlt, StringComparison.Ordinal) && userinitArtNach == userinitArtAlt));
+            if (ok)
+            {
+                Nachweise.Bestanden(k, kennung, was + " steht wieder wie vor der Maßnahme (Shell " + WinlogonAnzeige(shellNach) + ", Userinit " + WinlogonAnzeige(userinitNach) + "); das wirkt bei der nächsten Anmeldung.");
+                return true;
+            }
+            Nachweise.NichtBestanden(k, kennung, "Nach dem Zurückschreiben zeigt Winlogon Shell = " + WinlogonAnzeige(shellNach) + " und Userinit = " + WinlogonAnzeige(userinitNach) + "; der Vorwert steht nicht.");
+            return false;
+        }
+
+        // Ein Vorwert "" heisst: der Wert war vor der Massnahme nicht gesetzt, und die Massnahme hat
+        // ihn nicht angefasst (leer gilt als Standard); er bleibt, wie er ist, nie wird ein
+        // Winlogon-Wert geloescht. Gleich heisst: Text und Wertart stimmen. true = schreiben noetig,
+        // die Zeile dazu steht schon.
+        static bool WinlogonWertZurueck(Ausfuehrungskontext k, string name, string alt, string altArt, string jetzt, string jetztArt)
+        {
+            if (alt.Length == 0)
+            {
+                k.Schreibe("   " + name + " war vor der Maßnahme nicht gesetzt und wurde nicht angefasst; er bleibt " + WinlogonAnzeige(jetzt, jetztArt) + ".", "dim");
+                return false;
+            }
+            if (string.Equals(alt, jetzt, StringComparison.Ordinal) && altArt == jetztArt)
+            {
+                k.Schreibe("   " + name + " steht schon auf dem Vorwert " + WinlogonAnzeige(alt, altArt) + ".", "dim");
+                return false;
+            }
+            k.Schreibe((k.Trocken ? "(trocken) " : "›  ") + "Registry HKLM\\" + WinlogonSchluessel + " " + name + " = " + WinlogonAnzeige(alt, altArt) + " (jetzt " + WinlogonAnzeige(jetzt, jetztArt) + ")", "dim");
+            return true;
         }
     }
 }

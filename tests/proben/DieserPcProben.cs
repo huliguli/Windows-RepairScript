@@ -101,6 +101,18 @@ namespace WartungsToolbox.Proben
             // Microsoft-Konto ohne lokale Kennwortpflicht ist kein Befund.
             h.Ist("Grundmenge: ein Konto mit Microsoft-Konto-Bindung", s.Sicherheit.Konten.Any(k => k.MicrosoftKonto == true));
             h.Ist("kein Befund 'Konto ohne Kennwort'", Harness.Einer(erg, "sicherheit.konto.ohnekennwort") == null);
+
+            // M4 (docs/M4-ENTWURF.md, Abschnitt 2.4): die Praedikate, die Regel, Nachweis und Helfer teilen,
+            // gegen die echten Werte dieses Rechners. Alle vier Sonden antworten, kein Proxy: kein
+            // gestoerter Stack. Winlogon traegt den Standard: kein Winlogon-Befund. Das verborgene
+            // HP-Update ist mit einem Reset-Code (0x80246007) gescheitert, zaehlt aber verborgen nicht.
+            h.Ist("Grundmenge: alle vier Sonden wahr, kein Proxy", s.Netz.Sonden.Gateway == true && s.Netz.Sonden.Dns == true && s.Netz.Sonden.Ncsi == true && s.Netz.Sonden.Tcp443 == true && s.Netz.Proxy.WinInetAktiv != true && s.Netz.Proxy.WinHttpTyp != 3 && string.IsNullOrEmpty(s.Netz.Proxy.PacUrl));
+            h.Ist("kein netz.stack.gestoert, StackGestoert ist falsch, netz.verbindung ok", Harness.Einer(erg, "netz.stack.gestoert") == null && !WartungsToolbox.Kern.Regeln.Netz.StackGestoert(s.Netz.Sonden, s.Netz.Proxy) && Harness.Einer(erg, "netz.verbindung") != null);
+            h.Ist("Grundmenge: Shell explorer.exe, Userinit ...\\system32\\userinit.exe,", s.Autostart.Shell != null && s.Autostart.Userinit != null && s.Autostart.Userinit.EndsWith("\\system32\\userinit.exe,", StringComparison.OrdinalIgnoreCase));
+            h.Ist("WinlogonShellStandard und WinlogonUserinitStandard sind fuer die echten Werte wahr, kein Winlogon-Befund", WartungsToolbox.Kern.Regeln.Leistung.WinlogonShellStandard(s.Autostart.Shell) && WartungsToolbox.Kern.Regeln.Leistung.WinlogonUserinitStandard(s.Autostart.Userinit) && Harness.Einer(erg, "leistung.winlogon") == null);
+            h.Ist("Grundmenge: das verborgene HP-Update ist mit einem Reset-Code im System-Protokoll gescheitert", s.WindowsUpdate.FehlschlaegeLog.Any(f => string.Equals(Updates.Norm(f.UpdateId), hp, StringComparison.Ordinal) && Fehlercodes.ResetHilft(f.FehlerCode)));
+            h.Ist("verborgen zaehlt nicht: kein update.fehlschlag fuer das HP-Update, kein update.fehlschlaege.mehrere", Harness.Einer(erg, "update.fehlschlag." + hp) == null && Harness.Einer(erg, "update.fehlschlaege.mehrere") == null);
+            h.Ist("hosts-Datei dieses Rechners ohne Umleitung: keine Zeile erfuellt HostsZeileUmleitung, kein netz.hosts.umleitung", !s.Netz.Hosts.Any(x => WartungsToolbox.Kern.Regeln.Netz.HostsZeileUmleitung(x.Ip, x.Host)) && Harness.Einer(erg, "netz.hosts.umleitung") == null);
         }
 
         static void OhneAdmin(Harness h, List<Befund> alle)

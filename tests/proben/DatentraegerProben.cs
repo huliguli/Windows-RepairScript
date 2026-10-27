@@ -44,6 +44,8 @@ namespace WartungsToolbox.Proben
             SystemschutzLeer(h);
             SystemschutzAus(h);
             Schattenspeicher(h);
+            SystemschutzZeitpunkte(h);
+            SchattenVerlust(h);
             VolumeStatus(h);
             TrimUndTemperatur(h);
             TrimGeraet(h);
@@ -586,6 +588,101 @@ namespace WartungsToolbox.Proben
             var erg3 = Pruefen(h, s);
             var zeilen3 = Harness.Einer(erg3, "systemschutz.punkte").Detail.Concat(Harness.Einer(erg3, "speicherplatz.C").Detail).Where(d => d.Contains("Schattenkopien")).ToList();
             h.Ist("Obergrenze unbekannt: weder \"höchstens\" noch \"ohne Obergrenze\"", zeilen3.Count == 2 && zeilen3.All(d => !d.Contains("höchstens") && !d.Contains("ohne Obergrenze") && d.Contains("16,5 GB")), string.Join(" | ", zeilen3));
+        }
+
+        // ---------------------------------------------------------------- Zeitpunktwiederherstellung
+
+        /// <summary>Zeitstempel "tage" vor der Aufzeichnungszeit des Bilds (die Regeln rechnen nie mit der Uhr).</summary>
+        static string VorTagen(Systembild s, double tage)
+        {
+            return Zeit.Utc(Zeit.Lesen(s.AufgezeichnetUtc).Value.AddDays(-tage));
+        }
+
+        /// <summary>
+        /// Gemessen im PC-Audit vom 30.09.2026: SystemRestore meldete 0 Punkte, auf C: lagen drei
+        /// Kopien der Zeitpunktwiederherstellung im 24-h-Takt, und v8.2 zeigte "Kein Wiederherstellungspunkt".
+        /// Wirksamkeit 2026-10-01: in ZeitpunktAnzahl "ZeitpunktAktiv == true" entfernt -> Gegenprobe
+        /// "PITRTask fehlt -> warn" rot; zurueck. "Zeitpunkte(ok, z)" im Zweig mit klassischen Punkten
+        /// entfernt -> Probe "Zeitpunktwiederherstellung: 2 Punkte" rot; zurueck.
+        /// </summary>
+        static void SystemschutzZeitpunkte(Harness h)
+        {
+            h.Gruppe("Datentraeger: Punkte der Zeitpunktwiederherstellung zaehlen als Rueckweg");
+            var s = h.Bild("gepflanzt-datentraeger-systemschutz-leer.json"); if (s == null) return;
+            var z = s.Systemschutz;
+            h.Ist("Grundmenge: Punkte leer, Zeitpunkte nicht gelesen (aeltere Aufzeichnung ohne Feld)", z.Punkte != null && z.Punkte.Count == 0 && z.ZeitpunkteUtc == null && z.ZeitpunktAktiv == null);
+            var b0 = Genau(Pruefen(h, s), "systemschutz.punkte");
+            h.Ist("Grundmenge: ohne das Feld bleibt es bei warn mit Massnahme", b0 != null && b0.Zustand == Zustand.Warn && b0.Massnahmen.Contains("systemschutz.punkt.anlegen"));
+
+            z.ZeitpunkteUtc = new List<string> { VorTagen(s, 2.5), VorTagen(s, 0.4), VorTagen(s, 1.5) };
+            z.ZeitpunktAktiv = true;
+            var b = Genau(Pruefen(h, s), "systemschutz.punkte");
+            h.Ist("3 Zeitpunkte und PITRTask aktiv -> systemschutz.punkte ok, ohne Massnahme", b != null && b.Zustand == Zustand.Ok && b.Massnahmen.Count == 0, b == null ? null : b.Zustand);
+            h.Ist("Satz nennt 3 Punkte der Zeitpunktwiederherstellung, den juengsten unter einem Tag", b != null && b.Satz.Contains("3 Punkte der Zeitpunktwiederherstellung") && b.Satz.Contains("unter einen Tag"), b == null ? null : b.Satz);
+            h.Ist("Detail nennt die 72 Stunden und die Zeitpunkt-Zeile", b != null && b.Detail.Any(d => d.Contains("72 Stunden")) && b.Detail.Any(d => d.StartsWith("Zeitpunktwiederherstellung: 3 Punkte")), b == null ? null : string.Join(" | ", b.Detail));
+
+            // Gegenprobe: ohne belegte Aufgabe sind die Kopien kein Rueckweg (fremde Sicherungssoftware legt dieselbe Art an).
+            z.ZeitpunktAktiv = false;
+            var b2 = Genau(Pruefen(h, s), "systemschutz.punkte");
+            h.Ist("Gegenprobe: PITRTask fehlt -> warn mit Massnahme punkt.anlegen", b2 != null && b2.Zustand == Zustand.Warn && b2.Massnahmen.Contains("systemschutz.punkt.anlegen"));
+            h.Ist("Gegenprobe: Detail nennt 3 Schattenkopien ohne Verfasser und die fehlende Aufgabe", b2 != null && b2.Detail.Any(d => d.StartsWith("3 Schattenkopien ohne Verfasser") && d.Contains("fehlt oder ist ausgeschaltet")), b2 == null ? null : string.Join(" | ", b2.Detail));
+            z.ZeitpunktAktiv = null;
+            var b3 = Genau(Pruefen(h, s), "systemschutz.punkte");
+            h.Ist("Gegenprobe: PITRTask nicht lesbar -> warn, Detail sagt 'war nicht lesbar'", b3 != null && b3.Zustand == Zustand.Warn && b3.Detail.Any(d => d.Contains("war nicht lesbar")));
+            z.ZeitpunktAktiv = true; z.ZeitpunkteUtc = new List<string>();
+            var b4 = Genau(Pruefen(h, s), "systemschutz.punkte");
+            h.Ist("Gegenprobe: PITRTask aktiv, 0 Kopien -> warn, keine Zeitpunkt-Zeile", b4 != null && b4.Zustand == Zustand.Warn && !b4.Detail.Any(d => d.Contains("Zeitpunktwiederherstellung:") || d.Contains("ohne Verfasser")));
+
+            // Mit klassischen Punkten bleibt es beim ok-Befund, die Zeitpunkte stehen im Detail.
+            var g = h.Bild("gepflanzt-datentraeger-gesund.json"); if (g == null) return;
+            g.Systemschutz.ZeitpunkteUtc = new List<string> { VorTagen(g, 1), VorTagen(g, 2) };
+            g.Systemschutz.ZeitpunktAktiv = true;
+            var bg = Genau(Pruefen(h, g), "systemschutz.punkte");
+            h.Ist("Mit klassischen Punkten: ok, Detail 'Zeitpunktwiederherstellung: 2 Punkte'", bg != null && bg.Zustand == Zustand.Ok && bg.Detail.Any(d => d.StartsWith("Zeitpunktwiederherstellung: 2 Punkte")), bg == null ? null : string.Join(" | ", bg.Detail));
+        }
+
+        static Ereignis Volsnap(Systembild s, int id, double tageAlt, string laufwerk)
+        {
+            var x = new Ereignis { Log = "System", Anbieter = "Volsnap", Id = id, Level = id == 33 ? 3 : 2, ZeitUtc = VorTagen(s, tageAlt) };
+            if (laufwerk != null) x.Felder["VolumeName"] = laufwerk;
+            return x;
+        }
+
+        /// <summary>
+        /// Gemessen im PC-Audit vom 30.09.2026: Volsnap 33 kam 45-mal in 30 Tagen, Volsnap 25 am 05.09.
+        /// loeschte alle Schattenkopien von C:. v8.2 las Volsnap gar nicht.
+        /// Wirksamkeit 2026-10-01: in PruefeSchattenVerlust die IDs auf (25) verkuerzt -> "2-mal" rot;
+        /// Fensterpruefung in Verdraengt entfernt -> "4-mal (der 45 Tage alte zaehlt nicht)" rot; beides zurueck.
+        /// </summary>
+        static void SchattenVerlust(Harness h)
+        {
+            h.Gruppe("Datentraeger: Volsnap 25/36 (alle Punkte verworfen) und 33 (aeltester verdraengt)");
+            var s = h.Bild("gepflanzt-datentraeger-gesund.json"); if (s == null) return;
+            var erg0 = Pruefen(h, s);
+            h.Ist("Grundmenge: keine Volsnap-Ereignisse, ok-Befund systemschutz.punkte ohne Volsnap-Zeile", !s.Ereignisse.Von("Volsnap").Any() && Genau(erg0, "systemschutz.punkte") != null && !Genau(erg0, "systemschutz.punkte").Detail.Any(d => d.Contains("Volsnap")));
+            h.Ist("Grundmenge: ohne Volsnap kein systemschutz.verworfen", Genau(erg0, "systemschutz.verworfen") == null);
+
+            s.Ereignisse.Eintraege.Add(Volsnap(s, 25, 25.2, "C:"));
+            s.Ereignisse.Eintraege.Add(Volsnap(s, 36, 27, "C:"));
+            for (int i = 0; i < 4; i++) s.Ereignisse.Eintraege.Add(Volsnap(s, 33, 1 + i, "C:"));
+            s.Ereignisse.Eintraege.Add(Volsnap(s, 33, 45, "C:"));   // ausserhalb der 30 Tage
+            var erg = Pruefen(h, s);
+            var v = Genau(erg, "systemschutz.verworfen");
+            h.Ist("25 und 36 in 30 Tagen -> warn systemschutz.verworfen", v != null && v.Zustand == Zustand.Warn);
+            h.Ist("Satz: 2-mal, von C:, zuletzt vor 25 Tagen", v != null && v.Satz.Contains("2-mal") && v.Satz.Contains("von C:") && v.Satz.Contains("vor 25 Tagen"), v == null ? null : v.Satz);
+            h.Ist("Detail nennt beide IDs mit Grund und den belegten Schattenspeicher", v != null && v.Detail.Any(d => d.Contains("Volsnap 25 (Speicher wuchs nicht rechtzeitig)")) && v.Detail.Any(d => d.Contains("Volsnap 36 (Obergrenze erreicht)")) && v.Detail.Any(d => d.Contains("16,5 GB von höchstens 18,6 GB")), v == null ? null : string.Join(" | ", v.Detail));
+            var p = Genau(erg, "systemschutz.punkte");
+            h.Ist("33 im Fenster: Detail am Punkte-Befund nennt 4-mal (der 45 Tage alte zaehlt nicht)", p != null && p.Detail.Any(d => d.Contains("4-mal") && d.Contains("Volsnap 33")), p == null ? null : string.Join(" | ", p.Detail));
+
+            // Gegenprobe: 25/36 aelter als 30 Tage -> kein Befund; 33 allein bleibt Detailzeile.
+            foreach (var x in s.Ereignisse.Von("Volsnap", 25, 36)) x.ZeitUtc = VorTagen(s, 31);
+            var erg2 = Pruefen(h, s);
+            h.Ist("Gegenprobe: 25/36 vor 31 Tagen -> kein systemschutz.verworfen", Genau(erg2, "systemschutz.verworfen") == null);
+            h.Ist("Gegenprobe: die Detailzeile zu 33 bleibt", Genau(erg2, "systemschutz.punkte") != null && Genau(erg2, "systemschutz.punkte").Detail.Any(d => d.Contains("Volsnap 33")));
+            // Ohne VolumeName: Satz ohne Laufwerk, kein "von ?".
+            s.Ereignisse.Eintraege.Add(Volsnap(s, 25, 2, null));
+            var v3 = Genau(Pruefen(h, s), "systemschutz.verworfen");
+            h.Ist("ohne VolumeName: einmal, ohne ' von ' und ohne Fragezeichen", v3 != null && v3.Satz.Contains("einmal") && !v3.Satz.Contains(" von ") && !v3.Satz.Contains("?"), v3 == null ? null : v3.Satz);
         }
 
         // ---------------------------------------------------------------- Volume-Status

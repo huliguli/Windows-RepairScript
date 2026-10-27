@@ -67,6 +67,7 @@ namespace WartungsToolbox.Proben
             Code14(h);
             Harmlos(h);
             UnbekannterCode(h);
+            CodeNichtGelesen(h);
             Englisch(h);
             WindowsSupport(h);
             SupportEditionen(h);
@@ -221,6 +222,21 @@ namespace WartungsToolbox.Proben
             var b2 = Harness.Einer(Laufen(h, s, e2), "geraet.problem." + Sauber);
             h.Ist("Gegenprobe: zulaessige Id => Massnahme geraet.aktivieren mit instanzId", b2 != null && b2.Massnahmen.Contains(WartungsToolbox.Kern.Regeln.Hardware.MAktivieren) && b2.Parameter.ContainsKey(WartungsToolbox.Kern.Regeln.Hardware.ParamInstanzId) && b2.Parameter[WartungsToolbox.Kern.Regeln.Hardware.ParamInstanzId] == Sauber, b2 == null ? "null" : string.Join(",", b2.Massnahmen));
             h.Ist("Gegenprobe: Rat nennt die Massnahme", b2 != null && b2.Rat.Contains("Maßnahme"), b2 == null ? null : b2.Rat);
+
+            // M4: dieselbe Grenze fuer geraet.treiber.neu (docs/M4-ENTWURF.md, Abschnitt 2.4): ein Treiber-Code
+            // (10) mit unzulaessiger Instanz-Id bekommt nur den Rat geraet.treiber.zurueck, keinen Parameter.
+            g.InstanzId = Fragwuerdig;
+            g.ProblemCode = 10;
+            var b3 = Harness.Einer(Laufen(h, s, new Entscheidungen()), "geraet.problem." + Fragwuerdig);
+            h.Ist("Code 10 mit unzulaessiger Id: bad, nur der Rat geraet.treiber.zurueck, kein geraet.treiber.neu, kein Parameter",
+                b3 != null && b3.Zustand == Zustand.Bad && b3.Massnahmen.SequenceEqual(new[] { WartungsToolbox.Kern.Regeln.Hardware.MTreiberZurueck }) && !b3.Parameter.ContainsKey(WartungsToolbox.Kern.Regeln.Hardware.ParamInstanzId), b3 == null ? "null" : string.Join(",", b3.Massnahmen));
+            h.Ist("Code 10 mit unzulaessiger Id: Rat nennt den Geraete-Manager von Hand und die Kennung als Grund", b3 != null && b3.Rat.Contains("Geräte-Manager") && b3.Rat.Contains("von Hand") && b3.Rat.Contains("Kennung"), b3 == null ? null : b3.Rat);
+            g.InstanzId = Sauber;
+            var b4 = Harness.Einer(Laufen(h, s, new Entscheidungen()), "geraet.problem." + Sauber);
+            h.Ist("Gegenprobe Code 10 mit zulaessiger Id: geraet.treiber.neu mit instanzId, dann geraet.treiber.zurueck",
+                b4 != null && b4.Massnahmen.SequenceEqual(new[] { WartungsToolbox.Kern.Regeln.Hardware.MTreiberNeu, WartungsToolbox.Kern.Regeln.Hardware.MTreiberZurueck }) && b4.Parameter[WartungsToolbox.Kern.Regeln.Hardware.ParamInstanzId] == Sauber, b4 == null ? "null" : string.Join(",", b4.Massnahmen));
+            g.InstanzId = IGpu;
+            g.ProblemCode = 22;
         }
 
         static string Kurz(string s)
@@ -267,8 +283,13 @@ namespace WartungsToolbox.Proben
             if (b10 != null)
             {
                 h.Ist("Code 10 ist bad", b10.Zustand == Zustand.Bad, b10.Zustand);
-                h.Ist("Code 10: Massnahme geraet.treiber.neu", b10.Massnahmen.Contains("geraet.treiber.neu"));
+                // M4 (docs/M4-ENTWURF.md, Abschnitt 2.4): geraet.treiber.neu ist ausfuehrbar (Stufe 3, Parameter
+                // instanzId), geraet.treiber.zurueck der Rat daneben, in dieser Reihenfolge.
+                h.Ist("Code 10: Massnahme geraet.treiber.neu, danach der Rat geraet.treiber.zurueck", b10.Massnahmen.SequenceEqual(new[] { WartungsToolbox.Kern.Regeln.Hardware.MTreiberNeu, WartungsToolbox.Kern.Regeln.Hardware.MTreiberZurueck }), string.Join(",", b10.Massnahmen));
+                h.Ist("Konstanten tragen die Katalog-Kennungen", WartungsToolbox.Kern.Regeln.Hardware.MTreiberNeu == "geraet.treiber.neu" && WartungsToolbox.Kern.Regeln.Hardware.MTreiberZurueck == "geraet.treiber.zurueck");
+                h.Ist("Code 10: Parameter instanzId = Instanz des Geraets", b10.Parameter.ContainsKey(WartungsToolbox.Kern.Regeln.Hardware.ParamInstanzId) && b10.Parameter[WartungsToolbox.Kern.Regeln.Hardware.ParamInstanzId] == NetzGeraet, string.Join(",", b10.Parameter.Select(kv => kv.Key + "=" + kv.Value)));
                 h.Ist("Code 10: Rat nennt Treiber und Anbieter", b10.Rat != null && b10.Rat.Contains("Treiber") && b10.Rat.Contains("Intel"), b10.Rat);
+                h.Ist("Code 10: Rat nennt die Maßnahme, den Export und den vorherigen Treiber", b10.Rat.Contains("Maßnahme an dieser Karte") && b10.Rat.Contains("exportiert") && b10.Rat.Contains("vorherigen Treiber"), b10.Rat);
                 h.Ist("Code 10: keine Frage", b10.Frage == null);
             }
             h.Ist("Bereich bad", hw.Zustand == Zustand.Bad, hw.Zustand);
@@ -357,6 +378,93 @@ namespace WartungsToolbox.Proben
             }
             h.Ist("kein bad, kein warn", !Harness.Befunde(erg, Bereich.Hardware).Any(x => x.Zustand == Zustand.Bad || x.Zustand == Zustand.Warn));
             h.Ist("Bereich ok (unknown zaehlt nicht)", Harness.Bereich(erg, Bereich.Hardware).Zustand == Zustand.Ok);
+        }
+
+        // ---------------------------------------------------------------- (f2) Code nicht gelesen
+        // docs/M4-ENTWURF.md, Abschnitt 10.2: ProblemCode ist int?, null heisst "nicht gelesen" (WMI ohne
+        // ConfigManagerErrorCode, kein DEVPKEY). Bis M4 schrieb der Sammler dafuer 0, und die Regel
+        // zaehlte das Geraet als gesund; die Nachweise geraet.aktivieren/geraet.treiber.neu haetten
+        // aus der Luecke ein Ja gemacht. Jetzt: unknown ohne Kennung, kein geraete.ok ueber ein Geraet
+        // ohne Messung, und die Fixtures mit problemCode 0 lesen sich unveraendert (Gegenprobe).
+
+        static void CodeNichtGelesen(Harness h)
+        {
+            h.Gruppe("Hardware (f2): Problemcode nicht gelesen (null) -> unknown ohne Kennung, kein geraete.ok");
+            var s = h.Bild("gepflanzt-hardware-harmlos.json");
+            if (s == null) return;
+            // Den Stick mit Code 47 entfernen, damit das Bild vorher ein glattes "Alle N laufen" liefert.
+            s.Geraete.RemoveAll(g => g.ProblemCode == 47);
+            var gesund = s.Geraete.Where(g => g.ProblemCode == 0 && g.Present).ToList();
+            h.Ist("Grundmenge: mindestens 3 gesunde praesente Geraete, keines mit null (Fixture traegt problemCode 0)", gesund.Count >= 3 && s.Geraete.All(g => g.ProblemCode.HasValue), gesund.Count.ToString());
+            var vorher = Laufen(h, s);
+            h.Ist("vorher: geraete.ok vorhanden, kein geraet.problem", Harness.Einer(vorher, "geraete.ok") != null && !Harness.AlleMit(vorher, "geraet.problem.").Any());
+            h.Ist("vorher: Fehlend nennt keinen Problemcode", !Harness.Bereich(vorher, Bereich.Hardware).Fehlend.Any(f => f.StartsWith("Problemcode")), string.Join(" | ", Harness.Bereich(vorher, Bereich.Hardware).Fehlend));
+
+            var g0 = gesund[0];
+            g0.ProblemCode = null;
+            var erg = Laufen(h, s);
+            // Die fehlende Messung steht neben dem unknown-Befund auch in Fehlend: so nennt die
+            // Bereichszeile den Grund ("Nicht geprueft: ..."), statt den Bereich mit einer stummen
+            // Luecke als unauffaellig zu fuehren. Das Urteil des Bereichs aendert das nicht.
+            var hw0 = Harness.Bereich(erg, Bereich.Hardware);
+            h.Ist("Fehlend nennt Problemcode von 1 Gerät", hw0.Fehlend.Contains("Problemcode von 1 Gerät"), string.Join(" | ", hw0.Fehlend));
+            h.Ist("Fehlend nennt den Problemcode genau einmal", hw0.Fehlend.Count(f => f.StartsWith("Problemcode")) == 1, string.Join(" | ", hw0.Fehlend));
+            h.Ist("DatenVorhanden bleibt true (die Geraeteliste selbst kam)", hw0.DatenVorhanden);
+            var befunde = Harness.AlleMit(erg, "geraet.problem." + g0.InstanzId).ToList();
+            h.Ist("genau ein Befund fuer das Geraet ohne Code", befunde.Count == 1, befunde.Count.ToString());
+            var b = befunde.FirstOrDefault();
+            if (b != null)
+            {
+                h.Ist("Zustand unknown, nie ok, nie bad", b.Zustand == Zustand.Unknown, b.Zustand);
+                h.Ist("Titel „Problemcode nicht lesbar“", b.Titel == "Problemcode nicht lesbar", b.Titel);
+                h.Ist("Satz nennt das Geraet und sagt, dass kein Code kam", b.Satz.Contains("„" + g0.Name + "“") && b.Satz.Contains("keinen Problemcode"), b.Satz);
+                h.Ist("keine Kennung, kein Parameter instanzId, keine Frage", b.Massnahmen.Count == 0 && !b.Parameter.ContainsKey(WartungsToolbox.Kern.Regeln.Hardware.ParamInstanzId) && b.Frage == null);
+                h.Ist("Messwert „nicht gelesen“ mit Einheit Problemcode und Schwelle 0", b.Messwert != null && b.Messwert.Wert == "nicht gelesen" && b.Messwert.Einheit == "Problemcode" && b.Messwert.Schwelle == "0", b.Messwert == null ? null : b.Messwert.Wert);
+                h.Ist("Quelle Win32_PnPEntity.ConfigManagerErrorCode (kein DEVPKEY im Bild)", b.Quelle == "Win32_PnPEntity.ConfigManagerErrorCode", b.Quelle);
+                h.Ist("Detail: Problemcode nicht gelesen, nie eine Zahl erfunden", b.Detail.Any(d => d.StartsWith("Problemcode: nicht gelesen")) && !b.Detail.Any(d => d.StartsWith("Problemcode 0")), string.Join(" | ", b.Detail));
+                h.Ist("Detail: Instanz steht drin", b.Detail.Any(d => d == "Instanz: " + g0.InstanzId));
+            }
+            h.Ist("kein geraete.ok mehr (ein Geraet ohne Messung ist kein Beleg fuer „alle laufen“)", Harness.Einer(erg, "geraete.ok") == null);
+            h.Ist("kein bad, kein warn im Bereich", !Harness.Befunde(erg, Bereich.Hardware).Any(x => x.Zustand == Zustand.Bad || x.Zustand == Zustand.Warn));
+            h.Ist("Bereich nicht bad und nicht warn (unknown zaehlt nicht)", Harness.Bereich(erg, Bereich.Hardware).Zustand != Zustand.Bad && Harness.Bereich(erg, Bereich.Hardware).Zustand != Zustand.Warn);
+            h.Ist("die anderen gesunden Geraete bleiben ohne Befund", gesund.Skip(1).All(g => !Harness.AlleMit(erg, "geraet.problem." + g.InstanzId).Any()));
+
+            // Nicht praesent und ohne Code: wie jedes nicht praesente Geraet uebergangen.
+            g0.Present = false;
+            var ergNp = Laufen(h, s);
+            h.Ist("nicht praesent + null -> kein Befund, geraete.ok wieder da", !Harness.AlleMit(ergNp, "geraet.problem." + g0.InstanzId).Any() && Harness.Einer(ergNp, "geraete.ok") != null);
+            h.Ist("nicht praesent + null -> Fehlend nennt keinen Problemcode", !Harness.Bereich(ergNp, Bereich.Hardware).Fehlend.Any(f => f.StartsWith("Problemcode")), string.Join(" | ", Harness.Bereich(ergNp, Bereich.Hardware).Fehlend));
+            g0.Present = true;
+
+            // Gegenprobe: eine gemessene 0 ist gesund, der Sammelsatz kommt zurueck.
+            g0.ProblemCode = 0;
+            var ergOk = Laufen(h, s);
+            var ok = Harness.Einer(ergOk, "geraete.ok");
+            h.Ist("Gegenprobe: Code 0 -> kein geraet.problem, geraete.ok mit „Alle N angeschlossenen Geräte laufen ohne Fehlercode“",
+                  !Harness.AlleMit(ergOk, "geraet.problem.").Any() && ok != null && ok.Satz == "Alle " + s.Geraete.Count(x => x.Present) + " angeschlossenen Geräte laufen ohne Fehlercode.", ok == null ? null : ok.Satz);
+            h.Ist("Gegenprobe: Code 0 -> Fehlend nennt keinen Problemcode", !Harness.Bereich(ergOk, Bereich.Hardware).Fehlend.Any(f => f.StartsWith("Problemcode")), string.Join(" | ", Harness.Bereich(ergOk, Bereich.Hardware).Fehlend));
+
+            // Zwei Geraete ohne Code: ein Fehlend-Eintrag in der Mehrzahl, je Geraet ein unknown-Befund.
+            g0.ProblemCode = null;
+            gesund[2].ProblemCode = null;
+            var ergZwei = Laufen(h, s);
+            var hwZwei = Harness.Bereich(ergZwei, Bereich.Hardware);
+            h.Ist("zwei ohne Code: Fehlend nennt „Problemcode von 2 Geräten“ genau einmal", hwZwei.Fehlend.Count(f => f.StartsWith("Problemcode")) == 1 && hwZwei.Fehlend.Contains("Problemcode von 2 Geräten"), string.Join(" | ", hwZwei.Fehlend));
+            h.Ist("zwei ohne Code: je Geraet ein unknown-Befund, kein geraete.ok", Harness.AlleMit(ergZwei, "geraet.problem.").Count(x => x.Zustand == Zustand.Unknown) == 2 && Harness.Einer(ergZwei, "geraete.ok") == null);
+            h.Ist("zwei ohne Code: Bereich nicht bad und nicht warn", hwZwei.Zustand != Zustand.Bad && hwZwei.Zustand != Zustand.Warn, hwZwei.Zustand);
+            gesund[2].ProblemCode = 0;
+            g0.ProblemCode = 0;
+
+            // null neben einem harmlosen Code: der Sammelsatz darf das Geraet ohne Code nicht als harmlos
+            // zaehlen und nicht als "ohne Fehlercode"; er entfaellt ganz, weil ein Befund vorliegt.
+            var zweites = gesund[1];
+            zweites.ProblemCode = 47;
+            g0.ProblemCode = null;
+            var ergMix = Laufen(h, s);
+            h.Ist("null neben Code 47: unknown-Befund fuer das Geraet ohne Code, kein geraete.ok, Code 47 weiter ohne Befund",
+                  Harness.AlleMit(ergMix, "geraet.problem." + g0.InstanzId).Count() == 1 && Harness.Einer(ergMix, "geraete.ok") == null && !Harness.AlleMit(ergMix, "geraet.problem." + zweites.InstanzId).Any());
+            zweites.ProblemCode = 0;
+            g0.ProblemCode = 0;
         }
 
         // ---------------------------------------------------------------- (g) englisch

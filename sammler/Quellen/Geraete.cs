@@ -11,9 +11,11 @@ namespace WartungsToolbox.Sammler.Quellen
     ///
     /// Zwei Stufen, weil Zeit zaehlt: die Grundabfrage liefert alle praesenten Geraete
     /// (hier 258 in 125 ms) mit DeviceID, Klasse, Name, Present und ConfigManagerErrorCode.
-    /// Nur fuer Geraete mit ConfigManagerErrorCode != 0 folgt GetDeviceProperties mit den
-    /// neun DEVPKEYs (Parent, ProblemCode, ProblemStatus, DevNodeStatus, Treiber, ConfigFlags);
-    /// gesunden Geraeten reicht die Grundabfrage.
+    /// Nur fuer Geraete mit ConfigManagerErrorCode != 0 oder ohne Wert folgt GetDeviceProperties
+    /// mit den neun DEVPKEYs (Parent, ProblemCode, ProblemStatus, DevNodeStatus, Treiber,
+    /// ConfigFlags); gesunden Geraeten reicht die Grundabfrage. Ein Geraet ohne Wert an beiden
+    /// Stellen behaelt ProblemCode null (nicht gelesen, M4-Entwurf 10.2): eine 0 steht nur noch
+    /// fuer einen gemessenen Code, nie fuer "keine Angabe".
     ///
     /// Fallen aus der Recherche (R1-17/18/21/22) und der Widerlegungsrunde:
     ///  - WMI liefert nur praesente Geraete. Phantome (Code 45) sieht man hier nie - also
@@ -71,14 +73,16 @@ namespace WartungsToolbox.Sammler.Quellen
                     Name = Wmi.Str(mo, "Name"),              // lokalisiert, nur Anzeige
                     // Present gibt es ab Windows 10; davor liefert WMI ohnehin nur Praesente.
                     Present = Wmi.Wahr(mo, "Present") ?? true,
-                    ProblemCode = Wmi.Ganz(mo, "ConfigManagerErrorCode") ?? 0,
+                    // null, wenn WMI keinen Wert liefert: nicht "kein Problem", sondern nicht gelesen.
+                    ProblemCode = Wmi.Ganz(mo, "ConfigManagerErrorCode"),
                 };
                 if (string.IsNullOrEmpty(g.InstanzId)) continue;
 
-                if (g.ProblemCode != 0)
+                if (!g.ProblemCode.HasValue || g.ProblemCode.Value != 0)
                 {
-                    // Je Geraet mit Problem ein eigener Versuch: scheitert einer (Zeit, Provider),
-                    // bleibt das Geraet mit seinem Code in der Liste, nur ohne Einzelheiten.
+                    // Je Geraet mit Problem (oder ohne Wert: der DEVPKEY ist die zweite Chance auf
+                    // den Code) ein eigener Versuch: scheitert einer (Zeit, Provider), bleibt das
+                    // Geraet mit seinem Code bzw. mit null in der Liste, nur ohne Einzelheiten.
                     Sammler.Versuch(s, "wmi.pnp.eigenschaften", () => EigenschaftenLesen(mo, g));
                 }
                 s.Geraete.Add(g);
@@ -110,8 +114,8 @@ namespace WartungsToolbox.Sammler.Quellen
                     case "DEVPKEY_Device_Parent": if (typ == TypString) g.Parent = Wmi.Str(p, "Data"); break;
                     case "DEVPKEY_Device_ProblemCode":
                         // Der DEVPKEY ist die Quelle des Konfigurations-Managers selbst; der Wert
-                        // aus der Grundabfrage bleibt, falls der Schluessel fehlt.
-                        if (typ == TypUInt32) { int? c = Wmi.Ganz(p, "Data"); if (c.HasValue) g.ProblemCode = c.Value; }
+                        // aus der Grundabfrage (auch null) bleibt, falls der Schluessel fehlt.
+                        if (typ == TypUInt32) { int? c = Wmi.Ganz(p, "Data"); if (c.HasValue) g.ProblemCode = c; }
                         break;
                     case "DEVPKEY_Device_ProblemStatus": if (typ == TypNtStatus || typ == TypUInt32) g.ProblemStatus = Wmi.Lang(p, "Data"); break;
                     case "DEVPKEY_Device_DevNodeStatus": if (typ == TypUInt32) g.DevNodeStatus = Wmi.Lang(p, "Data"); break;

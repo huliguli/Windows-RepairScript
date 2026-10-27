@@ -52,7 +52,10 @@ namespace WartungsToolbox.Sammler
             {
                 if (string.IsNullOrEmpty(t)) return t;
                 if (!string.IsNullOrEmpty(rechner)) t = Regex.Replace(t, Regex.Escape(rechner), "RECHNER", RegexOptions.IgnoreCase);
-                if (!string.IsNullOrEmpty(nutzer)) t = Regex.Replace(t, @"(?<=\\Users\\)" + Regex.Escape(nutzer) + @"(?=\\|$)", "NUTZER", RegexOptions.IgnoreCase);
+                // Profilpfad mit Backslash ODER Schraegstrich (Aufgabenpfade wie C:/Users/<Konto>/AppData kommen vor,
+                // gemessen 18.09.2026), auch bei Kontonamen unter drei Zeichen; die Grenze ist wie in der
+                // allgemeinen Ersetzung jedes Nicht-Namenszeichen ("<Konto>.old" wird "NUTZER.old").
+                if (!string.IsNullOrEmpty(nutzer)) t = Regex.Replace(t, @"(?<=[\\/]Users[\\/]+)" + Regex.Escape(nutzer) + @"(?![A-Za-z0-9])", "NUTZER", RegexOptions.IgnoreCase);
                 if (!string.IsNullOrEmpty(nutzer) && nutzer.Length >= 3) t = Regex.Replace(t, @"(?<![A-Za-z0-9])" + Regex.Escape(nutzer) + @"(?![A-Za-z0-9])", "NUTZER", RegexOptions.IgnoreCase);
                 t = Ipv4.Replace(t, m => m.Groups[1].Value + "." + m.Groups[3].Value + ".x");
                 t = Mac.Replace(t, "MAC");
@@ -81,7 +84,8 @@ namespace WartungsToolbox.Sammler
                 foreach (var k in keys) e.Felder[k] = r(e.Felder[k]);
             }
             foreach (var a in s.Autostart.Eintraege) { a.Name = r(a.Name); a.Befehl = r(a.Befehl); }
-            foreach (var a in s.Autostart.Aufgaben) { a.Pfad = r(a.Pfad); a.Autor = r(a.Autor); }
+            // AktionPfad: seit M4 gefuellt, zeigt bei Nutzer-Aufgaben in das Profil (C:\Users\<Name>\AppData\...).
+            foreach (var a in s.Autostart.Aufgaben) { a.Pfad = r(a.Pfad); a.Autor = r(a.Autor); a.AktionPfad = r(a.AktionPfad); }
             foreach (var d in s.Autostart.Dienste) { d.Pfad = r(d.Pfad); d.Anzeige = r(d.Anzeige); }
             foreach (var p in s.Leistung.Prozesse) { p.Pfad = r(p.Pfad); }
             foreach (var u in s.WindowsUpdate.Verlauf) u.Titel = r(u.Titel);
@@ -102,6 +106,13 @@ namespace WartungsToolbox.Sammler
             s.Netz.Hosts.RemoveAll(h => string.IsNullOrEmpty(h.Host) || !Kern.Regeln.Netz.IstGeschuetzt(h.Host));
             s.Netz.HostsEntfernt = hostsVorher - s.Netz.Hosts.Count;
             foreach (var h in s.Netz.Hosts) { h.Ip = r(h.Ip); h.Host = r(h.Host); }
+            // DataBasePath (seit M4): ein abweichender Ort der hosts-Datei kann unter dem Profil liegen
+            // (C:\Users\<Name>\...) oder eine UNC-Adresse tragen; r() faengt Rechner, Nutzer, IP und SID.
+            // Auf einem Standard-Windows ist das Feld null, r() gibt null dann unveraendert zurueck.
+            s.Netz.HostsPfadAbweichend = r(s.Netz.HostsPfadAbweichend);
+            // Programmordner (seit 01.10.2026): ein Bau oder eine ZIP-Fassung liegt oft im Profil
+            // (C:\Users\<Name>\...); die Liste daneben traegt nur feste Namen ("das angemeldete Konto").
+            s.Sicherheit.ProgrammOrdner = r(s.Sicherheit.ProgrammOrdner);
             if (s.Sicherheit.Defender != null)
             {
                 var d = s.Sicherheit.Defender;
@@ -150,6 +161,9 @@ namespace WartungsToolbox.Sammler
             if (Sid.IsMatch(text)) hits.Add("Konto-SID");
             if (Regex.IsMatch(text, @"\b[0-9A-F]{6}FFFF[0-9A-F]{8}\b")) hits.Add("MAC in einem Instanzpfad");
             if (Regex.IsMatch(text, @"RECHNER(?>\\+)(?!NUTZER)")) hits.Add("Kontoname hinter dem Rechnernamen");   // JSON schreibt den Backslash doppelt; atomare Gruppe, sonst gibt der Rueckwaertslauf einen zurueck
+            // Jeder Kontoname im Profilpfad, unabhaengig von seiner Laenge und auch fremde Konten; nur die
+            // Windows-eigenen Profilordner sind erlaubt. JSON schreibt "\" als "\\" und "/" als "\/".
+            if (Regex.IsMatch(text, @"(?<=[\\/])Users(?>(?:\\\\|\\/|/)+)(?!NUTZER|Public|Default|All Users|WDAGUtilityAccount)[^\\/""]+", RegexOptions.IgnoreCase)) hits.Add("Kontoname im Profilpfad");
             return hits;
         }
     }

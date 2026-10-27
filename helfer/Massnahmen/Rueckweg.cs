@@ -30,8 +30,16 @@ namespace WartungsToolbox.Helfer
     /// Vertrag 8.10): die Sicherung ist dort nur der Beleg, InhaltPruefen lehnt sie ab, und der
     /// Helfer meldet der Hin-Massnahme rueckweg.moeglich = "0".
     ///
+    /// M4 (docs/M4-ENTWURF.md, Abschnitt 3.3): netz.hosts.bereinigen und netz.ip.zuruecksetzen gehen
+    /// an ZurueckNetz*, sicherheit.firewall.eingehend.blockieren und sicherheit.firewall.zuruecksetzen
+    /// an ZurueckSicherheit*, leistung.winlogon.zuruecksetzen an ZurueckLeistung* (Leistung.cs);
+    /// netz.winsock.zuruecksetzen, update.zuruecksetzen und geraet.treiber.neu haben keinen Rueckweg
+    /// (die Datei ist Beleg, die Hin-Massnahme meldet rueckweg.moeglich = "0"), InhaltPruefen lehnt
+    /// sie mit eigenem Satz ab.
+    ///
     /// Jeder Wert aus der Datei wird vor dem Eingriff so geprueft wie der Parameter der
-    /// Hin-Massnahme (InhaltPruefen, fuer K3-Kennungen ZurueckNetzPruefen/ZurueckSicherheitPruefen).
+    /// Hin-Massnahme (InhaltPruefen, fuer die Bereichs-Kennungen ZurueckNetzPruefen,
+    /// ZurueckSicherheitPruefen, ZurueckLeistungPruefen).
     /// Dazu die Sperrliste: kein Dienst aus LeistungMassnahmen.NieDeaktivieren wird ueber einen
     /// Vorwert Disabled abgeschaltet (Vertrag 8.2). Eine Datei, die diese Pruefung nicht besteht,
     /// wird abgelehnt (Exit 2), nie teilweise zurueckgespielt. Die Sicherungsdatei bleibt nach dem
@@ -68,8 +76,23 @@ namespace WartungsToolbox.Helfer
         // in InhaltPruefen mit eigenem Satz abgelehnt, nicht als "unbekannt".
         public const string UpdateDienst = "update.dienst.aktivieren";
 
+        // M4-Kennungen mit Rueckweg im Bereich (Vertrag M4 3.3) ...
+        public const string Hosts = "netz.hosts.bereinigen";
+        public const string Ip = "netz.ip.zuruecksetzen";
+        public const string FirewallEingehend = "sicherheit.firewall.eingehend.blockieren";
+        public const string FirewallReset = "sicherheit.firewall.zuruecksetzen";
+        public const string Winlogon = "leistung.winlogon.zuruecksetzen";
+        // ... und die drei, deren Sicherung nur Beleg ist (rueckweg.moeglich = "0").
+        public const string Winsock = "netz.winsock.zuruecksetzen";
+        public const string UpdateReset = "update.zuruecksetzen";
+        public const string TreiberNeu = "geraet.treiber.neu";
+
         const int SchluesselMax = 64;
         const int WertMax = 4096;
+        // Vorwerte, die ganze Texte tragen (Vertrag M4, Abschnitt 1): der hosts-Inhalt bis 256 KB,
+        // Adapterliste, Winsock-Katalog und Update-Liste bis 64 KB.
+        const int TextMax = 256 * 1024;
+        const int ListeMax = 64 * 1024;
 
         // ================================================================ Pruefen
 
@@ -144,11 +167,35 @@ namespace WartungsToolbox.Helfer
                 case Geraet:
                     if (HardwareMassnahmen.InstanzIdNorm(si.ParameterWert("instanzId")) == null) return "Die Sicherung nennt keine gültige Instanz-Id (instanzId).";
                     return null;
+                case Hosts:
+                case Ip:
+                    // Inhalt (Zeichen, GUIDs, IPv4-Adressen, Masken, Gateways, DNS) prueft der Bereich (Vertrag M4 3.3).
+                    return MassnahmenM3.ZurueckNetzPruefen(si);
+                case FirewallEingehend:
+                case FirewallReset:
+                    // DefaultInboundAction 0|1, Profil 1|2|4, Exportname nach Muster und Herkunft am Handle: der Bereich.
+                    return MassnahmenM3.ZurueckSicherheitPruefen(si);
+                case Winlogon:
+                    return MassnahmenM3.ZurueckLeistungPruefen(si);
+                case Winsock:
+                    return "Für die Maßnahme „netz.winsock.zuruecksetzen“ gibt es keinen Rückweg: der gesicherte Winsock-Katalog ist ein Beleg, kein Zustand, den Windows zurückschreibt; entfernte Netzwerkkomponenten von Drittprogrammen kommen nur durch deren Neuinstallation zurück.";
+                case UpdateReset:
+                    return "Für die Maßnahme „update.zuruecksetzen“ gibt es keinen Rückweg: die umbenannten Ordner (SoftwareDistribution.old, catroot2.old) baut Windows neu auf, und die verborgenen Updates hat die Maßnahme selbst wieder verborgen; die Sicherung bleibt als Beleg liegen.";
+                case TreiberNeu:
+                    {
+                        string export = si.Wert("export");
+                        string inf = si.Wert("inf");
+                        return "Für die Maßnahme „geraet.treiber.neu“ gibt es keinen Rückweg über dieses Programm: "
+                            + (string.IsNullOrEmpty(export)
+                                ? "der Treiber gehörte zu Windows und liegt im Treiberspeicher; Windows richtet ihn bei der Erkennung selbst ein."
+                                : "der bisherige Treiber liegt exportiert unter sicherungen\\massnahmen\\export\\" + Massnahmenbau.Kurz(export) + " und lässt sich mit pnputil /add-driver " + (HardwareMassnahmen.IstOemInf(inf) ? inf : "<inf>") + " /install von Hand einspielen.");
+                    }
                 default:
-                    // Die vier K3-Kennungen prueft der Bereich selbst (Vertrag 8.3): SettingID, Adapter,
+                    // Die K3-Kennungen prueft der Bereich selbst (Vertrag 8.3): SettingID, Adapter,
                     // DNS-Liste, FirewallEnabled, Profil, SmartScreenEnabled, EnableLUA, ConsentPromptBehaviorAdmin.
                     if (MassnahmenM3.ZurueckNetzBekannt(si.Kennung)) return MassnahmenM3.ZurueckNetzPruefen(si);
                     if (MassnahmenM3.ZurueckSicherheitBekannt(si.Kennung)) return MassnahmenM3.ZurueckSicherheitPruefen(si);
+                    if (MassnahmenM3.ZurueckLeistungBekannt(si.Kennung)) return MassnahmenM3.ZurueckLeistungPruefen(si);
                     return "Für die Kennung „" + Massnahmenbau.Kurz(si.Kennung) + "“ gibt es keinen Rückweg.";
             }
         }
@@ -157,23 +204,44 @@ namespace WartungsToolbox.Helfer
         /// Form der beiden Woerterbuecher: jeder Schluessel 1 bis 64 Zeichen aus Buchstaben, Ziffern und
         /// _, jeder Wert vorhanden, hoechstens 4096 Zeichen, ohne Steuerzeichen. Die Schluessel werden
         /// als rueckweg.parameter.&lt;name&gt; an den Host gereicht; ein Schluessel, der kein Name ist, gehoert
-        /// nicht in eine Sicherung des Helfers.
+        /// nicht in eine Sicherung des Helfers. Ausnahme (M4): die Vorwerte, die ganze Texte tragen
+        /// (ZeilenWertMax), duerfen Zeilenumbrueche und Tabulatoren enthalten und sind laenger; jedes
+        /// andere Steuerzeichen (auch NUL) bleibt verboten.
         /// </summary>
         static string FormPruefen(Sicherung si)
         {
-            string g = WoerterbuchPruefen(si.Parameter, "parameter");
-            return g ?? WoerterbuchPruefen(si.Vorher, "vorher");
+            string g = WoerterbuchPruefen(si.Parameter, "parameter", null);
+            return g ?? WoerterbuchPruefen(si.Vorher, "vorher", si.Kennung);
         }
 
-        static string WoerterbuchPruefen(Dictionary<string, string> d, string was)
+        /// <summary>Hoechstlaenge eines mehrzeiligen Vorwerts je Kennung und Schluessel (Vertrag M4, Abschnitt 1); null = einzeilig wie alle anderen.</summary>
+        static int? ZeilenWertMax(string kennung, string schluessel)
+        {
+            switch (kennung)
+            {
+                case Hosts: return schluessel == "inhalt" ? TextMax : (int?)null;        // ganzer alter hosts-Text
+                case Ip: return schluessel == "adapter" ? ListeMax : (int?)null;         // je Adapter eine Zeile
+                case Winsock: return schluessel == "katalog" ? ListeMax : (int?)null;    // netsh winsock show catalog (Beleg)
+                case UpdateReset: return schluessel == "verborgen" ? ListeMax : (int?)null;   // UpdateID|Revision|Titel je Zeile (Beleg)
+                default: return null;
+            }
+        }
+
+        static string WoerterbuchPruefen(Dictionary<string, string> d, string was, string kennung)
         {
             foreach (var p in d)
             {
                 if (!SchluesselGueltig(p.Key)) return "Die Sicherung enthält unter „" + was + "“ einen Schlüssel, der kein Name ist („" + Massnahmenbau.Kurz(p.Key) + "“).";
                 if (p.Value == null) return "Die Sicherung enthält unter „" + was + "“ für „" + p.Key + "“ keinen Wert.";
-                if (p.Value.Length > WertMax) return "Der Wert „" + p.Key + "“ unter „" + was + "“ ist länger als " + WertMax + " Zeichen.";
+                int? zeilen = kennung == null ? null : ZeilenWertMax(kennung, p.Key);
+                int max = zeilen ?? WertMax;
+                if (p.Value.Length > max) return "Der Wert „" + p.Key + "“ unter „" + was + "“ ist länger als " + max + " Zeichen.";
                 foreach (char c in p.Value)
-                    if (char.IsControl(c)) return "Der Wert „" + p.Key + "“ unter „" + was + "“ enthält Steuerzeichen.";
+                {
+                    if (!char.IsControl(c)) continue;
+                    if (zeilen.HasValue && (c == '\n' || c == '\r' || c == '\t')) continue;
+                    return "Der Wert „" + p.Key + "“ unter „" + was + "“ enthält Steuerzeichen.";
+                }
             }
             return null;
         }
@@ -224,9 +292,17 @@ namespace WartungsToolbox.Helfer
                 case Dienst: DienstZurueck(k, si); break;
                 case Update: UpdateZurueck(k, si); break;
                 case Geraet: GeraetZurueck(k, si); break;
+                // M4 (Vertrag 3.3): dieselbe Verteilung wie in InhaltPruefen; die Bereiche pruefen die
+                // Werte vor dem Eingriff noch einmal selbst.
+                case Hosts:
+                case Ip: MassnahmenM3.ZurueckNetz(k, si); break;
+                case FirewallEingehend:
+                case FirewallReset: MassnahmenM3.ZurueckSicherheit(k, si); break;
+                case Winlogon: MassnahmenM3.ZurueckLeistung(k, si); break;
                 default:
                     if (MassnahmenM3.ZurueckNetzBekannt(si.Kennung)) MassnahmenM3.ZurueckNetz(k, si);
                     else if (MassnahmenM3.ZurueckSicherheitBekannt(si.Kennung)) MassnahmenM3.ZurueckSicherheit(k, si);
+                    else if (MassnahmenM3.ZurueckLeistungBekannt(si.Kennung)) MassnahmenM3.ZurueckLeistung(k, si);
                     else throw new InvalidOperationException("Für die Kennung „" + si.Kennung + "“ gibt es keinen Rückweg.");
                     break;
             }

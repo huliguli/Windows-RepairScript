@@ -20,7 +20,9 @@ namespace WartungsToolbox.Sammler.Quellen
     ///   Startup-Ordner (Nutzer und Alle Benutzer): jede Datei ausser desktop.ini, denn Explorer
     ///     startet dort alles (.bat, .vbs, .ps1, .url, ...), nicht nur .exe und .lnk
     ///   StartupApproved (Byte 0: 2 aktiv, 3 deaktiviert mit FILETIME; 0 und 6 beobachtet, ungeklaert -> null)
-    ///   Aufgaben ueber COM Schedule.Service (nicht erhoeht 217 von 284; AufgabenVollstaendig = Erhoehung)
+    ///   Aufgaben ueber COM Schedule.Service (nicht erhoeht 217 von 284; AufgabenVollstaendig = Erhoehung);
+    ///     AktionPfad und Microsoft je Aufgabe aus der ersten Exec-Aktion, geprueft wie die Run-Eintraege
+    ///     (eigenes Budget 20 s nach der Aufzaehlung, Quelle wintrust.aufgaben bei Abbruch)
     ///   Dienste ueber Win32_Service
     ///   Winlogon Shell/Userinit, AppInit_DLLs mit Hauptschalter LoadAppInit_DLLs (beide Sichten)
     ///
@@ -40,6 +42,13 @@ namespace WartungsToolbox.Sammler.Quellen
         const string RunBasis = @"SOFTWARE\Microsoft\Windows\CurrentVersion\";
         const string ApprovedBasis = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\";
         const int AufgabenBudgetMs = 10000;
+        /// <summary>
+        /// Budget der Signaturpruefung aller Aufgaben (126 Exec-Aktionen gemessen); danach bleibt Microsoft
+        /// null. Eigene Quelle, kein Praefix von "com.aufgaben": Systembild.FehlerVon vergleicht mit StartsWith,
+        /// und ein Eintrag unter "com.aufgaben" wuerde die Autostart-Zaehlung auf unknown kippen.
+        /// </summary>
+        const int SignaturBudgetMs = 20000;
+        const string QuelleAufgabenSignatur = "wintrust.aufgaben";
         /// <summary>Eigene Aufgaben des Programms (src/Scheduler.cs: WindowsWartung-Autostart, WindowsWartung-AutoWartung).</summary>
         const string EigeneAufgabenPraefix = "WindowsWartung-";
 
@@ -49,7 +58,7 @@ namespace WartungsToolbox.Sammler.Quellen
             Sammler.Versuch(s, "registry.autostart.run", () => RunSchluessel(s, A));
             Sammler.Versuch(s, "ordner.autostart", () => StartupOrdner(A));
             Sammler.Versuch(s, "registry.autostart.startupapproved", () => StartupApproved(A));
-            Sammler.Versuch(s, "com.aufgaben", () => Aufgaben(A));
+            Sammler.Versuch(s, "com.aufgaben", () => Aufgaben(s, A));
             A.AufgabenVollstaendig = s.Erhoeht;
             Sammler.Versuch(s, "wmi.dienste", () => Dienste(A));
             Sammler.Versuch(s, "registry.winlogon", () => Winlogon(A));
@@ -285,22 +294,31 @@ namespace WartungsToolbox.Sammler.Quellen
         /// werden, sonst DISP_E_BADPARAMCOUNT. GetTasks(1) = TASK_ENUM_HIDDEN. Einzelne Aufgaben
         /// ohne Leserecht werden uebersprungen; nicht erhoeht fehlen rund 70 (Widerlegung SP-20).
         /// </summary>
-        static void Aufgaben(Kern.Autostart A)
+        static void Aufgaben(Systembild s, Kern.Autostart A)
         {
             Type t = Type.GetTypeFromProgID("Schedule.Service", false);
             if (t == null) throw new InvalidOperationException("Schedule.Service ist nicht registriert");
+            // Befehlszeile (Exec-Pfad plus Argumente) je Aufgabe; die Signaturpruefung laeuft erst
+            // nach der Aufzaehlung mit eigenem Budget (SignaturBudgetMs), damit WinVerifyTrust nicht
+            // in das 10-s-Budget der COM-Schleife faellt. Bricht die Aufzaehlung mit Zeitueberschreitung
+            // ab, werden die bis dahin gelesenen Aufgaben trotzdem geprueft (finally), der Fehler bleibt in der Liste.
+            var befehle = new List<KeyValuePair<Aufgabe, string>>();
             object svc = Activator.CreateInstance(t);
             try
             {
                 Com.Aufruf(svc, "Connect", Type.Missing, Type.Missing, Type.Missing, Type.Missing);
                 object wurzel = Com.Aufruf(svc, "GetFolder", "\\");
-                try { Ordner(A, wurzel, Stopwatch.StartNew()); }
+                try { Ordner(A, wurzel, Stopwatch.StartNew(), befehle); }
                 finally { Com.Frei(wurzel); }
             }
-            finally { Com.Frei(svc); }
+            finally
+            {
+                Com.Frei(svc);
+                AufgabenSignieren(s, befehle);
+            }
         }
 
-        static void Ordner(Kern.Autostart A, object ordner, Stopwatch uhr)
+        static void Ordner(Kern.Autostart A, object ordner, Stopwatch uhr, List<KeyValuePair<Aufgabe, string>> befehle)
         {
             if (uhr.ElapsedMilliseconds > AufgabenBudgetMs) throw new TimeoutException("Aufgabenplanung: " + (AufgabenBudgetMs / 1000) + " s überschritten");
             object tasks = Com.Aufruf(ordner, "GetTasks", 1);
@@ -310,7 +328,14 @@ namespace WartungsToolbox.Sammler.Quellen
                 for (int i = 1; i <= n; i++)
                 {
                     object task = null;
-                    try { task = Com.Wert(tasks, "Item", i); A.Aufgaben.Add(Aufgabe(task)); }
+                    try
+                    {
+                        task = Com.Wert(tasks, "Item", i);
+                        string befehl;
+                        var a = Aufgabe(task, out befehl);
+                        A.Aufgaben.Add(a);
+                        befehle.Add(new KeyValuePair<Aufgabe, string>(a, befehl));
+                    }
                     catch (Exception) { /* Aufgabe ohne Leserecht oder inzwischen geloescht */ }
                     finally { Com.Frei(task); }
                 }
@@ -324,7 +349,7 @@ namespace WartungsToolbox.Sammler.Quellen
                 for (int i = 1; i <= m; i++)
                 {
                     object f = null;
-                    try { f = Com.Wert(unter, "Item", i); Ordner(A, f, uhr); }
+                    try { f = Com.Wert(unter, "Item", i); Ordner(A, f, uhr, befehle); }
                     catch (TimeoutException) { throw; }
                     catch (Exception) { /* Unterordner ohne Leserecht */ }
                     finally { Com.Frei(f); }
@@ -333,8 +358,52 @@ namespace WartungsToolbox.Sammler.Quellen
             finally { Com.Frei(unter); }
         }
 
-        static Aufgabe Aufgabe(object task)
+        /// <summary>
+        /// Microsoft oder fremd je Aufgabe ueber dieselbe Pruefung wie die Run-Eintraege
+        /// (ZielSignatur: Signierer dessen, was die Befehlszeile wirklich startet, Host-Regel
+        /// inklusive), nie ueber Name, Ordner oder Autor. Ohne Exec-Aktion bleibt Microsoft null;
+        /// Datei nicht auffindbar liefert ebenfalls null (Signatur.Microsoft), nicht pruefbare
+        /// Nutzlast false. Eine einzelne Pruefung, die wirft, laesst die uebrigen Aufgaben in Ruhe.
+        ///
+        /// Festes Budget (SignaturBudgetMs): je Pfad laufen File.Exists, WinVerifyTrust und die
+        /// Katalogsuche, der Cache greift nur bei gleichem Pfad. Zuerst kommen die Aufgaben, die die
+        /// Regel Leistung.Autostarts ansieht (Anmelde- oder Start-Ausloeser, nicht deaktiviert), dann
+        /// der Rest; laeuft das Budget ab, bleibt Microsoft bei den uebrigen null und die Fehlerliste
+        /// traegt QuelleAufgabenSignatur mit Art zeit (eigene Quelle, siehe SignaturBudgetMs).
+        /// </summary>
+        static void AufgabenSignieren(Systembild s, List<KeyValuePair<Aufgabe, string>> befehle)
         {
+            var reihe = new List<KeyValuePair<Aufgabe, string>>(befehle.Count);
+            foreach (var kv in befehle) if (!string.IsNullOrWhiteSpace(kv.Value) && RegelSiehtAn(kv.Key)) reihe.Add(kv);
+            foreach (var kv in befehle) if (!string.IsNullOrWhiteSpace(kv.Value) && !RegelSiehtAn(kv.Key)) reihe.Add(kv);
+            var uhr = Stopwatch.StartNew();
+            for (int i = 0; i < reihe.Count; i++)
+            {
+                if (uhr.ElapsedMilliseconds > SignaturBudgetMs)
+                {
+                    Sammler.Fehler(s, QuelleAufgabenSignatur, Fehler.Zeit,
+                        "Signaturprüfung nach " + i + " von " + reihe.Count + " Aufgaben abgebrochen (" + (SignaturBudgetMs / 1000) + " s überschritten)");
+                    return;
+                }
+                var kv = reihe[i];
+                try { kv.Key.Microsoft = ZielSignatur(kv.Value).Microsoft; }
+                catch (Exception) { kv.Key.Microsoft = null; }
+            }
+        }
+
+        /// <summary>Dieselbe Auswahl wie Leistung.Autostarts: Anmelde- oder Start-Ausloeser und nicht deaktiviert (Enabled vor State).</summary>
+        static bool RegelSiehtAn(Aufgabe a)
+        {
+            return (a.Logon || a.Boot) && (a.Aktiv.HasValue ? a.Aktiv.Value : a.Zustand != 1);
+        }
+
+        /// <summary>
+        /// Eine Aufgabe lesen; befehl = Pfad der ersten Exec-Aktion in Anfuehrungszeichen plus
+        /// Argumente (fuer ZielSignatur), null ohne Exec-Aktion oder ohne Leserecht auf die Aktionen.
+        /// </summary>
+        static Aufgabe Aufgabe(object task, out string befehl)
+        {
+            befehl = null;
             var a = new Aufgabe();
             a.Pfad = Com.Wert(task, "Path") as string;
             a.Zustand = Convert.ToInt32(Com.Wert(task, "State"), CultureInfo.InvariantCulture);
@@ -349,7 +418,7 @@ namespace WartungsToolbox.Sammler.Quellen
             // HRESULT kommt als Int32 mit Vorzeichen; als vorzeichenlose Zahl bleibt 0x80070002 lesbar.
             if (erg != null) a.LetztesErgebnis = erg is int ? unchecked((uint)(int)erg) : Convert.ToInt64(erg, CultureInfo.InvariantCulture);
 
-            string aktionPfad = null;
+            string aktionPfad = null, argumente = null;
             object def = null, reg = null, trigger = null, aktionen = null;
             try
             {
@@ -370,7 +439,8 @@ namespace WartungsToolbox.Sammler.Quellen
                     }
                     finally { Com.Frei(tr); }
                 }
-                // Erste Exec-Aktion (TASK_ACTION_EXEC = 0): nur fuer die Frage "ist das unsere eigene EXE".
+                // Erste Exec-Aktion (TASK_ACTION_EXEC = 0): Pfad und Argumente (IExecAction.Path,
+                // IExecAction.Arguments) fuer AktionPfad, die Signaturpruefung und die eigene EXE.
                 try
                 {
                     aktionen = Com.Wert(def, "Actions");
@@ -381,16 +451,34 @@ namespace WartungsToolbox.Sammler.Quellen
                         try
                         {
                             ak = Com.Wert(aktionen, "Item", i);
-                            if (Convert.ToInt32(Com.Wert(ak, "Type"), CultureInfo.InvariantCulture) == 0) aktionPfad = Com.Wert(ak, "Path") as string;
+                            if (Convert.ToInt32(Com.Wert(ak, "Type"), CultureInfo.InvariantCulture) != 0) continue;
+                            aktionPfad = AktionPfadNorm(Com.Wert(ak, "Path") as string);
+                            if (aktionPfad != null) argumente = Com.Wert(ak, "Arguments") as string;
                         }
                         finally { Com.Frei(ak); }
                     }
                 }
-                catch (Exception) { /* Aktionen nicht lesbar: dann entscheidet nur der Name */ }
+                catch (Exception) { /* Aktionen nicht lesbar: AktionPfad und Microsoft bleiben null, die Regel nimmt Name und Autor */ }
             }
             finally { Com.Frei(aktionen); Com.Frei(trigger); Com.Frei(reg); Com.Frei(def); }
+            a.AktionPfad = aktionPfad;
+            if (aktionPfad != null) befehl = "\"" + aktionPfad + "\"" + (string.IsNullOrWhiteSpace(argumente) ? "" : " " + argumente.Trim());
             a.Eigen = IstEigeneAufgabe(a.Pfad, aktionPfad);
             return a;
+        }
+
+        /// <summary>
+        /// IExecAction.Path ohne umschliessende Anfuehrungszeichen und mit aufgeloesten
+        /// Umgebungsvariablen (%SystemRoot%\system32\... kommt bei Windows-Aufgaben vor);
+        /// leer -> null (keine Exec-Aktion mit Pfad).
+        /// </summary>
+        static string AktionPfadNorm(string roh)
+        {
+            if (string.IsNullOrWhiteSpace(roh)) return null;
+            string p = roh.Trim().Trim('"').Trim();
+            if (p.Length == 0) return null;
+            try { p = Environment.ExpandEnvironmentVariables(p); } catch (Exception) { }
+            return p;
         }
 
         /// <summary>
@@ -428,7 +516,9 @@ namespace WartungsToolbox.Sammler.Quellen
         /// COM-Fehler in TargetInvocationException; ausgepackt traegt die fehlerliste HRESULT und
         /// Text des echten Fehlers, und 0x80070005 wird als "zugriff" statt "ausnahme" erkannt.
         /// </summary>
-        static class Com
+        // internal statt privat: Systemschutzquelle liest die Aufgabe PITRTask ueber dieselbe
+        // Bindung (eine Stelle fuer das Auspacken der COM-Fehler).
+        internal static class Com
         {
             public static object Aufruf(object o, string name, params object[] args)
             {
@@ -716,7 +806,9 @@ namespace WartungsToolbox.Sammler.Quellen
             try { kandidat = Environment.ExpandEnvironmentVariables(kandidat); } catch (Exception) { }
             // "\??\C:\..." (NT-Namensraum), "\\?\D:\..." (erweiterter Win32-Pfad, gemessen bei GOG Galaxy) und
             // "\SystemRoot\..." auf gewoehnliche Win32-Pfade abbilden; File.Exists mag die Praefixe nicht.
-            if (kandidat.StartsWith(@"\??\", StringComparison.Ordinal) || kandidat.StartsWith(@"\\?\", StringComparison.Ordinal)) kandidat = kandidat.Substring(4);
+            // "\\?\UNC\server\..." bleibt ein Netzpfad ("\\server\..."), damit Authenticode.Pruefen ihn erkennt.
+            if (kandidat.StartsWith(@"\??\UNC\", StringComparison.OrdinalIgnoreCase) || kandidat.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase)) kandidat = @"\\" + kandidat.Substring(8);
+            else if (kandidat.StartsWith(@"\??\", StringComparison.Ordinal) || kandidat.StartsWith(@"\\?\", StringComparison.Ordinal)) kandidat = kandidat.Substring(4);
             if (kandidat.StartsWith(@"\SystemRoot\", StringComparison.OrdinalIgnoreCase))
                 kandidat = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), kandidat.Substring(12));
             else if (kandidat.StartsWith(@"System32\", StringComparison.OrdinalIgnoreCase))
@@ -748,6 +840,10 @@ namespace WartungsToolbox.Sammler.Quellen
         /// ohne WTD_LIFETIME_SIGNING_FLAG selbst als S_OK; CERT_E_EXPIRED bleibt damit "ungueltig".
         /// Keine Sperrlistenabfrage im Netz (WTD_REVOKE_NONE, WTD_CACHE_ONLY_URL_RETRIEVAL).
         /// Ergebnisse werden je Pfad zwischengespeichert: 232 von 343 Diensten laufen in svchost.exe.
+        /// Ein UNC-Ziel (\\server\share\x.exe, in Domaenen ueblich) wird nie geprueft: ausserhalb
+        /// des Netzes warten File.Exists und WinVerifyTrust je Pfad 20 bis 60 s auf den
+        /// SMB-Verbindungsaufbau. Es gilt als nicht pruefbar (Microsoft = false), fuer Run-Eintraege,
+        /// Dienste und Aufgaben gleichermassen.
         /// </summary>
         public static class Authenticode
         {
@@ -756,6 +852,7 @@ namespace WartungsToolbox.Sammler.Quellen
             public static Signatur Pruefen(string pfad)
             {
                 if (string.IsNullOrEmpty(pfad)) return new Signatur();
+                if (IstUnc(pfad)) return Signatur.NichtPruefbar();
                 Signatur sig;
                 lock (Cache) if (Cache.TryGetValue(pfad, out sig)) return sig;
                 sig = new Signatur();
@@ -766,6 +863,19 @@ namespace WartungsToolbox.Sammler.Quellen
                 sig.Microsoft = IstMicrosoft(sig);
                 lock (Cache) Cache[pfad] = sig;
                 return sig;
+            }
+
+            /// <summary>
+            /// Netzpfad: zwei Trennzeichen am Anfang (\\ oder //), ausser den lokalen Namensraeumen
+            /// \\?\ und \\.\; \\?\UNC\ ist wieder ein Netzpfad (PfadAusBefehl bildet ihn auf \\ ab).
+            /// </summary>
+            public static bool IstUnc(string pfad)
+            {
+                if (pfad == null || pfad.Length < 2) return false;
+                if ((pfad[0] != '\\' && pfad[0] != '/') || (pfad[1] != '\\' && pfad[1] != '/')) return false;
+                if (pfad.StartsWith(@"\\?\", StringComparison.Ordinal)) return pfad.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase);
+                if (pfad.StartsWith(@"\\.\", StringComparison.Ordinal)) return false;
+                return true;
             }
 
             /// <summary>

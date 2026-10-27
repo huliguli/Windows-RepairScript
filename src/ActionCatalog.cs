@@ -59,6 +59,29 @@ namespace WartungsToolbox
         static Step Dism(string a) { return new Step { File = "DISM.exe", Args = a, Progress = true }; }
         static Step Sfc(string a)  { return new Step { File = "sfc.exe", Args = a, Enc = Encoding.Unicode, Progress = true }; }
 
+        /// <summary>
+        /// Temporaere Dateien aufraeumen, fuer den Werkzeugkasten und die geplante Wartung.
+        /// Bis 8.3 loeschte der Schritt JEDEN Eintrag in %TEMP% und Windows\Temp rekursiv, auch
+        /// Arbeitsordner laufender Programme und Installationen (im PC-Audit vom 30.09.2026 fiel das
+        /// mit verschwundenen Arbeitsordnern zeitlich zusammen, belegt ist die Ursache nicht). Jetzt:
+        ///  - nur Dateien, deren letzte Aenderung mehr als einen Tag zurueckliegt;
+        ///  - Abzweigungen und symbolische Links (ReparsePoint) werden weder betreten noch geloescht:
+        ///    Remove-Item -Recurse folgt unter Windows PowerShell 5.1 einer Abzweigung und loescht das Ziel;
+        ///  - leere Ordner bleiben stehen (harmlos, und sie gehoeren oft einem laufenden Programm);
+        ///  - gezaehlt wird, was danach wirklich weg ist (Dateien in Benutzung bleiben liegen).
+        /// Nur einfache Anfuehrungszeichen: Ps() setzt den Text in "..." (GOTCHAS, -Command).
+        /// </summary>
+        const string TempAufraeumen =
+            "$g=(Get-Date).AddDays(-1); $n=0; $b=0; $st=New-Object System.Collections.Stack; " +
+            "foreach($w in @($env:TEMP,(Join-Path $env:WINDIR 'Temp'))){ if($w -and (Test-Path -LiteralPath $w)){ $st.Push($w) } }; " +
+            "while($st.Count -gt 0){ $d=$st.Pop(); foreach($x in @(Get-ChildItem -LiteralPath $d -Force -EA SilentlyContinue)){ " +
+            "if($x.Attributes -band [IO.FileAttributes]::ReparsePoint){ continue }; " +
+            "if($x.PSIsContainer){ $st.Push($x.FullName); continue }; " +
+            "if($x.LastWriteTime -ge $g){ continue }; " +
+            "$l=$x.Length; Remove-Item -LiteralPath $x.FullName -Force -EA SilentlyContinue; " +
+            "if(-not (Test-Path -LiteralPath $x.FullName)){ $n++; $b+=$l } } }; " +
+            "'Aufgeraeumt: ' + $n + ' Dateien, ca. ' + [math]::Round($b/1MB,1) + ' MB (nur Dateien aelter als ein Tag; Dateien in Benutzung bleiben liegen).'";
+
         static List<MaintenanceAction> _all;
 
         public static List<MaintenanceAction> All()
@@ -242,8 +265,8 @@ namespace WartungsToolbox
                 Category = "Aufräumen", Glyph = "E74D", Icon = "trash",
                 Title = "Temporäre Dateien löschen",
                 Desc = "Entfernt Zwischendateien, die Programme liegen gelassen haben.",
-                Info = "Programme legen beim Arbeiten Zwischendateien an und räumen sie oft nicht wieder weg. Diese Aktion entfernt sie. Das schafft Platz und schadet nichts. Dateien, die gerade in Benutzung sind, bleiben liegen.",
-                Steps = { Ps("$t=@($env:TEMP,(Join-Path $env:WINDIR 'Temp')); $b=(Get-ChildItem $t -Recurse -File -Force -EA SilentlyContinue | Measure-Object Length -Sum).Sum; Get-ChildItem $t -Force -EA SilentlyContinue | Remove-Item -Recurse -Force -EA SilentlyContinue; $a=(Get-ChildItem $t -Recurse -File -Force -EA SilentlyContinue | Measure-Object Length -Sum).Sum; 'Aufgeraeumt: ca. ' + [math]::Round((([double]$b-[double]$a)/1MB),1) + ' MB frei gemacht (Dateien in Benutzung bleiben liegen).'") }
+                Info = "Programme legen beim Arbeiten Zwischendateien an und räumen sie oft nicht wieder weg. Diese Aktion entfernt sie. Das schafft Platz und schadet nichts. Dateien, die gerade in Benutzung oder jünger als einen Tag sind, bleiben liegen: laufende Programme und Installationen brauchen sie noch.",
+                Steps = { Ps(TempAufraeumen) }
             });
             l.Add(new MaintenanceAction {
                 Category = "Aufräumen", Glyph = "E896", Icon = "download",
@@ -456,8 +479,8 @@ namespace WartungsToolbox
                 Steps = { Sfc("/scannow") } });
             l.Add(new AutoItem { Key = "temp", Std = true,
                 Title = "Temporäre Dateien löschen",
-                Desc = "Entfernt Zwischendateien, die Programme liegen gelassen haben.",
-                Steps = { Ps("$t=@($env:TEMP,(Join-Path $env:WINDIR 'Temp')); Get-ChildItem $t -Force -EA SilentlyContinue | Remove-Item -Recurse -Force -EA SilentlyContinue; 'Aufgeraeumt.'") } });
+                Desc = "Entfernt Zwischendateien, die älter als einen Tag sind.",
+                Steps = { Ps(TempAufraeumen) } });
             l.Add(new AutoItem { Key = "bin", Std = true,
                 Title = "Papierkorb leeren",
                 Desc = "Leert den Papierkorb aller Laufwerke.",
