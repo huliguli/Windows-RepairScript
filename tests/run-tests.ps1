@@ -40,6 +40,23 @@ function Test-Result([string]$name, [bool]$ok, [string[]]$details) {
     }
 }
 
+# Echte Kindprozesse von $proc: ParentProcessId allein reicht nicht. Windows vergibt die Nummer
+# eines beendeten Prozesses neu, und ParentProcessId zeigt weiter auf die alte Nummer. CI-Lauf
+# 42824879096 (10.11.2026): csrss.exe und winlogon.exe einer neuen Sitzung stammen von einer
+# kurzlebigen smss.exe-Instanz; deren Nummer bekam danach der Helfer, und beide erschienen als
+# "Kindprozesse" eines Trockenlaufs. Ein Kind kann nicht vor seinem Elternprozess gestartet sein:
+# gezaehlt wird nur, was nach $proc entstand (1 s Spielraum fuer die Uhrzeit-Aufloesung).
+function Kinder-Von($proc) {
+    $start = $null
+    try { $start = $proc.StartTime.ToUniversalTime().AddSeconds(-1) } catch { }
+    $namen = @()
+    foreach ($k in @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $($proc.Id)" -ErrorAction SilentlyContinue)) {
+        if ($start -and $k.CreationDate -and $k.CreationDate.ToUniversalTime() -lt $start) { continue }
+        $namen += $k.Name
+    }
+    return ,$namen
+}
+
 # Alle nutzersichtbaren Quellen. bin\ ist nur eine Kopie und wird ausgelassen.
 $uiFiles  = Get-ChildItem (Join-Path $root 'ui') -File -Include *.js,*.css,*.html -Recurse
 $csFiles  = Get-ChildItem (Join-Path $root 'src'),(Join-Path $root 'host'),(Join-Path $root 'kern'),(Join-Path $root 'sammler') -File -Filter *.cs -Recurse
@@ -811,7 +828,7 @@ try {
         $null = $proc.Handle   # ohne gebundenen Handle ist ExitCode nach dem Ende null (Start-Process-Eigenheit; in der CI so passiert)
         $kinder = @{}
         while (-not $proc.HasExited) {
-            foreach ($k in (Get-CimInstance Win32_Process -Filter "ParentProcessId = $($proc.Id)" -ErrorAction SilentlyContinue)) { $kinder[$k.Name] = $true }
+            foreach ($k in (Kinder-Von $proc)) { $kinder[$k] = $true }
             Start-Sleep -Milliseconds 300
         }
         $proc.WaitForExit()
@@ -909,7 +926,7 @@ function Starte-Helfer([string[]]$argumente, [bool]$beobachten) {
     $kinder = @{}
     while (-not $p.HasExited) {
         if ($beobachten) {
-            foreach ($k in (Get-CimInstance Win32_Process -Filter "ParentProcessId = $($p.Id)" -ErrorAction SilentlyContinue)) { $kinder[$k.Name] = $true }
+            foreach ($k in (Kinder-Von $p)) { $kinder[$k] = $true }
         }
         if ($uhr.ElapsedMilliseconds -gt 180000) {
             try { $p.Kill() } catch { }
