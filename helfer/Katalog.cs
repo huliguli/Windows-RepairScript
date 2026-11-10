@@ -700,7 +700,20 @@ namespace WartungsToolbox.Helfer
                 return;
             }
             // Anfang steht schon im Laufprotokoll (Ausfuehrung) und im app.log des Hosts (mit Plan-Id).
-            object bericht = StorageScan.Aufraeumen(keys, t => k.Schreibe(t, "dim"), () => k.IstAbgebrochen);
+            // Seit 8.3.1 steht je Posten auch drin, WAS geloescht wurde (die ersten StorageScan.ListeMax
+            // Pfade und die Gesamtzahl): nach einem Schaden beim Nutzer liess sich vorher nicht sagen,
+            // welche Dateien fehlten.
+            object bericht = StorageScan.Aufraeumen(keys, t => k.Schreibe(t, "dim"), () => k.IstAbgebrochen,
+                (titel, liste) =>
+                {
+                    bool gekuerzt = liste.Anzahl > liste.Namen.Count;
+                    k.Schreibe("   " + titel + ": " + liste.Anzahl + (liste.Anzahl == 1 ? " Datei" : " Dateien") + " gelöscht"
+                               + (gekuerzt ? " (im Protokoll die ersten " + liste.Namen.Count + ")" : "") + ".", "dim");
+                    if (k.Protokoll != null)
+                        k.Protokoll.Schreibe(Protokoll.Helfer, Protokoll.Schritt, "speicher.aufraeumen",
+                            titel + ": " + liste.Anzahl + " Dateien gelöscht",
+                            new { titel, anzahl = liste.Anzahl, gekuerzt, dateien = liste.Namen.ToArray() });
+                });
             // Anonymes Objekt fuer die Oberflaeche -> Text; der Host macht mit
             // JavaScriptSerializer.DeserializeObject wieder ein Objekt daraus.
             k.Werte["speicher.bericht"] = new System.Web.Script.Serialization.JavaScriptSerializer().Serialize(bericht);

@@ -418,6 +418,26 @@ if ($aufraeumTeil.Success -and $aufraeumTeil.Value -match 'Downloads') {
 if ($scanText -notmatch 'erlaubt\.Contains\(k\)') {
     $hits += "host/ScanFlow.cs prueft die Kennungen nicht mehr gegen das angezeigte Ergebnis"
 }
+# Seit 8.3.1 (Audit 10.11.2026, Bluescreen nach "alles aufraeumen" gemeldet): Temp nur mit
+# Altersgrenze und Neustart-Sperre, Update-Downloads nur mit Sperre und angehaltenem Dienst, in
+# der Ansicht "Wo steckt der Platz?" (StorageScan) wie im Werkzeugkasten (ActionCatalog). Die
+# Probe unten misst das Verhalten; hier steht, dass die Sperren an beiden Stellen haengen.
+$catText = [IO.File]::ReadAllText((Join-Path $root 'src\ActionCatalog.cs'), [Text.Encoding]::UTF8)
+if ($aufraeumTeil.Success -and $aufraeumTeil.Value -notmatch 'AlteDateien\(w, grenze') {
+    $hits += "StorageScan.Aufraeumen leert Temp wieder ohne Altersgrenze"
+}
+if ($aufraeumTeil.Success -and ([regex]::Matches($aufraeumTeil.Value, 'NeustartGrund\(')).Count -lt 2) {
+    $hits += "StorageScan.Aufraeumen prueft den ausstehenden Neustart nicht mehr vor Temp und Update-Downloads"
+}
+if ($aufraeumTeil.Success -and ($aufraeumTeil.Value -notmatch 'UpdateArbeitet\(\)' -or $aufraeumTeil.Value -notmatch 'DiensteAnhalten\(')) {
+    $hits += "StorageScan.Aufraeumen loescht Update-Downloads ohne Zustandspruefung oder ohne den Dienst anzuhalten"
+}
+if ($catText -notmatch 'NeustartSperre\("aufgeraeumt"\)' -or $catText -notmatch 'NeustartSperre\("geloescht"\)') {
+    $hits += "ActionCatalog: Temp- oder Update-Schritt ohne Neustart-Sperre"
+}
+if ($catText -match 'CmdBE\("net stop wuauserv"\),\s*Ps\("\$p=\(Join-Path \$env:WINDIR ''SoftwareDistribution') {
+    $hits += "ActionCatalog: der Update-Dienst wird wieder in einem eigenen Schritt vor der Pruefung angehalten"
+}
 Test-Result "Aufraeumen kennt nur eigene Kennungen, nie fremde Pfade" ($hits.Count -eq 0) $hits
 
 # Die eine Frage, die beim Loeschen zaehlt: Kann LeereOrdner ueber eine Abzweigung in einen
@@ -428,9 +448,10 @@ if (-not $csc -or -not $refDir) {
     $hits += "Compiler oder Referenzassemblies nicht gefunden - Speicher-Probe uebersprungen"
 } else {
     $exe = Join-Path $env:TEMP 'WW_StorageProbe.exe'
+    # System.ServiceProcess seit 8.3.1: StorageScan haelt den Update-Dienst vor dem Loeschen an.
     $refs = @('mscorlib.dll','System.dll','System.Core.dll','System.Drawing.dll',
               'System.Windows.Forms.dll','System.Web.Extensions.dll',
-              'System.Runtime.Serialization.dll','System.Xml.dll') |
+              'System.Runtime.Serialization.dll','System.Xml.dll','System.ServiceProcess.dll') |
             ForEach-Object { "/r:$($refDir.FullName)\$_" }
     $bauArgs = @($csc.FullName,'/nologo','/nostdlib+','/target:exe','/platform:x64',
                  "/out:$exe",'/codepage:65001','/langversion:latest') + $refs +

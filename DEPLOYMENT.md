@@ -1,7 +1,9 @@
 # Bauen, signieren, veröffentlichen, aktualisieren
 
 Das Pendant zur `DEPLOYMENT.md` der Webprojekte, für ein Desktop-Werkzeug. Was hier steht,
-ist der Weg, den jedes Release nimmt. Stand: v8.3.0 (Maßnahmen Stufe 3 an der Karte mit
+ist der Weg, den jedes Release nimmt. Stand: v8.3.1 (Aufräumen mit Altersgrenze und Sperre bei
+ausstehendem Neustart oder laufender Update-Installation, Liste der gelöschten Dateien im
+Laufprotokoll; dazu aus 8.3.0: Maßnahmen Stufe 3 an der Karte mit
 Bestätigung, DISM über die DISM-API, Programm-Update als Plan `update.anwenden` über den Helfer,
 Techniker-Ansicht; Maßnahmen Stufe 1 und 2 aus 8.2 und Rechte-Modell B aus 8.1 unverändert).
 

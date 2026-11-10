@@ -1,5 +1,40 @@
 # Changelog
 
+## [8.3.1] - 2026-11-10
+
+Das Aufräumen lässt jetzt die Dateien liegen, die eine laufende Installation noch braucht. Anlass
+war die Meldung eines Nutzers, der nach „alles aufräumen“ einen Bluescreen hatte. Ob das
+Aufräumen die Ursache war, ist nicht belegt; das Programm löscht nichts, was Windows zum Starten
+braucht. Es konnte aber mitten in eine Treiber- oder Update-Installation hinein löschen.
+
+### Behoben
+
+- **„Wo steckt der Platz?“ leert die temporären Ordner nicht mehr vollständig.** Bis 8.3.0
+  löschte „Jetzt aufräumen“ alles in den beiden Temp-Ordnern, auch die Dateien, die ein Treiber-
+  oder Programm-Installer gerade entpackt hatte. Jetzt fallen nur Dateien, die seit mehr als
+  einem Tag weder angelegt noch geändert wurden, und die Ordner bleiben stehen. Die angezeigte
+  Größe zählt nur noch diese Dateien.
+- **Nichts aus Temp und Update-Downloads, solange ein Neustart aussteht.** Wartet Windows auf
+  einen Neustart, um Updates fertig zu installieren, oder soll beim nächsten Start eine Datei
+  aus diesen Ordnern eine andere ersetzen, wird dort nichts gelöscht. Der Bericht nennt den
+  Grund; nach dem Neustart lässt es sich aufräumen. Das gilt in der Ansicht, im Werkzeugkasten
+  und in der geplanten Wartung.
+- **Update-Downloads nur, wenn Windows Update gerade nichts installiert.** Die Ansicht löschte
+  den Ordner bisher bei laufendem Update-Dienst. Jetzt prüft sie zuerst, ob Windows Update oder
+  die Komponenteninstallation arbeitet, hält dann den Update-Dienst und den Download-Dienst an,
+  löscht und startet beide wieder. Im Werkzeugkasten lief das Anhalten bisher vor jeder
+  Prüfung; jetzt kommt die Prüfung zuerst.
+- **Auch heute entpackte Dateien mit altem Datum bleiben liegen.** Ein Installer übernimmt beim
+  Entpacken oft das Änderungsdatum aus dem Paket. Deshalb zählt jetzt auch das Datum, an dem die
+  Datei angelegt wurde.
+
+### Gut zu wissen
+
+- **Was das Aufräumen gelöscht hat, steht jetzt im Protokoll.** Je Posten die ersten 300 Dateien
+  und die Gesamtzahl, unter `C:\ProgramData\WindowsWartung\protokoll`. Bis 8.3.0 standen dort nur
+  Größen, und nach einem Schaden ließ sich nicht sagen, was fehlte.
+- **Steht ein Neustart aus, bleibt Temp voll, bis Sie neu starten.** Das ist Absicht.
+
 ## [8.3.0] - 2026-10-27
 
 Auch die Eingriffe, die sich nicht rückgängig machen lassen (Stufe 3), laufen jetzt an der

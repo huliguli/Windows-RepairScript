@@ -2112,7 +2112,12 @@ function onHost(m){
       break;
 
     case 'storageCleaned': {
-      const zeilen = (m.posten || []).map(p => p.titel + ': ' + p.groesse).join('\n');
+      // Seit 8.3.1 kann ein Posten mit Grund übersprungen sein (Neustart steht aus, Windows
+      // Update arbeitet): dann steht der Grund in der Zeile statt „0 Byte“.
+      const zeilen = (m.posten || []).map(p => p.uebersprungen
+        ? p.titel + ': nicht aufgeräumt, ' + p.uebersprungen + '.'
+        : p.titel + ': ' + p.groesse).join('\n');
+      const uebersprungen = (m.posten || []).some(p => p.uebersprungen);
       // Die Zusicherung „Ihre Dokumente wurden nicht angerührt“ darf NICHT fallen, wenn
       // der Papierkorb dabei war: dort liegen genau diese Dateien. Wer sich darauf
       // verlässt, sucht später gar nicht erst im Papierkorb nach.
@@ -2128,6 +2133,9 @@ function onHost(m){
               : 'Bis dahin ist nichts frei geworden.' + (zeilen ? '\n\n' + zeilen : ''))
           : m.gesamtBytes > 0
           ? 'Es sind ' + m.gesamt + ' frei geworden.\n\n' + zeilen
+          : uebersprungen
+          ? 'Es ist nichts frei geworden. Was übersprungen wurde, steht mit Grund darunter; ' +
+            'nach einem Neustart lässt es sich aufräumen.\n\n' + zeilen
           : 'Es ist nichts frei geworden. Vermutlich waren die Dateien gerade in Benutzung; ' +
             'nach einem Neustart klappt es meist.\n\n' + zeilen) +
         (korbDabei

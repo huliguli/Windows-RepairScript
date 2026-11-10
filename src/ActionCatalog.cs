@@ -60,27 +60,84 @@ namespace WartungsToolbox
         static Step Sfc(string a)  { return new Step { File = "sfc.exe", Args = a, Enc = Encoding.Unicode, Progress = true }; }
 
         /// <summary>
+        /// Sperre vor jedem Loeschen in Ordnern, die eine laufende Installation braucht (seit 8.3.1,
+        /// gleiche Regel wie StorageScan.NeustartGrund, dort ausfuehrlich): erwartet die Ordner in $w
+        /// und endet mit exit 1 und einem Satz, wenn Windows auf einen Neustart fuer Updates wartet
+        /// (CBS RebootPending, Windows Update RebootRequired) oder ein Dateitausch beim naechsten
+        /// Start (PendingFileRenameOperations, Paare aus Quelle und Ziel) eine Datei aus diesen
+        /// Ordnern als QUELLE mit Ziel nennt; reine Loeschauftraege (leeres Ziel) sperren nicht, eine
+        /// ungerade Anzahl zaehlt jeden Eintrag als Quelle. Massgeblich ist der Pfad nach "\??\"
+        /// (Vorsatz "*1" und "!" moeglich). was = "aufgeraeumt" oder "geloescht" fuer den Satz.
+        /// </summary>
+        static string NeustartSperre(string was)
+        {
+            return
+                "$sm=Get-ItemProperty -LiteralPath 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager' -EA SilentlyContinue; $tausch=$null; " +
+                "foreach($wert in @($sm.PendingFileRenameOperations,$sm.PendingFileRenameOperations2)){ $pr=@($wert | Where-Object { $_ -ne $null }); if($pr.Count -eq 0){ continue }; " +
+                "$paar=($pr.Count % 2 -eq 0); $schritt=1; if($paar){ $schritt=2 }; " +
+                "for($i=0; $i -lt $pr.Count; $i+=$schritt){ if($paar -and -not $pr[$i+1]){ continue }; $t=[string]$pr[$i]; if(-not $t){ continue }; " +
+                "$k=$t.IndexOf('\\??\\'); if($k -ge 0){ $t=$t.Substring($k+4) } else { $t=$t.Trim().TrimStart('!') }; " +
+                "foreach($r in $w){ $r2=$r.TrimEnd('\\'); if($t.Equals($r2,[StringComparison]::OrdinalIgnoreCase) -or $t.StartsWith($r2+'\\',[StringComparison]::OrdinalIgnoreCase)){ $tausch=$t } } } }; " +
+                "$grund=$null; " +
+                "if(Test-Path -LiteralPath 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Component Based Servicing\\RebootPending'){ $grund='Windows wartet auf einen Neustart, um Updates fertig zu installieren' } " +
+                "elseif(Test-Path -LiteralPath 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\RebootRequired'){ $grund='Windows Update wartet auf einen Neustart' } " +
+                "elseif($tausch){ $grund='beim naechsten Neustart ersetzt Windows eine Datei durch ' + (Split-Path $tausch -Leaf) + ' aus diesem Ordner' }; " +
+                "if($grund){ 'Nicht " + was + ": ' + $grund + '. Bitte zuerst neu starten und dann erneut ausfuehren.'; exit 1 }; ";
+        }
+
+        /// <summary>
         /// Temporaere Dateien aufraeumen, fuer den Werkzeugkasten und die geplante Wartung.
         /// Bis 8.3 loeschte der Schritt JEDEN Eintrag in %TEMP% und Windows\Temp rekursiv, auch
         /// Arbeitsordner laufender Programme und Installationen (im PC-Audit vom 30.09.2026 fiel das
         /// mit verschwundenen Arbeitsordnern zeitlich zusammen, belegt ist die Ursache nicht). Jetzt:
-        ///  - nur Dateien, deren letzte Aenderung mehr als einen Tag zurueckliegt;
-        ///  - Abzweigungen und symbolische Links (ReparsePoint) werden weder betreten noch geloescht:
-        ///    Remove-Item -Recurse folgt unter Windows PowerShell 5.1 einer Abzweigung und loescht das Ziel;
+        ///  - gar nichts, solange ein Neustart aussteht, der Dateien aus diesen Ordnern braucht (NeustartSperre, 8.3.1);
+        ///  - nur Dateien, die seit mehr als einem Tag weder angelegt noch geaendert wurden (8.3.1: auch
+        ///    das Erstellungsdatum, weil ein Installer beim Entpacken das alte Aenderungsdatum uebernimmt);
+        ///  - Abzweigungen und symbolische Links (ReparsePoint) werden weder betreten noch geloescht.
+        ///    Dass Remove-Item -Recurse unter Windows PowerShell 5.1 einer Abzweigung folgt und ihr Ziel
+        ///    leert, liess sich am 10.11.2026 nicht bestaetigen (5.1.26100, Junction und Verzeichnis-
+        ///    Symlink, direkt und eine Ebene tiefer: das Ziel blieb jedes Mal heil); die Regel bleibt,
+        ///    weil sie nichts kostet und aeltere Windows-Fassungen nicht gemessen sind;
         ///  - leere Ordner bleiben stehen (harmlos, und sie gehoeren oft einem laufenden Programm);
         ///  - gezaehlt wird, was danach wirklich weg ist (Dateien in Benutzung bleiben liegen).
         /// Nur einfache Anfuehrungszeichen: Ps() setzt den Text in "..." (GOTCHAS, -Command).
         /// </summary>
-        const string TempAufraeumen =
-            "$g=(Get-Date).AddDays(-1); $n=0; $b=0; $st=New-Object System.Collections.Stack; " +
-            "foreach($w in @($env:TEMP,(Join-Path $env:WINDIR 'Temp'))){ if($w -and (Test-Path -LiteralPath $w)){ $st.Push($w) } }; " +
+        static readonly string TempAufraeumen =
+            "$g=(Get-Date).AddDays(-1); $n=0; $b=0; " +
+            "$w=@(@($env:TEMP,(Join-Path $env:WINDIR 'Temp')) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }); " +
+            NeustartSperre("aufgeraeumt") +
+            "$st=New-Object System.Collections.Stack; foreach($r in $w){ $st.Push($r) }; " +
             "while($st.Count -gt 0){ $d=$st.Pop(); foreach($x in @(Get-ChildItem -LiteralPath $d -Force -EA SilentlyContinue)){ " +
             "if($x.Attributes -band [IO.FileAttributes]::ReparsePoint){ continue }; " +
             "if($x.PSIsContainer){ $st.Push($x.FullName); continue }; " +
-            "if($x.LastWriteTime -ge $g){ continue }; " +
+            "if(($x.LastWriteTime -ge $g) -or ($x.CreationTime -ge $g)){ continue }; " +
             "$l=$x.Length; Remove-Item -LiteralPath $x.FullName -Force -EA SilentlyContinue; " +
             "if(-not (Test-Path -LiteralPath $x.FullName)){ $n++; $b+=$l } } }; " +
             "'Aufgeraeumt: ' + $n + ' Dateien, ca. ' + [math]::Round($b/1MB,1) + ' MB (nur Dateien aelter als ein Tag; Dateien in Benutzung bleiben liegen).'";
+
+        /// <summary>
+        /// Heruntergeladene Update-Dateien loeschen, fuer den Werkzeugkasten und die geplante Wartung
+        /// (seit 8.3.1 EIN Schritt). Vorher drei Schritte: net stop wuauserv, loeschen, net start. Die
+        /// Werkzeugschritte laufen auch nach einem gescheiterten Schritt weiter (Katalog.SchritteLaufen),
+        /// eine Pruefung als eigener Schritt haette das Anhalten also nicht verhindert. Jetzt in dieser
+        /// Reihenfolge: nichts, solange ein Neustart aussteht (NeustartSperre), die Komponenten-
+        /// installation laeuft (TrustedInstaller) oder Windows Update installiert (IsBusy, nicht
+        /// pruefbar zaehlt als "arbeitet"); dann Update-Dienst und BITS anhalten, loeschen, beide wieder
+        /// starten. Laesst sich ein Dienst nicht anhalten, wird nichts geloescht.
+        /// </summary>
+        static readonly string UpdateDownloadsLeeren =
+            "$w=@((Join-Path $env:WINDIR 'SoftwareDistribution\\Download')); " +
+            NeustartSperre("geloescht") +
+            "$ti=Get-Service TrustedInstaller -EA SilentlyContinue; if($ti -and $ti.Status -ne 'Stopped'){ 'Nicht geloescht: Windows installiert gerade Komponenten (Dienst TrustedInstaller ist aktiv). Bitte spaeter erneut ausfuehren.'; exit 1 }; " +
+            "try { $bz=(New-Object -ComObject Microsoft.Update.Installer).IsBusy } catch { $bz=$null }; " +
+            "if($bz -ne $false){ if($bz){ 'Nicht geloescht: Windows Update installiert gerade. Bitte spaeter erneut ausfuehren.' } else { 'Nicht geloescht: der Zustand von Windows Update ist nicht pruefbar.' }; exit 1 }; " +
+            "$sv=@(@('wuauserv','bits') | Where-Object { $s=Get-Service $_ -EA SilentlyContinue; $s -and $s.Status -ne 'Stopped' }); " +
+            "try { if($sv.Count -gt 0){ Stop-Service -Name $sv -Force -EA Stop } } catch { 'Nicht geloescht: der Update-Dienst liess sich nicht anhalten (' + $_.Exception.Message + ').'; if($sv.Count -gt 0){ Start-Service -Name $sv -EA SilentlyContinue }; exit 1 }; " +
+            "$p=$w[0]; $b=(Get-ChildItem -LiteralPath $p -Recurse -File -Force -EA SilentlyContinue | Measure-Object Length -Sum).Sum; " +
+            "Get-ChildItem -LiteralPath $p -Force -EA SilentlyContinue | Remove-Item -Recurse -Force -EA SilentlyContinue; " +
+            "$a=(Get-ChildItem -LiteralPath $p -Recurse -File -Force -EA SilentlyContinue | Measure-Object Length -Sum).Sum; " +
+            "if($sv.Count -gt 0){ Start-Service -Name $sv -EA SilentlyContinue }; " +
+            "'Aufgeraeumt: ca. ' + [math]::Round((([double]$b-[double]$a)/1MB),1) + ' MB frei gemacht.'";
 
         static List<MaintenanceAction> _all;
 
@@ -265,19 +322,15 @@ namespace WartungsToolbox
                 Category = "Aufräumen", Glyph = "E74D", Icon = "trash",
                 Title = "Temporäre Dateien löschen",
                 Desc = "Entfernt Zwischendateien, die Programme liegen gelassen haben.",
-                Info = "Programme legen beim Arbeiten Zwischendateien an und räumen sie oft nicht wieder weg. Diese Aktion entfernt sie. Das schafft Platz und schadet nichts. Dateien, die gerade in Benutzung oder jünger als einen Tag sind, bleiben liegen: laufende Programme und Installationen brauchen sie noch.",
+                Info = "Programme legen beim Arbeiten Zwischendateien an und räumen sie oft nicht wieder weg. Diese Aktion entfernt sie. Das schafft Platz und schadet nichts. Dateien, die gerade in Benutzung oder jünger als einen Tag sind, bleiben liegen: laufende Programme und Installationen brauchen sie noch. Wartet Windows auf einen Neustart, um eine Installation abzuschließen, wird gar nichts gelöscht; dann zuerst neu starten.",
                 Steps = { Ps(TempAufraeumen) }
             });
             l.Add(new MaintenanceAction {
                 Category = "Aufräumen", Glyph = "E896", Icon = "download",
                 Title = "Heruntergeladene Update-Dateien löschen",
                 Desc = "Hilft, wenn Updates klemmen, und schafft Platz.",
-                Info = "Windows lädt Updates herunter und behält die Dateien danach noch eine Weile. Sind sie beschädigt, klemmt das nächste Update. Diese Aktion wirft sie weg. Windows lädt bei Bedarf neu.",
-                Steps = {
-                    CmdBE("net stop wuauserv"),
-                    Ps("$p=(Join-Path $env:WINDIR 'SoftwareDistribution\\Download'); $b=(Get-ChildItem $p -Recurse -File -Force -EA SilentlyContinue | Measure-Object Length -Sum).Sum; Get-ChildItem $p -Force -EA SilentlyContinue | Remove-Item -Recurse -Force -EA SilentlyContinue; $a=(Get-ChildItem $p -Recurse -File -Force -EA SilentlyContinue | Measure-Object Length -Sum).Sum; 'Aufgeraeumt: ca. ' + [math]::Round((([double]$b-[double]$a)/1MB),1) + ' MB frei gemacht.'"),
-                    CmdBE("net start wuauserv"),
-                }
+                Info = "Windows lädt Updates herunter und behält die Dateien danach noch eine Weile. Sind sie beschädigt, klemmt das nächste Update. Diese Aktion wirft sie weg. Windows lädt bei Bedarf neu. Solange Windows Update gerade installiert oder auf einen Neustart wartet, wird nichts gelöscht; dann später erneut versuchen.",
+                Steps = { Ps(UpdateDownloadsLeeren) }
             });
             l.Add(new MaintenanceAction {
                 Category = "Aufräumen", Glyph = "E74D", Icon = "trash", Danger = true,
@@ -491,12 +544,8 @@ namespace WartungsToolbox
                 Steps = { Dism("/Online /Cleanup-Image /StartComponentCleanup") } });
             l.Add(new AutoItem { Key = "updcache",
                 Title = "Heruntergeladene Update-Dateien löschen",
-                Desc = "Hilft, wenn Updates klemmen.",
-                Steps = {
-                    CmdBE("net stop wuauserv"),
-                    Ps("$p=(Join-Path $env:WINDIR 'SoftwareDistribution\\Download'); Get-ChildItem $p -Force -EA SilentlyContinue | Remove-Item -Recurse -Force -EA SilentlyContinue; 'Aufgeraeumt.'"),
-                    CmdBE("net start wuauserv"),
-                } });
+                Desc = "Hilft, wenn Updates klemmen; nicht, solange Windows Update arbeitet.",
+                Steps = { Ps(UpdateDownloadsLeeren) } });
             l.Add(new AutoItem { Key = "dns",
                 Title = "Gemerkte Internet-Adressen verwerfen",
                 Desc = "Hilft, wenn einzelne Webseiten nicht laden.",

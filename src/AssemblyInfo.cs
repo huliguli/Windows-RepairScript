@@ -6,8 +6,8 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyDescription("PC-Reparatur-System: misst, zeigt, fragt, repariert nachvollziehbar")]
 [assembly: AssemblyCompany("Jonas")]
 [assembly: AssemblyCopyright("© 2026 Jonas")]
-[assembly: AssemblyVersion("8.3.0.0")]
-[assembly: AssemblyFileVersion("8.3.0.0")]
+[assembly: AssemblyVersion("8.3.1.0")]
+[assembly: AssemblyFileVersion("8.3.1.0")]
 
 // DLL-Suchpfad fuer jeden DllImport dieser Assembly (M4-Entwurf 10.3, Pruefbefund L1 der
 // Phase 2, Nachbesserung N2): NUR System32. Ohne das Attribut prueft die CLR bei einem
